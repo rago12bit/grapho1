@@ -249,9 +249,17 @@ async function renderResult(out, v = state.view) {
     ${out.fallback_reason ? `<div class="banner">Claude was unavailable (${esc(out.fallback_reason)}); the offline playbook answered.</div>` : ""}
     <div class="section"><h3>What the agent did · ${esc(out.mode === "claude" ? out.model : "offline playbook")}</h3><ol class="steps" id="steps"></ol></div>`;
   const ol = $("#steps");
+  let role = null;
   for (const s of out.steps) {
+    if (s.role && s.role !== role) {
+      role = s.role;
+      const h = document.createElement("li");
+      h.className = "rolehead";
+      h.innerHTML = `<span class="role ${esc(role)}">${esc(role)} agent</span><span class="muted">${ROLE_NOTE[role] || ""}</span>`;
+      ol.appendChild(h);
+    }
     const li = document.createElement("li");
-    if (s.error) li.className = "err";
+    li.className = [s.error ? "err" : "", s.tool.endsWith("_handoff") ? "handoff" : ""].join(" ").trim();
     li.innerHTML = stepHtml(s);
     ol.appendChild(li);
     await sleep(140);
@@ -280,6 +288,8 @@ async function renderResult(out, v = state.view) {
         <span class="conf ${esc(f.confidence)}">${esc(f.confidence || "")} confidence</span></div>
       ${shared.length ? `<div class="shared"><b>Shared root cause.</b> ${esc(top.change.id)} also explains ${shared.map((o) => `<button class="linkbtn" data-inc="${esc(o.id)}">${esc(o.id)}</button> ${esc(o.title)}`).join(", ")}. One fix covers ${shared.length === 1 ? "both" : "all of them"}.</div>` : ""}
       <p>${esc(f.summary || out.answer || "")}</p>
+      ${top?.footprint ? `<div class="seq"><span class="muted">How it spread:</span> ${top.footprint.sequence.map((x) => `<span class="mono">${esc(x.service)} ${hhmm(x.at).slice(0, 5)}</span>`).join(" → ")}${top.footprint.in_order ? ` <span class="ok">in the predicted order</span>` : ""}</div>` : ""}
+      ${r?.other_faults?.length ? `<div class="others"><b>Other faults active below ${esc(r.incident.symptom)}</b>${r.other_faults.map((o) => `<div>${esc((o.change || {}).id || o.service)}${o.change ? "" : " (no change)"} explains ${esc(o.explains.join(", "))}${o.incidents.length ? ` · ${o.incidents.map((i) => `<button class="linkbtn" data-inc="${esc(i.id)}">${esc(i.id)}</button>`).join(" ")}` : ""}</div>`).join("")}</div>` : ""}
       ${f.evidence?.length ? `<ul class="evidence">${f.evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
       ${f.ruled_out?.length ? `<div class="section"><h3>Ruled out</h3><ul class="ruled">${f.ruled_out.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
     </div>`;
@@ -288,9 +298,15 @@ async function renderResult(out, v = state.view) {
   if (r?.suspects?.length) box.appendChild(suspectsTable(r));
 }
 
+const ROLE_NOTE = {
+  triage: "what is failing, what changed, what is alerting",
+  investigator: "scores suspects and simulates each one's footprint",
+  responder: "owner, runbook, and the fix to approve",
+};
+
 function stepHtml(s) {
   const args = Object.entries(s.input || {}).filter(([k]) => k !== "summary" && k !== "reason")
-    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`).join(", ");
+    .map(([k, v]) => `${k}=${typeof v === "string" ? v : Array.isArray(v) ? (v.length > 3 ? `[${v.length} items]` : JSON.stringify(v)) : v && typeof v === "object" ? "{…}" : JSON.stringify(v)}`).join(", ");
   const q = s.cypher || [];
   return `
     <div class="tool">${esc(s.tool)}(${esc(args)})</div>
@@ -306,8 +322,8 @@ function cypher(text) {
 }
 
 function suspectsTable(r) {
-  const names = ["recency", "proximity", "alert_chain", "risk", "precedent"];
-  const sig = ["alert_chain", "earliness", "precedent", "proximity"];
+  const names = ["recency", "proximity", "alert_chain", "risk", "precedent", "footprint"];
+  const sig = ["alert_chain", "earliness", "precedent", "proximity", "footprint", "unchanged"];
   const el = document.createElement("div");
   el.className = "section";
   el.innerHTML = `<h3>Suspects, scored by the graph</h3>
@@ -318,8 +334,9 @@ function suspectsTable(r) {
         <td class="score">${s.score.toFixed(2)}</td>
         <td>${s.change ? `<b>${esc(s.change.id)}</b> ${esc(s.change.kind)} on ${esc(s.service)}<br><span class="muted">${esc(s.change.summary)}</span>`
           : `<b>${esc(s.service)}</b> alerting, no change`}
-          <div class="factors">${keys.map((k) => `<span class="factor" title="${k} ${s.factors[k]}"><i style="width:${Math.round(100 * s.factors[k])}%"></i></span>`).join("")}</div>
-          <div class="flabels">${keys.map((k) => `<span>${k.replace("_", " ")}</span>`).join("")}</div>
+          <div class="factors" style="grid-template-columns:repeat(${keys.length},1fr)">${keys.map((k) => `<span class="factor" title="${k} ${s.factors[k]}"><i style="width:${Math.round(100 * (s.factors[k] || 0))}%"></i></span>`).join("")}</div>
+          <div class="flabels" style="grid-template-columns:repeat(${keys.length},1fr)">${keys.map((k) => `<span>${k.replace("_", " ")}</span>`).join("")}</div>
+          <div class="fp">explains ${s.footprint.explained.length} of ${s.footprint.observed} alerting${s.footprint.in_order ? ", in order" : ", out of order"}</div>
           ${s.also_explains?.length ? `<div class="linked">also explains ${s.also_explains.map((o) => esc(o.id)).join(", ")}</div>` : ""}</td>
         <td class="mono">${esc(s.path.join(" → "))}</td></tr>`;
     }).join("")}
@@ -394,6 +411,7 @@ async function ask(q) {
     const r = s.result;
     if (!r) continue;
     if (r.callers) { names.add(r.service); r.callers.forEach((c) => names.add(c.service)); }
+    if (r.waves) { names.add(r.service); r.waves.forEach((w) => w.services.forEach((x) => names.add(x))); }
     if (r.service && r.team) names.add(r.service);
     if (Array.isArray(r)) r.forEach((x) => x.service && names.add(x.service));
   }

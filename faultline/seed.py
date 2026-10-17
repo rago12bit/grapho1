@@ -223,6 +223,42 @@ def _history_kestrel() -> list[dict]:
     ]
 
 
+RUNBOOKS_KESTREL = [
+    {"id": "RB-1", "service": "payments-db", "title": "Connection pool exhausted", "when": "config",
+     "steps": ["Check pgbouncer SHOW POOLS: cl_waiting > 0 means the pool is the bottleneck",
+               "Revert the last pgbouncer change (max_client_conn / pool_size)",
+               "Watch payments p99 recover within 5 minutes",
+               "Open a ticket to load-test the new limit before re-applying"]},
+    {"id": "RB-2", "service": "auth", "title": "Bad auth release", "when": "deploy",
+     "steps": ["Compare 401 rate by client: mobile clients cache tokens longest",
+               "Roll back auth to the previous release",
+               "Confirm mobile-bff login success is back above 98%",
+               "Re-release behind a canary on mobile-bff traffic"]},
+    {"id": "RB-3", "service": "catalog-es", "title": "Cluster RED, shards unassigned", "when": "infra",
+     "steps": ["GET _cluster/health and _cat/shards?h=index,shard,state,unassigned.reason",
+               "If a node is gone, ask Platform to replace it",
+               "Reroute unassigned shards once the node is back",
+               "Search recovers when the cluster is green"]},
+    {"id": "RB-4", "service": "session-redis", "title": "Sessions evicted", "when": "config",
+     "steps": ["Check maxmemory-policy: it must be volatile-lru",
+               "Restore the policy and watch evicted_keys",
+               "Tell Checkout and Identity: carts and logins depend on it"]},
+    {"id": "RB-5", "service": "events-kafka", "title": "Consumer lag after retention change", "when": "config",
+     "steps": ["Check consumer lag for ledger and inventory groups",
+               "Restore retention to 72h", "Ask Payments to replay from the last committed offset"]},
+    {"id": "RB-6", "service": "pricing", "title": "Bad pricing release", "when": "deploy",
+     "steps": ["Roll back pricing", "Check checkout and cart: pricing reaches checkout by two paths"]},
+]
+
+
+def _write_runbooks(g: Graph, runbooks: list[dict]) -> None:
+    g.write("""
+        UNWIND $rbs AS r
+        MATCH (s:Service {name: r.service})
+        CREATE (:Runbook {id: r.id, title: r.title, when: r.when, steps: r.steps})-[:FOR_SERVICE]->(s)""",
+            {"rbs": runbooks})
+
+
 def _write_org(g: Graph, spec: dict) -> None:
     g.write("CREATE (:Org {title: $title})", {"title": spec["title"]})
     g.write("UNWIND $teams AS t CREATE (:Team {id: t.id, name: t.name})",
@@ -295,7 +331,7 @@ def _write_history(g: Graph, history: list[dict]) -> None:
 
 def _write_indexes(g: Graph) -> None:
     for label, prop in [("Service", "name"), ("Change", "id"), ("Incident", "id"), ("Person", "handle"),
-                        ("Team", "id"), ("Alert", "id"), ("Action", "id")]:
+                        ("Team", "id"), ("Alert", "id"), ("Action", "id"), ("Episode", "id")]:
         g.write(f"CREATE INDEX FOR (n:{label}) ON (n.{prop})")
 
 
@@ -314,6 +350,7 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _write_alerts(g, alerts)
         _write_incidents(g, incidents)
         _write_history(g, _history_kestrel())
+        _write_runbooks(g, RUNBOOKS_KESTREL)
     elif tenant == "harbor":
         _write_org(g, HARBOR)
         _write_changes(g, [{"id": "D-1", "kind": "deploy", "service": "shipments", "at": NOW - 30 * MIN,

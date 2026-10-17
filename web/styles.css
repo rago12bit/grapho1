@@ -148,6 +148,19 @@ button.ghost:hover { color: var(--text); }
   background: var(--accent-soft); border: 1px solid rgba(255,122,69,.35);
 }
 .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: 500 13px var(--mono); text-decoration: underline; }
+.steps li.rolehead { border-left-color: transparent; padding-bottom: 6px; margin-top: 4px; display: flex; gap: 8px; align-items: baseline; counter-increment: none; }
+.steps li.rolehead::before { display: none; }
+.steps li.rolehead .muted { font-size: 12px; }
+.role { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 4px; border: 1px solid; }
+.role.triage { color: var(--blue); border-color: rgba(106,168,255,.4); }
+.role.investigator { color: var(--accent); border-color: rgba(255,122,69,.4); }
+.role.responder { color: var(--green); border-color: rgba(76,195,138,.4); }
+.steps li.handoff .tool { color: var(--muted); }
+.fp { margin-top: 3px; font: 11px var(--mono); color: var(--dim); }
+.seq { margin-top: 10px; font-size: 12px; line-height: 1.8; }
+.seq .ok { color: var(--green); font-size: 11px; }
+.others { margin-top: 10px; padding: 8px 10px; border: 1px dashed var(--line-2); border-radius: 6px; font-size: 12px; color: #c3c8cf; }
+.others b { display: block; color: var(--text); font-weight: 500; margin-bottom: 4px; }
 .linked { margin-top: 4px; font: 11px var(--mono); color: var(--accent); }
 .evidence { margin: 10px 0 0; padding-left: 18px; color: #c3c8cf; font-size: 13px; }
 .evidence li { margin: 3px 0; }
@@ -160,7 +173,7 @@ button.ghost:hover { color: var(--text); }
   background: var(--panel); border: 2px solid var(--line-2); font: 10px/16px var(--mono); text-align: center; color: var(--muted);
 }
 .steps li.err::before { border-color: var(--red); }
-.steps .tool { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.steps .tool { font-family: var(--mono); font-size: 12px; color: var(--text); overflow-wrap: anywhere; }
 .steps .note { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: pre-wrap; }
 .steps details { margin-top: 4px; }
 .steps summary { font-size: 12px; color: var(--blue); cursor: pointer; }

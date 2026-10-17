@@ -74,6 +74,16 @@ def blast_radius(service: str) -> str:
     return _call("blast_radius", service=service)
 
 
+@server.tool(description="What-if before you ship: if a service failed, the waves in which alerts would arrive, entry points hit, teams paged.")
+def simulate_failure(service: str) -> str:
+    return _call("simulate_failure", service=service)
+
+
+@server.tool(description="The team's runbooks for a service.")
+def runbooks(service: str) -> str:
+    return _call("runbooks", service=service)
+
+
 @server.tool(description="Services ranked by PageRank over the call graph.")
 def critical_services(limit: int = 10) -> str:
     return _call("critical_services", limit=limit)

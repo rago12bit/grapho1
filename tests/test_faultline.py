@@ -106,13 +106,16 @@ def test_offline_investigation_shows_its_work(fresh):
     assert out["findings"]["change_id"] == "D-5201"
     assert "4.1." in out["ranking"]["suspects"][0]["recommended_action"]["to_version"]
     assert all(s["cypher"] for s in out["steps"]), "every step must carry the Cypher it ran"
-    assert [s["tool"] for s in out["steps"]][-1] == "propose_action"
+    roles = [s["role"] for s in out["steps"]]
+    assert roles == sorted(roles, key=["triage", "investigator", "responder"].index)
+    assert "propose_action" in [s["tool"] for s in out["steps"] if s["role"] == "responder"]
     assert tools.past_investigations(fresh, "INC-302")[0]["top_change"] == "D-5201"
 
 
 @pytest.mark.parametrize("q, needle", [
     ("who owns payments-db?", "Adebayo Okafor"),
     ("what breaks if ledger-db goes down?", "web-frontend"),
+    ("runbook for catalog-es", "RB-3"),
     ("has catalog-es failed before?", "INC-240"),
     ("most critical services", "PageRank"),
 ])
@@ -168,3 +171,75 @@ def test_one_fix_mitigates_every_linked_incident(fresh):
     assert set(done["incidents"]) == {"INC-301", "INC-304"}
     assert {tools.get_incident(fresh, i)["status"] for i in ("INC-301", "INC-304")} == {"mitigated"}
     assert fresh.read("MATCH (c:Change {kind: 'remediation'}) RETURN count(c) AS n")[0]["n"] == 1
+
+
+def test_agents_hand_off_only_through_the_graph(fresh):
+    out = agent.investigate("kestrel", "INC-301")
+    eps = fresh.read("""
+        MATCH (e:Episode {run: $run})-[:ABOUT]->(:Incident {id: 'INC-301'})
+        OPTIONAL MATCH (e)-[:READ]->(p:Episode)
+        RETURN e.role AS role, p.role AS read ORDER BY e.wall_at""", {"run": out["run_id"]})
+    assert [(e["role"], e["read"]) for e in eps] == [
+        ("triage", None), ("investigator", "triage"), ("responder", "investigator")]
+    # each later agent's first step is reading the previous handoff back from the graph
+    firsts = {}
+    for st in out["steps"]:
+        firsts.setdefault(st["role"], st["tool"])
+    assert firsts == {"triage": "get_incident", "investigator": "read_handoff", "responder": "read_handoff"}
+
+
+def test_scored_cause_and_similarity_edges(fresh):
+    agent.investigate("kestrel", "INC-301")
+    sus = fresh.read("""MATCH (:Incident {id: 'INC-301'})-[r:SUSPECTED_CAUSE]->(x)
+                        RETURN r.rank AS rank, coalesce(x.id, x.name) AS target ORDER BY rank""")
+    assert sus[0] == {"rank": 1, "target": "C-5101"}
+    sim = fresh.read("MATCH (:Incident {id: 'INC-301'})-[r:SIMILAR_TO]->(p) RETURN p.id AS past, r.score AS score")
+    assert sim and sim[0]["past"] == "INC-212" and sim[0]["score"] > 0.8
+    agent.investigate("kestrel", "INC-301")   # re-running replaces, never stacks
+    assert fresh.read("MATCH (:Incident {id: 'INC-301'})-[r:SUSPECTED_CAUSE]->() RETURN count(r) AS n")[0]["n"] == len(sus)
+
+
+def test_footprint_explains_the_alerts_in_order(fresh):
+    top = tools.rank_suspects(fresh, "INC-301")["suspects"][0]
+    fp = top["footprint"]
+    assert fp["explained"] == ["payments-db", "payments", "checkout"] and fp["in_order"]
+    assert fp["coverage"] == 1.0 and top["factors"]["footprint"] == 1.0
+
+
+def test_independent_faults_are_separated(fresh):
+    r = tools.rank_suspects(fresh, "INC-302")
+    assert r["suspects"][0]["change"]["id"] == "D-5201"
+    assert r["suspects"][0]["factors"]["footprint"] == 1.0          # full credit within its own alert cone
+    others = {((o["change"] or {}).get("id") or o["service"]): {i["id"] for i in o["incidents"]} for o in r["other_faults"]}
+    assert others == {"C-5101": {"INC-301", "INC-304"}, "catalog-es": {"INC-303"}}
+    assert tools.rank_suspects(fresh, "INC-301")["other_faults"] == []
+
+
+def test_silent_cause_and_failure_from_below():
+    alerts = [{"service": "payments", "at": 100}, {"service": "checkout", "at": 110}]
+    # the cause (payments-db) never alerted, but everything between it and the symptom did
+    assert tools._alert_chain(["checkout", "payments", "payments-db"], alerts, 50)[0] == 0.6
+    # one hop and silent: no independent evidence at all
+    assert tools._alert_chain(["checkout", "cart"], alerts, 50)[0] == 0.0
+    # alerts climbing the wrong way keep only 70%
+    backwards = [{"service": "payments", "at": 120}, {"service": "payments-db", "at": 130}, {"service": "checkout", "at": 140}]
+    assert tools._alert_chain(["checkout", "payments", "payments-db"], backwards, 50)[0] == 0.7
+
+
+def test_simulate_failure_predicts_waves(fresh):
+    sim = tools.simulate_failure(fresh, "payments-db")
+    assert [w["services"] for w in sim["waves"]][:2] == [["payments"], ["checkout"]]
+    assert set(sim["internet_exposed"]) == {"api-gateway", "mobile-bff", "web-frontend"}
+    assert sim["runbooks"][0]["id"] == "RB-1"
+    with pytest.raises(KeyError):
+        tools.simulate_failure(fresh, "nope")
+
+
+def test_eval_beats_baselines_and_every_factor_matters():
+    from faultline import eval as ev
+    res = ev.run(n=60, seed=5, learning=False)["phase1"]["top1"]
+    full = res["full"]["all"]
+    assert full >= 85
+    assert full > res["most recent change"]["all"] + 15 and full > res["nearest recent change"]["all"] + 50
+    assert res["no recency"]["all"] < full and res["no footprint"]["all"] <= full
+    assert res["full"]["infra"] >= 90 and res["full"]["shared"] >= 90

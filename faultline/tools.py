@@ -6,6 +6,7 @@ and those are explicit tools a human gates in the UI.
 """
 from __future__ import annotations
 
+import json
 import math
 import time
 import uuid
@@ -19,8 +20,9 @@ AFTER_GRACE_MIN = 5       # and a few minutes after (clock skew, slow rollouts)
 MAX_HOPS = 5
 RECENCY_HALF_MIN = 45
 
-WEIGHTS = {"recency": 0.25, "proximity": 0.10, "alert_chain": 0.35, "risk": 0.15, "precedent": 0.15}
-SIGNAL_WEIGHTS = {"alert_chain": 0.35, "earliness": 0.25, "precedent": 0.15, "proximity": 0.10}
+WEIGHTS = {"recency": 0.20, "proximity": 0.05, "alert_chain": 0.30, "risk": 0.15, "precedent": 0.15, "footprint": 0.15}
+SIGNAL_WEIGHTS = {"alert_chain": 0.25, "earliness": 0.15, "precedent": 0.15, "proximity": 0.05, "footprint": 0.20,
+                  "unchanged": 0.20}
 RISK = {"high": 1.0, "medium": 0.5, "low": 0.2}
 
 
@@ -178,18 +180,124 @@ def _alerted(alerts: list[dict], service: str, after: int) -> dict | None:
 def _alert_chain(path: list[str], alerts: list[dict], after: int) -> tuple[float, list[dict]]:
     """How well alerts trace a path from the suspect back up to the symptom.
 
-    1.0 means every service between the symptom and the suspect (and the suspect itself) alerted after
-    the change. A broken chain counts half of its unbroken run from the suspect upwards."""
+    1.0: every service below the symptom on the path (the suspect included) alerted after the change, and
+    in the order a failure spreading upwards would produce (deeper services first). Out-of-order alerts
+    keep 70%. A suspect that never alerts itself (queues and databases often don't) still earns 0.6 when
+    every service between it and the symptom alerted, as long as there is at least one. Otherwise a broken
+    chain counts half of its unbroken run from the suspect upwards."""
     below = path[1:] if len(path) > 1 else path
     seen = [(svc, _alerted(alerts, svc, after)) for svc in below]
     if all(a for _, a in seen):
-        return 1.0, [a for _, a in seen]
+        return (1.0 if _in_order(path, alerts, after) else 0.7), [a for _, a in seen]
+    middle = seen[:-1]
+    if middle and all(a for _, a in middle) and not seen[-1][1]:
+        return 0.6, [a for _, a in middle]
     run = 0
     for _, a in reversed(seen):
         if not a:
             break
         run += 1
     return 0.5 * run / len(seen), [a for _, a in seen if a]
+
+
+def _in_order(path: list[str], alerts: list[dict], after: int) -> bool:
+    """A failure spreads upwards: walking from the suspect to the symptom, first alerts should not go back in time."""
+    times = [a["at"] for a in (_alerted(alerts, svc, after) for svc in reversed(path)) if a]
+    return all(x <= y for x, y in zip(times, times[1:]))
+
+
+def _callers(g: Graph, service: str, cache: dict) -> dict[str, int]:
+    """Every service that calls `service`, directly or transitively, with its distance."""
+    if service not in cache:
+        rows = g.read(f"""
+            MATCH p = (u:Service)-[:CALLS*1..{MAX_HOPS}]->(s:Service {{name: $svc}})
+            RETURN u.name AS service, min(length(p)) AS d""", {"svc": service})
+        cache[service] = {r["service"]: r["d"] for r in rows}
+    return cache[service]
+
+
+def _recency(lag_min: float) -> float:
+    """Halves every 45 minutes before the incident; a change after it started gets a flat 0.3."""
+    return math.exp(-max(lag_min, 0) / RECENCY_HALF_MIN * math.log(2)) if lag_min >= 0 else 0.3
+
+
+def _from_below(g: Graph, service: str, cone: set[str], alerts: list[dict], at: int) -> bool:
+    """True when a service below `service` in the symptom's alert cone was already alerting by the time of the
+    change, or alerted before `service` itself did: the failure started deeper, not here."""
+    below = {d["service"] for d in dependencies(g, service)} & cone
+    if not below:
+        return False
+    own = min((a["at"] for a in alerts if a["service"] == service and a["at"] >= at), default=None)
+    first_below = min((a["at"] for a in alerts if a["service"] in below), default=None)
+    if first_below is None:
+        return False
+    return first_below <= at or (own is not None and first_below < own)
+
+
+def _alert_cone(g: Graph, symptom: str, area: set[str], alerts: list[dict]) -> set[str]:
+    """Alerting services joined to the symptom through other alerting services. Faults elsewhere below the
+    symptom are real but separate; they shouldn't count against the cause of this one."""
+    alerting = {a["service"] for a in alerts} | {symptom}
+    edges = g.read("""
+        MATCH (a:Service)-[:CALLS]->(b:Service) WHERE a.name IN $area AND b.name IN $area
+        RETURN a.name AS a, b.name AS b""", {"area": sorted(area)})
+    down: dict[str, list[str]] = {}
+    for e in edges:
+        down.setdefault(e["a"], []).append(e["b"])
+    cone, todo = {symptom}, [symptom]
+    while todo:
+        for nxt in down.get(todo.pop(), []):
+            if nxt in alerting and nxt not in cone:
+                cone.add(nxt)
+                todo.append(nxt)
+    return cone
+
+
+def _footprint(g: Graph, service: str, alerts: list[dict], after: int, area: set[str], cache: dict,
+               cone: set[str] | None = None) -> dict:
+    """The fault simulator: if `service` broke at `after`, which alerting services would that explain?
+
+    A failure can only show up on the service itself and on what calls it. Of the services alerting in the
+    incident's area, the ones in that predicted footprint are explained; the rest need another cause."""
+    observed = {a["service"] for a in alerts if a["service"] in area}
+    reach = {service: 0, **_callers(g, service, cache)}
+    explained = sorted((svc for svc in observed if svc in reach and _alerted(alerts, svc, after)),
+                       key=lambda svc: (reach[svc], svc))
+    sequence = [{"service": svc, "distance": reach[svc], "at": _alerted(alerts, svc, after)["at"]} for svc in explained]
+    in_cone = observed & (cone or observed)
+    return {
+        "explained": explained,
+        "unexplained": sorted(observed - set(explained)),
+        "observed": len(observed),
+        "coverage": round(len(explained) / len(observed), 3) if observed else 0.0,
+        "cone": sorted(in_cone),
+        "cone_coverage": round(len(in_cone & set(explained)) / len(in_cone), 3) if in_cone else 0.0,
+        "sequence": sequence,
+        "in_order": all(a["at"] <= b["at"] for a, b in zip(sequence, sequence[1:]) if a["distance"] < b["distance"]),
+    }
+
+
+def simulate_failure(g: Graph, service: str) -> dict:
+    """What-if before you ship: if `service` failed now, the order in which the alerts would arrive,
+    the internet-facing entry points hit, and the teams that would be paged."""
+    cache: dict = {}
+    reach = _callers(g, service, cache)
+    if not g.read("MATCH (s:Service {name: $svc}) RETURN s.name AS s", {"svc": service}):
+        raise KeyError(f"no service {service}")
+    teams = g.read("""
+        MATCH (s:Service)-[:OWNED_BY]->(t:Team) WHERE s.name IN $svcs
+        OPTIONAL MATCH (p:Person {on_call: true})-[:MEMBER_OF]->(t)
+        RETURN t.name AS team, collect(DISTINCT s.name) AS services, collect(DISTINCT p.name) AS on_call""",
+                   {"svcs": [service, *reach]})
+    exposed = {r["service"] for r in g.read(
+        "MATCH (s:Service) WHERE s.name IN $svcs AND s.internet_exposed RETURN s.name AS service",
+        {"svcs": list(reach)})}
+    waves: dict[int, list[str]] = {}
+    for svc, d in sorted(reach.items(), key=lambda x: (x[1], x[0])):
+        waves.setdefault(d, []).append(svc)
+    return {"service": service, "waves": [{"distance": d, "services": v} for d, v in sorted(waves.items())],
+            "affected": len(reach), "internet_exposed": sorted(exposed), "teams_paged": teams,
+            "runbooks": runbooks(g, service)}
 
 
 def _precedent(g: Graph, service: str, kind: str | None) -> tuple[float, list[dict]]:
@@ -230,12 +338,13 @@ def also_explains(g: Graph, change: dict, exclude: str) -> list[dict]:
     inside their window, and alerts trace an unbroken path from it up to their symptom. One change behind
     several incidents means one fix for all of them."""
     out = []
-    for other in list_incidents(g, "open"):
-        if other["id"] == exclude:
-            continue
+    others = g.read("""
+        MATCH (i:Incident {status: 'open'})-[:SYMPTOM_ON]->(s:Service)
+        WHERE i.id <> $exclude AND i.started >= $at - $grace AND i.started <= $at + $window
+        RETURN i.id AS id, i.title AS title, i.started AS started, s.name AS symptom""",
+                    {"exclude": exclude, "at": change["at"], "grace": AFTER_GRACE_MIN * 60, "window": WINDOW_MIN * 60})
+    for other in others:
         start = other["started"]
-        if not (start - WINDOW_MIN * 60 <= change["at"] <= start + AFTER_GRACE_MIN * 60):
-            continue
         sym = other["symptom"]
         if change["service"] != sym and change["service"] not in {d["service"] for d in dependencies(g, sym)}:
             continue
@@ -247,7 +356,41 @@ def also_explains(g: Graph, change: dict, exclude: str) -> list[dict]:
     return out
 
 
-def rank_suspects(g: Graph, incident_id: str) -> dict:
+def _other_faults(g: Graph, suspects: list[dict], incident_id: str) -> list[dict]:
+    """Alerts the leading suspect can't explain point at independent faults. Greedily pick the suspects that
+    explain most of what is left, and name the open incidents those faults already belong to."""
+    if not suspects:
+        return []
+    left = set(suspects[0]["footprint"]["unexplained"])
+    anchor = get_incident(g, incident_id)["started"]
+    found = []
+    # An independent fault need not reach this symptom; it must explain leftover alerts on its own, in order.
+    pool = [s for s in suspects[1:] if len(s["footprint"]["explained"]) >= 2 and s["footprint"]["in_order"]]
+    while left and pool:
+        best = max(pool, key=lambda s: (len(left & set(s["footprint"]["explained"])), s["score"]))
+        hit = left & set(best["footprint"]["explained"])
+        if not hit:
+            break
+        linked = g.read("""
+            MATCH (i:Incident {status: 'open'})-[:SYMPTOM_ON]->(s:Service)
+            WHERE i.id <> $inc AND s.name IN $svcs AND abs(i.started - $at) <= $window
+            RETURN i.id AS id, i.title AS title""",
+                        {"inc": incident_id, "svcs": best["footprint"]["explained"], "at": anchor, "window": WINDOW_MIN * 60})
+        found.append({"service": best["service"], "change": best["change"], "type": best["type"],
+                      "explains": sorted(hit), "incidents": [{"id": i["id"], "title": i["title"]} for i in linked]})
+        left -= hit
+        pool.remove(best)
+    return found
+
+
+def runbooks(g: Graph, service: str) -> list[dict]:
+    """Procedural memory: how the team fixes things on this service."""
+    return g.read("""
+        MATCH (r:Runbook)-[:FOR_SERVICE]->(:Service {name: $svc})
+        RETURN r.id AS id, r.title AS title, r.when AS applies_to, r.steps AS steps""", {"svc": service})
+
+
+def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
     """Score every change on the symptom's dependency path, plus alerting dependencies with no change.
 
     Returns the ranked suspects with a per-factor breakdown, the path each one travels to the symptom,
@@ -260,6 +403,8 @@ def rank_suspects(g: Graph, incident_id: str) -> dict:
     changes = changes_near(g, on_path, start)
     alerts = alerts_near(g, on_path, start)
     first_symptom_alert = min((a["at"] for a in alerts if a["service"] == sym), default=start)
+    area, cache = set(on_path), {}
+    cone = _alert_cone(g, sym, area, alerts)
 
     suspects: list[dict] = []
     for c in changes:
@@ -267,55 +412,71 @@ def rank_suspects(g: Graph, incident_id: str) -> dict:
         paths = paths_between(g, sym, svc)
         best = max(((_alert_chain(p, alerts, c["at"]), p) for p in paths), key=lambda x: (x[0][0], -len(x[1])))
         (chain, chain_alerts), path = best
+        if _from_below(g, svc, cone, alerts, c["at"]):
+            chain *= 0.5  # the failure was already climbing from deeper down: this change is not where it started
         lag_min = (start - c["at"]) / 60
-        recency = math.exp(-max(lag_min, 0) / RECENCY_HALF_MIN * math.log(2)) if lag_min >= 0 else 0.3
+        recency = _recency(lag_min)
         prec, prec_rows = _precedent(g, svc, c["kind"])
+        fp = _footprint(g, svc, alerts, c["at"], area, cache, cone)
         factors = {
             "recency": round(recency, 3),
             "proximity": round(1 / (1 + hops[svc]), 3),
             "alert_chain": round(chain, 3),
             "risk": RISK.get(c["risk"] or "low", 0.2),
             "precedent": prec,
+            "footprint": fp["cone_coverage"],
         }
         suspects.append({
             "type": "change", "service": svc, "change": c, "hops": hops[svc], "path": path,
             "minutes_before": round(lag_min, 1), "factors": factors,
             "score": round(sum(WEIGHTS[k] * v for k, v in factors.items()), 3),
-            "evidence_alerts": chain_alerts, "precedents": prec_rows,
+            "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp,
         })
 
-    changed = {c["service"] for c in changes}
     alerting = {a["service"] for a in alerts}
-    for svc in alerting - changed - {sym}:
+    for svc in alerting - {sym}:
         # Only the deepest alerting services: if something below it is alerting too, that one is the lead.
         below = {d["service"] for d in dependencies(g, svc)} if svc in hops else set()
         if below & alerting:
             continue
         first = min(a["at"] for a in alerts if a["service"] == svc)
+        # A recent change on this service or beneath it explains the alert better than "it just broke":
+        # then this is a symptom (possibly of a silent cause below), not an independent failure.
+        before = [c for c in changes if c["service"] in below | {svc} and c["at"] <= first]
+        last = max((c["at"] for c in before), default=None)
+        recent = _recency((start - last) / 60) if last is not None else 0.0
+        if recent >= 0.5:
+            continue
         paths = paths_between(g, sym, svc)
         best = max(((_alert_chain(p, alerts, first - 1), p) for p in paths), key=lambda x: (x[0][0], -len(x[1])))
         (chain, chain_alerts), path = best
         prec, prec_rows = _precedent(g, svc, None)
+        fp = _footprint(g, svc, alerts, first - 1, area, cache, cone)
         factors = {
             "alert_chain": round(chain, 3),
             "earliness": 1.0 if first <= first_symptom_alert else 0.3,
             "precedent": prec,
             "proximity": round(1 / (1 + hops[svc]), 3),
+            "footprint": fp["cone_coverage"],
+            "unchanged": round(1 - recent, 3),
         }
         suspects.append({
             "type": "signal", "service": svc, "change": None, "hops": hops[svc], "path": path,
             "minutes_before": round((start - first) / 60, 1), "factors": factors,
             "score": round(sum(SIGNAL_WEIGHTS[k] * v for k, v in factors.items()), 3),
-            "evidence_alerts": chain_alerts, "precedents": prec_rows,
+            "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp,
         })
 
-    suspects.sort(key=lambda s: s["score"], reverse=True)
+    suspects.sort(key=lambda s: (s["score"], s["footprint"]["coverage"]), reverse=True)
+    suspects = suspects[:limit]
     for i, s in enumerate(suspects):
         s["recommended_action"] = _recommend(g, s)
         s["owner"] = who_owns(g, s["service"])
         s["also_explains"] = also_explains(g, s["change"], incident_id) if s["change"] and i < 3 else []
         if s["also_explains"]:
             s["recommended_action"]["also_for"] = [o["id"] for o in s["also_explains"]]
+
+    other_faults = _other_faults(g, suspects, incident_id)
 
     path_set = set(on_path)
     ruled_out = [
@@ -327,8 +488,8 @@ def rank_suspects(g: Graph, incident_id: str) -> dict:
     confidence = "none" if not top else "high" if top["score"] >= 0.75 and margin >= 0.2 else \
         "medium" if top["score"] >= 0.5 else "low"
     return {
-        "incident": inc, "dependency_count": len(deps), "suspects": suspects[:6],
-        "ruled_out": ruled_out, "confidence": confidence, "margin": margin,
+        "incident": inc, "dependency_count": len(deps), "suspects": suspects, "alert_cone": sorted(cone),
+        "ruled_out": ruled_out, "confidence": confidence, "margin": margin, "other_faults": other_faults,
         "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS},
     }
 
@@ -482,3 +643,78 @@ def stats(g: Graph) -> dict[str, Any]:
     labels = g.read("MATCH (n) RETURN labels(n)[0] AS label, count(n) AS n ORDER BY n DESC")
     edges = g.read("MATCH ()-[r]->() RETURN type(r) AS type, count(r) AS n ORDER BY n DESC")
     return {"nodes": {r["label"]: r["n"] for r in labels}, "edges": {r["type"]: r["n"] for r in edges}}
+
+
+# --- agent handoffs and scored links -------------------------------------------------------------
+
+ROLES = ("triage", "investigator", "responder")
+
+
+def new_run_id() -> str:
+    return "RUN-" + uuid.uuid4().hex[:8].upper()
+
+
+def write_handoff(g: Graph, incident_id: str, role: str, summary: str, data: dict | None = None,
+                  run_id: str | None = None) -> dict:
+    """An agent's output, written to the graph. The next agent reads it back from there, never from memory,
+    so a later session (or a different agent) can pick the incident up where this one stopped."""
+    if role not in ROLES:
+        raise ValueError(f"unknown role {role}")
+    get_incident(g, incident_id)
+    eid = "EP-" + uuid.uuid4().hex[:8].upper()
+    g.write("""
+        MATCH (i:Incident {id: $inc})
+        CREATE (e:Episode {id: $id, role: $role, run: $run, summary: $summary, data: $data, at: $at, wall_at: $wall})
+        CREATE (e)-[:ABOUT]->(i)
+        WITH e
+        OPTIONAL MATCH (prev:Episode {run: $run}) WHERE prev.id <> $id AND prev.wall_at <= $wall
+        WITH e, prev ORDER BY prev.wall_at DESC LIMIT 1
+        FOREACH (_ IN CASE WHEN prev IS NULL THEN [] ELSE [1] END | CREATE (e)-[:READ]->(prev))""",
+            {"inc": incident_id, "id": eid, "role": role, "run": run_id or eid, "summary": summary[:2000],
+             "data": json.dumps(data or {}, default=str)[:20000], "at": now(), "wall": time.time()})
+    return {"id": eid, "role": role, "run": run_id or eid}
+
+
+def read_handoff(g: Graph, incident_id: str, role: str | None = None, run_id: str | None = None) -> dict | None:
+    """The latest handoff on an incident (optionally from one role, or one investigation run)."""
+    rows = g.read("""
+        MATCH (e:Episode)-[:ABOUT]->(:Incident {id: $inc})
+        WHERE ($role IS NULL OR e.role = $role) AND ($run IS NULL OR e.run = $run)
+        RETURN e.id AS id, e.role AS role, e.run AS run, e.summary AS summary, e.data AS data
+        ORDER BY e.wall_at DESC LIMIT 1""", {"inc": incident_id, "role": role, "run": run_id})
+    if not rows:
+        return None
+    r = rows[0]
+    r["data"] = json.loads(r["data"] or "{}")
+    return r
+
+
+def record_suspicions(g: Graph, incident_id: str, ranking: dict) -> None:
+    """Keep the judge's verdicts as scored edges: (Incident)-[:SUSPECTED_CAUSE {score, rank}]->(Change|Service),
+    and (Incident)-[:SIMILAR_TO {score, reason}]->(past Incident) for every precedent it leaned on."""
+    g.write("MATCH (:Incident {id: $inc})-[r:SUSPECTED_CAUSE|SIMILAR_TO]->() DELETE r", {"inc": incident_id})
+    rows = [{"rank": i + 1, "score": s["score"], "change": (s["change"] or {}).get("id"), "service": s["service"],
+             "coverage": s["footprint"]["coverage"]} for i, s in enumerate(ranking["suspects"][:5])]
+    g.write("""
+        UNWIND $rows AS r
+        MATCH (i:Incident {id: $inc})
+        OPTIONAL MATCH (c:Change {id: r.change})
+        OPTIONAL MATCH (s:Service {name: r.service})
+        WITH i, r, CASE WHEN c IS NULL THEN s ELSE c END AS target
+        CREATE (i)-[:SUSPECTED_CAUSE {rank: r.rank, score: r.score, coverage: r.coverage, confidence: $conf}]->(target)""",
+            {"inc": incident_id, "rows": rows, "conf": ranking["confidence"]})
+    sims = {}
+    for s in ranking["suspects"][:3]:
+        for p in s["precedents"]:
+            kind = (s["change"] or {}).get("kind")
+            score = 1.0 if p["cause_kind"] == kind or (kind is None and p["cause_kind"] not in ("deploy", "config", "flag")) else 0.5
+            score = round(score * s["score"], 3)
+            if score > sims.get(p["incident"], {}).get("score", 0):
+                sims[p["incident"]] = {"past": p["incident"], "score": score,
+                                       "reason": f"{p['cause_kind']} on {s['service']}: {p['cause']}"}
+    if sims:
+        g.write("""
+            UNWIND $sims AS x
+            MATCH (i:Incident {id: $inc}), (p:Incident {id: x.past})
+            CREATE (i)-[:SIMILAR_TO {score: x.score, reason: x.reason}]->(p)""",
+                {"inc": incident_id, "sims": list(sims.values())})

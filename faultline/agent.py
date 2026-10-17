@@ -34,8 +34,11 @@ TOOL_SPECS: list[dict] = [
     {"name": "rank_suspects", "description": (
         "Deterministic judge. Scores every deploy/config/flag change on the symptom's dependency path (and alerting "
         "dependencies with no change) by recency, hop distance, whether alerts trace an unbroken path back to the "
-        "symptom, change risk, and precedent from resolved incidents. Returns ranked suspects with factor "
-        "breakdowns, paths, owners, recommended actions, and changes ruled out as off-path. Start here."),
+        "symptom in the right order, change risk, and precedent from resolved incidents. Each suspect carries a "
+        "footprint: which alerting services it would explain (coverage) and whether they alerted in the predicted "
+        "order. Also returns other_faults (independent faults behind the alerts the leader can't explain), "
+        "also_explains (other open incidents with the same cause), owners, recommended actions, and changes ruled "
+        "out as off-path."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
     {"name": "dependencies", "description": "Services a service calls, directly or transitively, with hop counts.",
      "input_schema": _obj({"service": S, "max_hops": {"type": "integer", "minimum": 1, "maximum": 5}}, ["service"])},
@@ -69,6 +72,14 @@ TOOL_SPECS: list[dict] = [
                            "target": S, "summary": S, "change_id": S, "reason": S,
                            "also_for": {"type": "array", "items": S}},
                           ["incident_id", "kind", "target", "summary"])},
+    {"name": "simulate_failure", "description": "What-if: if this service failed, the waves in which alerts would arrive, internet-facing entry points hit, teams paged, and its runbooks.",
+     "input_schema": _obj({"service": S}, ["service"])},
+    {"name": "runbooks", "description": "The team's runbooks for a service: when each applies and its steps.",
+     "input_schema": _obj({"service": S}, ["service"])},
+    {"name": "read_handoff", "description": "Read the previous agent's handoff for this incident from the graph. role: triage or investigator.",
+     "input_schema": _obj({"incident_id": S, "role": {"type": "string", "enum": ["triage", "investigator"]}}, ["incident_id", "role"])},
+    {"name": "write_handoff", "description": "Write your handoff to the graph for the next agent: a short summary plus the facts it needs. Call once, last.",
+     "input_schema": _obj({"incident_id": S, "summary": S, "data": {"type": "object"}}, ["incident_id", "summary"])},
     {"name": "submit_findings", "description": "Finish an incident investigation. Call exactly once, last.",
      "input_schema": _obj({
          "incident_id": S,
@@ -86,8 +97,13 @@ def _start(g: Graph, incident_id: str) -> int:
     return tools.get_incident(g, incident_id)["started"]
 
 
-def _dispatch(g: Graph) -> dict[str, Callable[..., Any]]:
+def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> dict[str, Callable[..., Any]]:
     return {
+        "simulate_failure": lambda service: tools.simulate_failure(g, service),
+        "runbooks": lambda service: tools.runbooks(g, service),
+        "read_handoff": lambda incident_id, role: tools.read_handoff(g, incident_id, role, run_id),
+        "write_handoff": lambda incident_id, summary, data=None:
+            tools.write_handoff(g, incident_id, role or "investigator", summary, data, run_id),
         "get_incident": lambda incident_id: tools.get_incident(g, incident_id),
         "rank_suspects": lambda incident_id: tools.rank_suspects(g, incident_id),
         "dependencies": lambda service, max_hops=tools.MAX_HOPS: tools.dependencies(g, service, max_hops),
@@ -106,11 +122,12 @@ def _dispatch(g: Graph) -> dict[str, Callable[..., Any]]:
     }
 
 
-def call_tool(tenant: str, name: str, args: dict) -> tuple[Any, list[dict], str | None]:
+def call_tool(tenant: str, name: str, args: dict, run_id: str | None = None,
+              role: str | None = None) -> tuple[Any, list[dict], str | None]:
     """Run one tool against a fresh trace. Returns (result, cypher trace, error)."""
     trace = Trace()
     g = Graph(tenant, trace)
-    fn = _dispatch(g).get(name)
+    fn = _dispatch(g, run_id, role).get(name)
     if fn is None:
         return None, [], f"unknown tool {name}"
     try:
@@ -121,13 +138,15 @@ def call_tool(tenant: str, name: str, args: dict) -> tuple[Any, list[dict], str 
         return None, trace.queries, f"{type(e).__name__}: {e}"
 
 
-def _step(name: str, args: dict, result: Any, queries: list[dict], error: str | None, note: str = "") -> dict:
-    return {"tool": name, "input": args, "result": result, "cypher": queries, "error": error, "note": note}
+def _step(name: str, args: dict, result: Any, queries: list[dict], error: str | None, note: str = "",
+          role: str | None = None) -> dict:
+    return {"tool": name, "input": args, "result": result, "cypher": queries, "error": error, "note": note,
+            "role": role}
 
 
 # --- offline playbook ---------------------------------------------------------------------------
 
-def _narrate(ranking: dict) -> dict:
+def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
     inc = ranking["incident"]
     sus = ranking["suspects"]
     if not sus:
@@ -141,6 +160,16 @@ def _narrate(ranking: dict) -> dict:
     ev += [f"Precedent {p['incident']}: {p['cause']} → {p['fix_summary']}" for p in top["precedents"][:2]]
     ev += [f"Same change also explains {o['id']} ({o['title']}): alerts trace {' → '.join(o['path'])}"
            for o in top.get("also_explains", [])]
+    fp = top["footprint"]
+    seq = " → ".join(f"{x['service']} {_hhmm(x['at'])}" for x in fp["sequence"])
+    ev.append(f"Footprint: explains {len(fp['explained'])} of {fp['observed']} alerting services"
+              + (f", in the predicted order ({seq})" if fp["in_order"] and seq else f" ({seq})" if seq else ""))
+    for o in ranking.get("other_faults", []):
+        who = (o["change"] or {}).get("id") or f"{o['service']} (no change)"
+        inc_ids = ", ".join(i["id"] for i in o["incidents"])
+        ev.append(f"Independent fault: {who} explains {', '.join(o['explains'])}" + (f", already {inc_ids}" if inc_ids else ""))
+    for b in (books or [])[:1]:
+        ev.append(f"Runbook {b['id']} “{b['title']}”: " + "; ".join(b["steps"][:3]))
     if top["type"] == "change":
         c = top["change"]
         ev.insert(0, f"{c['id']} by {c['author']} at {_hhmm(c['at'])}, {top['minutes_before']:g} min before the incident: {c['summary']}")
@@ -156,6 +185,12 @@ def _narrate(ranking: dict) -> dict:
                    f"{top['service']} started alerting first, {top['minutes_before']:g} minutes before the incident, and the "
                    f"alerts follow the path {path}. Treat it as an infrastructure failure on {top['service']}: page "
                    f"{top['owner']['on_call']['name'] if top['owner'].get('on_call') else top['owner']['team']} ({top['owner']['team']}).")
+    if ranking.get("other_faults"):
+        parts = [f"{(o['change'] or {}).get('id') or o['service']}"
+                 + (f" ({', '.join(i['id'] for i in o['incidents'])})" if o["incidents"] else "")
+                 for o in ranking["other_faults"]]
+        summary += (f" It explains only {len(fp['explained'])} of the {fp['observed']} alerting services below "
+                    f"{inc['symptom']}; the rest come from independent faults: {', '.join(parts)}.")
     ruled = [f"{s['change']['id'] if s['change'] else s['service']} on {s['service']} scored {s['score']} "
              f"(alert chain {s['factors']['alert_chain']})" for s in sus[1:4]]
     ruled += [f"{c['id']} on {c['service']}: not on the dependency path" for c in ranking["ruled_out"][:4]]
@@ -163,40 +198,76 @@ def _narrate(ranking: dict) -> dict:
             "confidence": ranking["confidence"], "summary": summary, "evidence": ev, "ruled_out": ruled}
 
 
-def investigate_offline(tenant: str, incident_id: str, propose: bool = True) -> dict:
-    steps = []
+def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run_id: str | None = None) -> dict:
+    """Three agents in sequence. None passes anything to the next in code: each writes a handoff Episode to
+    the graph and the next one starts by reading it back."""
+    steps: list[dict] = []
+    run_id = run_id or tools.new_run_id()
 
-    def run(name: str, note: str, **args):
-        res, q, err = call_tool(tenant, name, args)
-        steps.append(_step(name, args, res, q, err, note))
+    def run(agent: str, name: str, note: str, **args):
+        res, q, err = call_tool(tenant, name, args, run_id, agent)
+        steps.append(_step(name, args, res, q, err, note, agent))
         if err:
             raise RuntimeError(err)
         return res
 
-    inc = run("get_incident", "Read the incident and the alerts on its symptom.", incident_id=incident_id)
-    run("past_investigations", "Check what earlier investigations of this incident concluded.", incident_id=incident_id)
-    run("dependencies", f"Walk everything {inc['symptom']} depends on.", service=inc["symptom"])
-    ranking = run("rank_suspects", "Score every change and alerting dependency on that path.", incident_id=incident_id)
+    # Triage: what is broken, what sits under it, what changed and what is alerting.
+    inc = run("triage", "get_incident", "Read the incident and the alerts on its symptom.", incident_id=incident_id)
+    run("triage", "past_investigations", "Check what earlier investigations of this incident concluded.", incident_id=incident_id)
+    deps = run("triage", "dependencies", f"Walk everything {inc['symptom']} depends on.", service=inc["symptom"])
+    area = [inc["symptom"]] + [d["service"] for d in deps]
+    changes = run("triage", "changes_near", "List deploys, config and flag changes on that path in the last two hours.",
+                  incident_id=incident_id, services=area)
+    alerts = run("triage", "alerts_near", "List what is alerting on that path.", incident_id=incident_id, services=area)
+    alerting = sorted({a["service"] for a in alerts})
+    run("triage", "write_handoff", "Hand off to the investigator through the graph.", incident_id=incident_id,
+        summary=f"{inc['symptom']} is failing. {len(deps)} services below it, {len(changes)} recent changes, "
+                f"{len(alerting)} alerting: {', '.join(alerting)}.",
+        data={"symptom": inc["symptom"], "changes": [c["id"] for c in changes], "alerting": alerting})
+
+    # Investigator: score the suspects, simulate each one's footprint, check precedent.
+    run("investigator", "read_handoff", "Pick up triage's handoff from the graph.", incident_id=incident_id, role="triage")
+    ranking = run("investigator", "rank_suspects",
+                  "Score every suspect and simulate its footprint: what it would break, and in what order.",
+                  incident_id=incident_id)
     top = ranking["suspects"][0] if ranking["suspects"] else None
     if top:
-        run("similar_incidents", f"Look for resolved incidents caused on {top['service']}.", service=top["service"])
-        run("blast_radius", f"See who else is hurt while {top['service']} is broken.", service=top["service"])
-        run("who_owns", f"Find who owns {top['service']} and who is on call.", service=top["service"])
+        run("investigator", "similar_incidents", f"Look for resolved incidents caused on {top['service']}.", service=top["service"])
+        run("investigator", "simulate_failure", f"Predict how a failure of {top['service']} spreads.", service=top["service"])
+    run("investigator", "write_handoff", "Hand off to the responder through the graph.", incident_id=incident_id,
+        summary=(f"Leading suspect {(top['change'] or {}).get('id') or top['service']} on {top['service']} "
+                 f"(score {top['score']}, {ranking['confidence']} confidence), explains "
+                 f"{len(top['footprint']['explained'])} of {top['footprint']['observed']} alerting services.")
+        if top else "No suspect found.",
+        data={"service": top["service"] if top else None, "change_id": (top["change"] or {}).get("id") if top else None,
+              "confidence": ranking["confidence"], "action": top["recommended_action"] if top else None,
+              "other_faults": ranking["other_faults"]})
+
+    # Responder: who to page, which runbook applies, and the fix to propose.
+    handoff = run("responder", "read_handoff", "Pick up the investigator's handoff from the graph.",
+                  incident_id=incident_id, role="investigator")
+    act = (handoff or {}).get("data", {}).get("action")
+    if act:
+        run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
+        run("responder", "runbooks", f"Find the runbook for {act['target']}.", service=act["target"])
         if propose:
-            ra = top["recommended_action"]
-            run("propose_action", "Propose the fix. A human approves it before anything happens.",
-                incident_id=incident_id, kind=ra["kind"], target=ra["target"], summary=ra["summary"],
-                change_id=ra.get("change_id"), reason=f"Top suspect, score {top['score']}",
-                also_for=ra.get("also_for"))
-    findings = _narrate(ranking)
-    return {"mode": "offline", "incident_id": incident_id, "steps": steps, "findings": findings,
+            run("responder", "propose_action", "Propose the fix. A human approves it before anything happens.",
+                incident_id=incident_id, kind=act["kind"], target=act["target"], summary=act["summary"],
+                change_id=act.get("change_id"), reason=f"Top suspect, score {top['score']}",
+                also_for=act.get("also_for"))
+    findings = _narrate(ranking, tools.runbooks(Graph(tenant), top["service"]) if top else [])
+    run("responder", "write_handoff", "Record the outcome in the graph.", incident_id=incident_id,
+        summary=findings["summary"], data={"change_id": findings["change_id"]})
+    return {"mode": "offline", "incident_id": incident_id, "run_id": run_id, "steps": steps, "findings": findings,
             "ranking": ranking, "answer": findings["summary"]}
 
 
 _ASK_ROUTES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(INC-\d+)\b", re.I), "investigate"),
     (re.compile(r"who (owns|is on.?call for|runs|knows)\s+([\w-]+)", re.I), "who_owns"),
-    (re.compile(r"(what breaks|blast radius|who depends on|impact of)\b.*?\b([\w-]+)\s*(goes down|fails|\?|$)", re.I), "blast_radius"),
+    (re.compile(r"(what breaks|what if|simulate|before (i|we) ship)\b.*?\b([\w-]+)\s*(goes down|fails|\?|$)", re.I), "simulate_failure"),
+    (re.compile(r"(blast radius|who depends on|impact of)\b.*?\b([\w-]+)\s*(goes down|fails|\?|$)", re.I), "blast_radius"),
+    (re.compile(r"(runbook|how do (i|we) fix)\b.*?([\w-]+)?", re.I), "runbooks"),
     (re.compile(r"(before|history|similar|past incidents?|again)\b.*?([\w-]+)?", re.I), "similar_incidents"),
     (re.compile(r"(critical|important|pagerank|single points?)", re.I), "critical_services"),
 ]
@@ -216,7 +287,7 @@ def ask_offline(tenant: str, question: str) -> dict:
             res, q, err = call_tool(tenant, route, args)
             answer = "Most critical by PageRank: " + ", ".join(f"{r['service']} ({r['score']})" for r in res or [])
         else:
-            svc = mentioned[-1] if mentioned else (None if route == "similar_incidents" else m.group(2))
+            svc = mentioned[-1] if mentioned else (None if route in ("similar_incidents", "runbooks", "simulate_failure") else m.group(2))
             if not svc:
                 continue
             args = {"service": svc}
@@ -240,6 +311,16 @@ def _summarize(route: str, svc: str, res: Any, err: str | None) -> str:
         return (f"If {svc} fails, {len(res['callers'])} services are affected: "
                 + ", ".join(f"{c['service']} ({c['hops']} hop{'s' if c['hops'] != 1 else ''})" for c in res["callers"])
                 + f". Internet-facing: {', '.join(res['exposed_entry_points']) or 'none'}. PageRank rank #{res['criticality_rank']}.")
+    if route == "simulate_failure":
+        waves = "; then ".join(", ".join(w["services"]) for w in res["waves"])
+        teams = ", ".join(f"{t['team']} ({', '.join(t['on_call']) or 'no on-call'})" for t in res["teams_paged"])
+        return (f"If {svc} fails, alerts arrive in waves: {waves}. {res['affected']} services affected; internet-facing: "
+                f"{', '.join(res['internet_exposed']) or 'none'}. Teams paged: {teams}."
+                + (f" Runbook: {res['runbooks'][0]['title']}." if res["runbooks"] else ""))
+    if route == "runbooks":
+        if not res:
+            return f"No runbook for {svc} yet."
+        return " ".join(f"{r['id']} {r['title']} (for {r['applies_to']} problems): " + "; ".join(r["steps"]) + "." for r in res)
     if route == "similar_incidents":
         if not res:
             return f"No resolved incident was caused on {svc}."
@@ -274,21 +355,48 @@ For a plain question (not an incident), answer in a few sentences from tool resu
 people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; times in the graph are epoch seconds."""
 
 
-def run_claude(tenant: str, prompt: str, incident_id: str | None) -> dict:
+ROLE_TOOLS = {
+    "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
+    "investigator": ["read_handoff", "rank_suspects", "alerts_near", "paths_between", "similar_incidents",
+                     "simulate_failure", "run_cypher", "write_handoff"],
+    "responder": ["read_handoff", "who_owns", "runbooks", "blast_radius", "propose_action", "submit_findings"],
+}
+ROLE_BRIEF = {
+    "triage": "You are the TRIAGE agent. Establish what is failing, everything it depends on, what changed on that "
+              "path in the last two hours and what is alerting. Do not pick a cause. Finish with write_handoff: a "
+              "two-sentence summary plus data {symptom, changes, alerting}.",
+    "investigator": "You are the INVESTIGATOR agent. Start with read_handoff(role='triage'), then rank_suspects. Check "
+                    "the leader yourself: its footprint (does it explain the alerting services, in order?), its "
+                    "precedents, and other_faults for alerts it cannot explain. Finish with write_handoff: summary "
+                    "plus data {service, change_id, confidence, action, other_faults}, where action is the leader's "
+                    "recommended_action.",
+    "responder": "You are the RESPONDER agent. Start with read_handoff(role='investigator'). Find the owner and on-call, "
+                 "read the runbook, then propose_action exactly once (with also_for when the cause also explains other "
+                 "open incidents). Finish with submit_findings.",
+}
+ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "similar_incidents", "who_owns",
+             "blast_radius", "simulate_failure", "critical_services", "runbooks", "run_cypher"]
+
+
+def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,
+               run_id: str | None = None) -> dict:
     import anthropic
 
     client = anthropic.Anthropic()
+    names = ROLE_TOOLS[role] if role else ASK_TOOLS
+    specs = [t for t in TOOL_SPECS if t["name"] in names]
+    system = _system(tenant) + (f"\n\n{ROLE_BRIEF[role]}" if role else "")
     messages: list[dict] = [{"role": "user", "content": prompt}]
     steps: list[dict] = []
     findings = None
     answer = ""
-    system = _system(tenant)
+    done_tool = {"triage": "write_handoff", "investigator": "write_handoff", "responder": "submit_findings"}.get(role)
     for _ in range(MAX_TURNS):
         resp = client.beta.messages.create(
             model=MODEL,
             max_tokens=16000,
             system=system,
-            tools=TOOL_SPECS,
+            tools=specs,
             messages=messages,
             thinking={"type": "adaptive", "display": "summarized"},
             output_config={"effort": "medium"},
@@ -307,40 +415,60 @@ def run_claude(tenant: str, prompt: str, incident_id: str | None) -> dict:
             answer = "\n".join(texts)
         if resp.stop_reason != "tool_use" or not uses:
             break
-        results = []
+        results, finished = [], False
         for i, u in enumerate(uses):
             args = dict(u.input) if isinstance(u.input, dict) else {}
-            res, q, err = call_tool(tenant, u.name, args)
+            if u.name not in names:
+                res, q, err = None, [], f"{u.name} is not available to the {role or 'question'} agent"
+            else:
+                res, q, err = call_tool(tenant, u.name, args, run_id, role)
             if u.name == "submit_findings" and not err:
                 findings = args
-            steps.append(_step(u.name, args, res, q, err, note=(thoughts[-1] if thoughts and i == 0 else "")))
+            finished = finished or (u.name == done_tool and not err)
+            steps.append(_step(u.name, args, res, q, err, note=(thoughts[-1] if thoughts and i == 0 else ""), role=role))
             content = err if err else json.dumps(res, default=str)[:RESULT_CHARS]
             results.append({"type": "tool_result", "tool_use_id": u.id, "content": content, "is_error": bool(err)})
         messages.append({"role": "user", "content": results})
-        if findings:
-            answer = findings.get("summary", answer)
+        if finished:
+            if findings:
+                answer = findings.get("summary", answer)
             break
     out = {"mode": "claude", "model": MODEL, "steps": steps, "findings": findings, "answer": answer,
            "incident_id": incident_id}
-    if incident_id:
+    if incident_id and not role:
         out["ranking"] = tools.rank_suspects(Graph(tenant), incident_id)
     return out
+
+
+def investigate_claude(tenant: str, incident_id: str, run_id: str) -> dict:
+    """Three Claude agents with separate tools; the only channel between them is the graph."""
+    steps: list[dict] = []
+    out: dict = {}
+    for role in tools.ROLES:
+        out = run_claude(tenant, f"Incident {incident_id}.", incident_id, role=role, run_id=run_id)
+        steps += out["steps"]
+    ranking = tools.rank_suspects(Graph(tenant), incident_id)
+    findings = out.get("findings") or _narrate(ranking)
+    return {"mode": "claude", "model": MODEL, "incident_id": incident_id, "run_id": run_id, "steps": steps,
+            "findings": findings, "answer": findings.get("summary", ""), "ranking": ranking}
 
 
 # --- entry points -------------------------------------------------------------------------------
 
 def investigate(tenant: str, incident_id: str) -> dict:
+    run_id = tools.new_run_id()
     if claude_available():
         try:
-            out = run_claude(tenant, f"Investigate {incident_id}. Find the root cause, propose a fix, then submit findings.",
-                             incident_id)
+            out = investigate_claude(tenant, incident_id, run_id)
         except Exception as e:  # API down or key rejected: the demo still works
-            out = investigate_offline(tenant, incident_id)
+            out = investigate_offline(tenant, incident_id, run_id=tools.new_run_id())
             out["fallback_reason"] = f"{type(e).__name__}: {e}"[:300]
     else:
-        out = investigate_offline(tenant, incident_id)
+        out = investigate_offline(tenant, incident_id, run_id=run_id)
+    g = Graph(tenant)
+    tools.record_suspicions(g, incident_id, out["ranking"])
     out["investigation_id"] = tools.record_investigation(
-        Graph(tenant), incident_id, out["mode"], out["ranking"], out.get("answer") or "", len(out["steps"]))
+        g, incident_id, out["mode"], out["ranking"], out.get("answer") or "", len(out["steps"]))
     return out
 
 
