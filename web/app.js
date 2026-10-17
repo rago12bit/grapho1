@@ -385,8 +385,12 @@ function renderActions(inc) {
   const rb = $("#resolve");
   if (rb) rb.addEventListener("click", async () => {
     rb.disabled = true;
-    const body = { lesson: $("#lesson").value.trim() || "Resolved.", change_id: f?.change_id || null,
-      cause_service: f?.change_id ? null : (f?.root_cause_service || null) };
+    // The cause: this view's verdict, else the change the executed fix reverted, else the last investigation's.
+    const fixed = acts.find((a) => a.status === "executed" && a.change_id);
+    const last = inc.investigations?.[0];
+    const changeId = f?.change_id || fixed?.change_id || last?.top_change || null;
+    const body = { lesson: $("#lesson").value.trim() || "Resolved.", change_id: changeId,
+      cause_service: changeId ? null : (f?.root_cause_service || last?.top_service || null) };
     await api(`/api/${state.tenant}/incidents/${inc.id}/resolve`, { method: "POST", body: JSON.stringify(body) });
     const fresh = await api(`/api/${state.tenant}/incidents/${inc.id}`);
     renderActions(fresh);

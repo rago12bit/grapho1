@@ -16,10 +16,12 @@ await fetch(`${APP}/api/reset`, { method: "POST" });           // start from the
 fs.mkdirSync(outDir, { recursive: true });
 const browser = await chromium.launch();
 const ctx = await browser.newContext({ viewport: { width: W, height: H }, recordVideo: { dir: outDir, size: { width: W, height: H } } });
-const HOLD = { s7_inc303: 1500, s3_inc301: 1000 };  // extra time where the UI needs longer than the narration
+const HOLD = { s7_inc303: 800, s3_inc301: 600, s7d_memory: 800 };  // extra time where the UI needs it
 const page = await ctx.newPage();
 const t0 = Date.now();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const PACE = 0.6;                                   // the walkthrough runs at the same 1.5x pace as the voice
+const pause = (ms) => sleep(ms * PACE);
 const timeline = [];
 
 // A visible cursor (headless video has none) and the title/number cards drawn over the app.
@@ -68,8 +70,8 @@ async function click(selector, text) {
   const el = text ? page.locator(selector, { hasText: text }).first() : page.locator(selector).first();
   await el.scrollIntoViewIfNeeded();
   const b = await el.boundingBox();
-  await page.mouse.move(b.x + Math.min(b.width / 2, 120), b.y + b.height / 2, { steps: 25 });
-  await sleep(250);
+  await page.mouse.move(b.x + Math.min(b.width / 2, 120), b.y + b.height / 2, { steps: 14 });
+  await sleep(150);
   await page.mouse.down(); await sleep(90); await page.mouse.up();
   await el.click({ force: true }).catch(() => {});
 }
@@ -85,7 +87,7 @@ async function scrollRight(selector, block = "start", offset = 0) {
 async function scene(id, body) {
   const start = (Date.now() - t0) / 1000;
   timeline.push({ id, start, text: narration.find((n) => n.id === id).text, duration: durations[id] });
-  const until = Date.now() + durations[id] * 1000 + 700 + (HOLD[id] || 0);   // the clip, a short breath, any hold
+  const until = Date.now() + durations[id] * 1000 + 300 + (HOLD[id] || 0);   // the clip, a short breath, any hold
   await body();
   const left = until - Date.now();
   if (left > 0) await sleep(left);
@@ -120,72 +122,108 @@ const closeCard = `<div style="text-align:center;zoom:.75">
   <div style="font-size:24px;color:#8a93a0;margin-top:26px">github.com/rago12bit/grapho1 · FalkorDB · Graph Hacks 2026</div></div>`;
 
 await card(titleCard);
-await sleep(600);
+await pause(600);
 await scene("s1_title", async () => {});
 await uncard();
 
 await scene("s2_graph", async () => {
-  await page.mouse.move(W * 0.45, H * 0.35, { steps: 40 });
-  await sleep(3000);
-  await page.mouse.move(W * 0.55, H * 0.55, { steps: 60 });
-  await sleep(4000);
-  await page.mouse.move(250, 330, { steps: 40 });
+  await page.mouse.move(W * 0.45, H * 0.35, { steps: 25 });
+  await pause(2500);
+  await page.mouse.move(W * 0.55, H * 0.55, { steps: 30 });
+  await pause(2500);
+  await page.mouse.move(250, 330, { steps: 20 });
 });
 
 await scene("s3_inc301", async () => {
   await click("#incident-list button", "INC-301");
-  await sleep(2200);
+  await pause(1500);
   await click("#go");
-  await page.mouse.move(W * 0.42, H * 0.92, { steps: 30 });   // out of the way of the case file
+  await page.mouse.move(W * 0.42, H * 0.92, { steps: 20 });   // out of the way of the case file
   await page.waitForSelector(".verdict", { timeout: 30000 });
-  await sleep(1500);
+  await pause(800);
   await scrollRight("#steps", "start", 20);
 });
 
 await scene("s4_verdict", async () => {
   await scrollRight(".verdict", "start", 16);
-  await sleep(6000);
+  await pause(5000);
   await scrollRight(".skeptic-box", "center");
-  await sleep(9000);
+  await pause(7000);
   await scrollRight(".shared", "center");
 });
 
 await scene("s5_approve", async () => {
   await scrollRight(".action", "center");
-  await sleep(1400);
+  await pause(1200);
   await click("button[data-a][data-ok='1']");
-  await sleep(1500);
-  await page.mouse.move(200, 300, { steps: 30 });
+  await pause(1000);
+  await page.mouse.move(200, 300, { steps: 20 });
 });
 
 await scene("s6_inc302", async () => {
   await click("#incident-list button", "INC-302");
-  await sleep(1800);
+  await pause(1200);
   await click("#go");
-  await page.mouse.move(W * 0.42, H * 0.92, { steps: 30 });
+  await page.mouse.move(W * 0.42, H * 0.92, { steps: 20 });
   await page.waitForSelector(".groups", { timeout: 30000 });
-  await sleep(2500);
+  await pause(1500);
   await scrollRight(".groups", "center");
-  await sleep(6000);
+  await pause(5000);
   await scrollRight(".others", "center");
 });
 
 // INC-303: let the agents run first, so the narration starts when the verdict is on screen.
 await click("#incident-list button", "INC-303");
-await sleep(1200);
+await pause(1000);
 await click("#go");
-await page.mouse.move(W * 0.42, H * 0.92, { steps: 30 });
+await page.mouse.move(W * 0.42, H * 0.92, { steps: 20 });
 await page.waitForSelector(".verdict", { timeout: 30000 });
-await sleep(1000);
+await pause(800);
 await scrollRight(".verdict", "start", 16);
-await sleep(900);
+await pause(600);
 await scene("s7_inc303", async () => {});
+
+await scene("s7b_cypher", async () => {
+  const sum = page.locator("#steps li", { hasText: "alert_clusters(" }).locator("summary").first();
+  await scrollRight("#steps li:nth-child(1)", "start", 0);
+  await page.evaluate(() => {
+    const li = [...document.querySelectorAll("#steps li")].find((x) => x.textContent.includes("alert_clusters("));
+    li?.scrollIntoView({ block: "start", behavior: "smooth" });
+  });
+  await pause(900);
+  const b = await sum.boundingBox();
+  await page.mouse.move(b.x + 40, b.y + b.height / 2, { steps: 14 });
+  await sum.click();
+  await pause(600);
+  await page.mouse.move(W * 0.42, H * 0.92, { steps: 14 });
+});
+
+await scene("s7c_whatif", async () => {
+  await click(".chips button", "what breaks if ledger-db");
+  await pause(800);
+  await page.evaluate(() => document.querySelector(".right").scrollTo({ top: 0 }));
+  await page.mouse.move(W * 0.5, H * 0.45, { steps: 20 });
+});
+
+await scene("s7d_memory", async () => {
+  await click("#incident-list button", "INC-301");
+  await pause(900);
+  await scrollRight("#lesson", "center");
+  await pause(500);
+  await click("#lesson");
+  await page.keyboard.type("Pool limits on payments-db need a load test before they ship.", { delay: 18 });
+  await pause(300);
+  await click("#resolve");
+  await pause(900);
+  await click(".tab", "Memory");
+  await page.mouse.move(W * 0.5, H * 0.6, { steps: 14 });   // off the memory card
+});
 
 await card(evalCard);
 await scene("s8_eval", async () => {});
 await card(closeCard);
 await scene("s9_close", async () => {});
-await sleep(1200);
+await pause(1000);
 
 const video = page.video();
 await ctx.close();

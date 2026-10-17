@@ -1,8 +1,9 @@
 """Mix the recorded run and the voiceover into the final MP4 with burned-in captions.
 
-    docker run --rm -v "$PWD/data/demo:/w" -v "$PWD/demo:/demo" faultline-ffmpeg python /demo/mix.py /w
+    docker run --rm -v "$PWD/data/demo:/w" -v "$PWD/demo:/demo" faultline-ffmpeg python /demo/mix.py /w [audio-subdir]
 
-Inputs in <dir>: rec/video.webm, rec/timeline.json (scene start times from record.mjs), audio/<scene>.mp3.
+Inputs in <dir>: rec/video.webm, rec/timeline.json (scene start times from record.mjs), <audio-subdir>/<scene>.mp3
+(default audio/; the 1.5x clips live in audio_fast/).
 Outputs: captions.srt and faultline-demo.mp4 (1920x1080, H.264 + AAC).
 """
 import json
@@ -15,6 +16,7 @@ OFFSET = -0.25      # the video starts ~0.25 s before the recorder's clock (meas
 TAIL = 1.5          # seconds of picture after the last line
 
 d = Path(sys.argv[1])
+audio = d / (sys.argv[2] if len(sys.argv) > 2 else "audio")
 timeline = json.loads((d / "rec" / "timeline.json").read_text())
 
 
@@ -61,7 +63,7 @@ end = timeline[-1]["start"] + OFFSET + timeline[-1]["duration"] + TAIL
 inputs = ["-i", str(d / "rec" / "video.webm")]
 delays = []
 for i, sc in enumerate(timeline, start=1):
-    inputs += ["-i", str(d / "audio" / f"{sc['id']}.mp3")]
+    inputs += ["-i", str(audio / f"{sc['id']}.mp3")]
     ms = int(round((sc["start"] + OFFSET) * 1000))
     delays.append(f"[{i}:a]adelay={ms}|{ms},aresample=48000[a{i}]")
 style = ("FontName=DejaVu Sans,FontSize=11,PrimaryColour=&H00FFFFFF,BackColour=&H99000000,"
