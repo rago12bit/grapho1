@@ -88,6 +88,8 @@ function start() {
     kestrel: "A synthetic payments company with planted faults: the place to watch the whole story.",
     boutique: "Real failures from the public RCAEval benchmark (Online Boutique): real call graph, real metrics, real root causes, and owners from the project's own CODEOWNERS and commit history.",
     harbor: "A tiny second company. Its own graph: nothing leaks between tenants.",
+    sockshop: "Every Sock Shop failure in RCAEval RE2 and RE3 (120 cases, code-level faults included): real metrics and logs, the call graph from the project's own code, real root causes.",
+    trainticket: "Every Train Ticket failure in RCAEval RE2 and RE3 (120 cases): 68 services, an operation-level call graph from real traces with traffic and latency on each call, error log patterns, real root causes.",
   }[state.tenant] || "";
   box.innerHTML = `<div class="start fade-in">
     <span class="label">Start here</span>

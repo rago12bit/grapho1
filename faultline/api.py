@@ -160,7 +160,8 @@ def health():
 
 
 # What each company's data is, said plainly in the UI next to its name.
-DATA_KIND = {"kestrel": "synthetic company", "boutique": "real telemetry (RCAEval) · real owners", "harbor": "synthetic company"}
+DATA_KIND = {"kestrel": "synthetic company", "boutique": "real telemetry (RCAEval) · real owners", "harbor": "synthetic company",
+             "sockshop": "real telemetry and logs (RCAEval RE2 + RE3)", "trainticket": "real telemetry, traces and logs (RCAEval RE2 + RE3)"}
 
 
 @app.get("/api/tenants")

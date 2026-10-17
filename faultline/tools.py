@@ -25,6 +25,11 @@ WEIGHTS = {"recency": 0.20, "proximity": 0.05, "alert_chain": 0.30, "risk": 0.15
 SIGNAL_WEIGHTS = {"alert_chain": 0.25, "earliness": 0.15, "precedent": 0.15, "proximity": 0.05, "footprint": 0.20,
                   "unchanged": 0.20}
 HOUR_S = 3600
+SYMPTOM_CAN_BE_CAUSE = True
+# Where alerts carry an anomaly strength (how many standard deviations their metrics moved: the RCAEval tenants),
+# a silent-failure suspect's score blends in its strength relative to the strongest alert in the area. Kestrel's
+# alerts carry none, so its scores are unchanged.
+STRENGTH_W = 0.5
 RISK = {"high": 1.0, "medium": 0.5, "low": 0.2}
 
 
@@ -98,7 +103,7 @@ def alerts_near(g: Graph, services: list[str], start: int, window_min: int = WIN
         MATCH (a:Alert)-[:FIRED_ON]->(s:Service)
         WHERE s.name IN $svcs AND a.at >= $from AND a.at <= $to
         RETURN a.id AS id, s.name AS service, a.at AS at, a.severity AS severity, a.signal AS signal,
-               a.cleared_at AS cleared_at
+               a.cleared_at AS cleared_at, a.strength AS strength
         ORDER BY a.at""", {"svcs": services, "from": start - window_min * 60, "to": start + 30 * 60})
 
 
@@ -525,7 +530,11 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         })
 
     alerting = {a["service"] for a in alerts}
-    for svc in alerting - {sym}:
+    power = {a["service"]: max(a.get("strength") or 0.0, 0.0) for a in alerts if a.get("strength") is not None}
+    top_power = max(power.values(), default=0.0)
+    # The symptom service itself competes too: it can be where the failure started, when nothing it depends on
+    # was alerting by the time it did (a fault in the entry point's own code, say).
+    for svc in alerting if SYMPTOM_CAN_BE_CAUSE else alerting - {sym}:
         first = min(a["at"] for a in alerts if a["service"] == svc)
         # Only where the failure started: if something below this service was already alerting by the time it
         # alerted, that one is the lead. Things below that alert *later* are knock-on effects, not the origin.
@@ -539,7 +548,9 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         recent = _recency((start - last) / 60) if last is not None else 0.0
         if recent >= 0.5:
             continue
-        paths = paths_between(g, sym, svc)
+        paths = paths_between(g, sym, svc) if svc != sym else [[sym]]
+        if not paths:
+            continue
         best = max(((_alert_chain(p, alerts, first - 1), p) for p in paths), key=lambda x: (x[0][0], -len(x[1])))
         (chain, chain_alerts), path = best
         prec, prec_rows = _precedent(g, svc, None)
@@ -552,10 +563,14 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
             "footprint": fp["cone_coverage"],
             "unchanged": round(1 - recent, 3),
         }
+        score = sum(SIGNAL_WEIGHTS[k] * v for k, v in factors.items())
+        if top_power > 0:
+            factors["strength"] = round(math.log1p(power.get(svc, 0.0)) / math.log1p(top_power), 3)
+            score = (1 - STRENGTH_W) * score + STRENGTH_W * factors["strength"]
         suspects.append({
             "type": "signal", "service": svc, "change": None, "hops": hops[svc], "path": path,
             "minutes_before": round((start - first) / 60, 1), "factors": factors,
-            "score": round(sum(SIGNAL_WEIGHTS[k] * v for k, v in factors.items()), 3),
+            "score": round(score, 3),
             "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp, "first_alert": first,
         })
 
@@ -1362,6 +1377,27 @@ def timeline(g: Graph, incident_id: str) -> dict:
     return {"incident": incident_id, "started": inc["started"], "alerts": alerts, "changes": changes}
 
 
+def endpoints(g: Graph, service: str, limit: int = 12) -> list[dict]:
+    """The operations a service serves (from the traces), busiest first, each with what it calls downstream."""
+    return g.read("""
+        MATCH (:Service {name: $svc})-[:EXPOSES]->(o:Operation)
+        OPTIONAL MATCH (o)-[c:CALLS]->(d:Operation)
+        WITH o, c, d ORDER BY c.rps DESC
+        RETURN o.id AS id, o.name AS op, o.rps AS rps, o.p50_ms AS p50_ms, o.p99_ms AS p99_ms, o.err AS err,
+               collect(CASE WHEN d IS NULL THEN NULL ELSE {service: d.service, op: d.name, rps: c.rps, p99_ms: c.p99_ms} END)[..6] AS calls
+        ORDER BY o.rps DESC LIMIT $n""", {"svc": service, "n": limit})
+
+
+def log_patterns(g: Graph, service: str, limit: int = 8) -> list[dict]:
+    """Error log patterns this service printed during incidents, the ones seen in the most incidents first."""
+    return g.read("""
+        MATCH (l:LogPattern)-[:LOGGED_BY]->(:Service {name: $svc}), (l)-[s:SEEN_IN]->(i:Incident)
+        WITH l.template AS template, max(l.example) AS example, count(DISTINCT i) AS incidents, sum(s.count) AS lines,
+             collect(DISTINCT i.id)[..5] AS ids, max(CASE WHEN l.new THEN 1 ELSE 0 END) AS new
+        RETURN template, example, incidents, lines, ids, new = 1 AS new
+        ORDER BY incidents DESC, lines DESC LIMIT $n""", {"svc": service, "n": limit})
+
+
 def service_card(g: Graph, service: str) -> dict:
     """Everything the graph knows about one service: owners and on-call, who actually knows it, what it calls
     and who calls it, recent changes, past incidents rooted in it, runbooks, and where it sits in the
@@ -1386,7 +1422,7 @@ def service_card(g: Graph, service: str) -> dict:
         "calls": dependencies(g, service, 1), "pagerank": br["pagerank"], "rank": br["criticality_rank"],
         "betweenness": chokes.get(service), "domain": domain,
         "changes": recent, "history": similar_incidents(g, service), "runbooks": runbooks(g, service),
-        "alerting_now": open_,
+        "alerting_now": open_, "endpoints": endpoints(g, service), "log_patterns": log_patterns(g, service),
         "bot_commits": (g.read("MATCH (s:Service {name: $svc}) RETURN s.bot_commits AS n, s.bots AS b", {"svc": service})
                         or [{}])[0],
     }

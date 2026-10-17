@@ -424,3 +424,6 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .label.hs-standing { color: var(--green); }
 .label.hs-overturned { color: var(--amber); }
 .label.hs-rejected { color: var(--dim); }
+.eps { list-style: none; margin: 0; padding: 0; }
+.eps li { padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.eps li .mono { word-break: break-all; }

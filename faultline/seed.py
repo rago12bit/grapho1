@@ -302,8 +302,8 @@ def _write_alerts(g: Graph, alerts: list[dict]) -> None:
     g.write("""
         UNWIND $alerts AS a
         MATCH (s:Service {name: a.service})
-        CREATE (:Alert {id: a.id, at: a.at, severity: a.severity, signal: a.signal})-[:FIRED_ON]->(s)""",
-            {"alerts": alerts})
+        CREATE (:Alert {id: a.id, at: a.at, severity: a.severity, signal: a.signal, strength: a.strength})-[:FIRED_ON]->(s)""",
+            {"alerts": [{"strength": None, **a} for a in alerts]})
 
 
 def _write_incidents(g: Graph, incidents: list[dict]) -> None:
@@ -461,33 +461,132 @@ def _boutique(g: Graph) -> None:
         UNWIND $bots AS b MATCH (s:Service {name: b.service})
         SET s.bot_commits = b.n, s.bots = b.names""",
             {"bots": [{"service": k, "n": sum(v.values()), "names": sorted(v)} for k, v in real["bots"].items()]})
+    _rcaeval_incidents(g, data, "frontend", "Storefront degraded")
+    _write_layers(g, data)
+
+
+def _rcaeval_incidents(g: Graph, data: dict, entry: str, what: str) -> None:
+    """Alerts, open incidents and solved history for a tenant built from RCAEval cases."""
     cases = data["open"] + data["done"]
     g.write("""
         UNWIND $alerts AS a
         MATCH (s:Service {name: a.service})
         CREATE (:Alert {id: a.id, at: a.at, severity: 'page', signal: a.signal, z: a.z, series: a.series,
-                        offset: a.offset})-[:FIRED_ON]->(s)""",
-            {"alerts": [a for c in cases for a in c["alerts"]]})
+                        offset: a.offset, sources: a.sources, strength: a.strength})-[:FIRED_ON]->(s)""",
+            {"alerts": [{"sources": None, "series": None, "strength": None, **a} for c in cases for a in c["alerts"]]})
 
     def title(c):
         # Says only what on-call would see first. The metric that fired is left out: it can name the fault.
-        return f"Storefront degraded · {len(c['alerts'])} services alerting"
-    _write_incidents(g, [{"id": c["id"], "title": title(c), "symptom": "frontend", "started": c["started"],
+        return f"{what} · {len(c['alerts'])} services alerting"
+    _write_incidents(g, [{"id": c["id"], "title": title(c), "symptom": entry, "started": c["started"],
                           "status": "open", "severity": "SEV2"} for c in data["open"]])
     history = []
     for c in data["done"]:
         rc, mine = c["root_cause"], [a for a in c["alerts"] if a["service"] == c["root_cause"]]
         after = sorted({a["service"] for a in c["alerts"] if a["service"] != rc})
+        fault = c.get("fault_description") if c.get("suite") == "RE3" else f"{c['fault']} fault"
         history.append({
-            "id": c["id"], "title": f"{title(c)} ({c['fault']} fault)", "symptom": "frontend", "started": c["started"],
+            "id": c["id"], "title": f"{title(c)} ({fault})", "symptom": entry, "started": c["started"],
             "severity": "SEV2", "cause_service": rc, "cause_kind": "infra", "cause_at": c["inject"],
-            "cause_summary": f"{rc}: {c['fault']} fault injected (RCAEval {c['case']})", "cause_author": None,
+            "cause_summary": f"{rc}: {fault} injected (RCAEval {c['case']})", "cause_author": None,
             "fix": "page_owner", "fix_summary": f"Fault removed from {rc}; metrics back to baseline",
             "approver": None,
-            "lesson": (f"A {c['fault']} fault on {rc} showed first as {mine[0]['signal']}" if mine else
-                       f"A {c['fault']} fault on {rc} raised no alert on {rc} itself") +
+            "lesson": (f"A {fault} on {rc} showed first as {mine[0]['signal']}" if mine else
+                       f"A {fault} on {rc} raised no alert on {rc} itself") +
                       (f"; then {', '.join(after)} alerted." if after else ".")})
     _write_history(g, history)
+
+
+def _write_layers(g: Graph, data: dict) -> None:
+    """The operation graph from the traces, and per case the endpoint that slowed most and new error logs:
+    (Service)-[:EXPOSES]->(Operation)-[:CALLS {rps, p50_ms, p99_ms, err}]->(Operation),
+    (Alert)-[:ON_OPERATION {p90_before_ms, p90_after_ms, ratio}]->(Operation),
+    (LogPattern)-[:LOGGED_BY]->(Service), (LogPattern)-[:SEEN_IN {count, before, first_at}]->(Incident)."""
+    if data.get("ops"):
+        g.write("CREATE INDEX FOR (o:Operation) ON (o.id)")
+        g.write("""
+            UNWIND $ops AS o MATCH (s:Service {name: o.service})
+            CREATE (s)-[:EXPOSES]->(:Operation {id: o.service + ' ' + o.op, name: o.op, service: o.service,
+                                                rps: o.rps, p50_ms: o.p50_ms, p99_ms: o.p99_ms, err: o.err, calls: o.calls})""",
+                {"ops": data["ops"]})
+        g.write("""
+            UNWIND $edges AS e
+            MATCH (a:Operation {id: e.from_service + ' ' + e.from_op}), (b:Operation {id: e.to_service + ' ' + e.to_op})
+            CREATE (a)-[:CALLS {rps: e.rps, p50_ms: e.p50_ms, p99_ms: e.p99_ms, err: e.err, calls: e.calls}]->(b)""",
+                {"edges": data["op_edges"]})
+    hot, pats = [], []
+    for c in data["open"] + data["done"]:
+        for a in c["alerts"]:
+            h = (c.get("hot_ops") or {}).get(a["service"])
+            if h:
+                hot.append({"alert": a["id"], "op": f"{a['service']} {h['op']}", **{k: h[k] for k in ("p90_before_ms", "p90_after_ms", "ratio")}})
+        for k, pt in enumerate(c.get("patterns") or []):
+            pats.append({"id": f"LP-{c['id'].split('-')[1]}-{k + 1}", "incident": c["id"], "service": pt["service"],
+                         "template": pt["template"], "example": pt["example"], "new": pt["new"], "count": pt["after"],
+                         "before": pt["before"], "first_at": c["inject"] + pt["offset"]})
+    if hot:
+        g.write("""
+            UNWIND $hot AS h MATCH (a:Alert {id: h.alert}), (o:Operation {id: h.op})
+            CREATE (a)-[:ON_OPERATION {p90_before_ms: h.p90_before_ms, p90_after_ms: h.p90_after_ms, ratio: h.ratio}]->(o)""",
+                {"hot": hot})
+    if pats:
+        g.write("""
+            UNWIND $p AS p MATCH (s:Service {name: p.service}), (i:Incident {id: p.incident})
+            CREATE (l:LogPattern {id: p.id, template: p.template, example: p.example, new: p.new})-[:LOGGED_BY]->(s)
+            CREATE (l)-[:SEEN_IN {count: p.count, before: p.before, first_at: p.first_at}]->(i)""", {"p": pats})
+
+
+# --- Sock Shop and Train Ticket: every RE2 and RE3 case of each, from RCAEval ----------------------------------
+
+RCAEVAL_TENANTS = {
+    "sockshop": {"system": "ss", "fixture": "sockshop.json", "title": "Sock Shop · RCAEval", "what": "Shop degraded"},
+    "trainticket": {"system": "tt", "fixture": "trainticket.json", "title": "Train Ticket · RCAEval", "what": "Booking degraded"},
+}
+FAULTS = ["cpu", "mem", "disk", "delay", "loss", "socket"]
+
+
+def rcaeval_cases(tenant: str) -> dict:
+    """A system's fixture placed on the timeline. Open for the agents: repetition 3 of every RE2 fault on three
+    of the five services (rotating, as for Online Boutique) and repetition 3 of every RE3 code-level fault. Every
+    other case is solved history."""
+    cfg = RCAEVAL_TENANTS[tenant]
+    data = json.loads((BOUTIQUE_FIXTURE.parent / cfg["fixture"]).read_text())
+    svcs = sorted({c["root_cause"] for c in data["cases"] if c["suite"] == "RE2"})
+    pick = {(svcs[(i + k) % len(svcs)], f) for i, f in enumerate(FAULTS) for k in range(3)}
+    is_open = lambda c: c["rep"] == OPEN_REP and (c["suite"] == "RE3" or (c["root_cause"], c["fault"]) in pick)  # noqa: E731
+    rng = random.Random(13)
+    open_, done = [c for c in data["cases"] if is_open(c)], [c for c in data["cases"] if not is_open(c)]
+    rng.shuffle(open_)
+    rng.shuffle(done)
+    for k, c in enumerate(open_):
+        c.update(id=f"INC-{401 + k}", inject=NOW - 30 * MIN - k * 4 * HOUR, status="open")
+    for k, c in enumerate(done):
+        c.update(id=f"INC-{101 + k}", inject=NOW - 6 * DAY - k * 10 * HOUR, status="resolved")
+    for c in open_ + done:
+        n = c["id"].split("-")[1]
+        for i, a in enumerate(c["alerts"]):
+            a.update(id=f"A-{n}{i:02d}", at=c["inject"] + a["offset"])
+            if a["z"] >= 1000:
+                a["signal"] = a["signal"].split(" z=")[0] + " z>999"
+        front = [a["at"] for a in c["alerts"] if a["service"] == data["entry"]]
+        c["started"] = front[0] if front else (c["alerts"][0]["at"] if c["alerts"] else c["inject"])
+    return {**data, "open": open_, "done": done}
+
+
+def _rcaeval_tenant(g: Graph, tenant: str) -> None:
+    cfg = RCAEVAL_TENANTS[tenant]
+    data = rcaeval_cases(tenant)
+    names = sorted({s for e in data["edges"] for s in e} | {a["service"] for c in data["cases"] for a in c["alerts"]}
+                   | {data["entry"]})
+    team = data["title"]
+    stores = set(data["datastores"])
+    spec = {"title": cfg["title"], "teams": {"owners": team}, "people": [],
+            "services": [(n, "owners", "datastore" if n in stores else "service", 1, n == data["entry"]) for n in names],
+            "calls": data["edges"]}
+    _write_org(g, spec)
+    g.write("MATCH (o:Org) SET o.source = $src, o.signals = $sig", {"src": data["source"], "sig": data["signals"]})
+    _rcaeval_incidents(g, data, data["entry"], cfg["what"])
+    _write_layers(g, data)
 
 
 def build(tenant: str, *, force: bool = False) -> dict:
@@ -518,8 +617,8 @@ def build(tenant: str, *, force: bool = False) -> dict:
                            "signal": "5xx 18%"}])
         _write_incidents(g, [{"id": "INC-7", "title": "Tracking page errors", "symptom": "tracking-web",
                               "started": NOW - 24 * MIN, "status": "open", "severity": "SEV2"}])
-    elif tenant == "boutique":
-        _boutique(g)
+    elif tenant == "boutique" or tenant in RCAEVAL_TENANTS:
+        _boutique(g) if tenant == "boutique" else _rcaeval_tenant(g, tenant)
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])
@@ -530,7 +629,9 @@ def build(tenant: str, *, force: bool = False) -> dict:
     return {"tenant": tenant, "built": True, "nodes": counts, "edges": edges}
 
 
-TENANTS = {"kestrel": KESTREL["title"], "boutique": BOUTIQUE["title"], "harbor": HARBOR["title"]}
+TENANTS = {"kestrel": KESTREL["title"], "boutique": BOUTIQUE["title"], "harbor": HARBOR["title"],
+           **{t: c["title"] for t, c in RCAEVAL_TENANTS.items()
+              if (BOUTIQUE_FIXTURE.parent / c["fixture"]).exists()}}
 
 
 def build_all(force: bool = False) -> list[dict]:

@@ -30,7 +30,16 @@ def _boutique_truth() -> dict[str, str]:
     return {a["id"]: f"infra:{c['root_cause']}" for c in boutique_cases()["open"] for a in c["alerts"]}
 
 
+def _rcaeval_truth(tenant: str) -> dict[str, str]:
+    from .seed import RCAEVAL_TENANTS, TENANTS, rcaeval_cases
+    if tenant not in TENANTS or tenant not in RCAEVAL_TENANTS:
+        return {}
+    return {a["id"]: f"infra:{c['root_cause']}" for c in rcaeval_cases(tenant)["open"] for a in c["alerts"]}
+
+
 TRUE_CAUSES["boutique"] = _boutique_truth()
+TRUE_CAUSES["sockshop"] = _rcaeval_truth("sockshop")
+TRUE_CAUSES["trainticket"] = _rcaeval_truth("trainticket")
 RECOVERY_S = 4 * MIN   # monitoring reports recovery a few minutes after a correct fix
 
 

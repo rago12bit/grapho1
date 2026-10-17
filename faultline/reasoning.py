@@ -7,7 +7,8 @@ standing, the alerts are linked into a causal chain: each alert points at the al
 down to the change (or the silent failure) where it started.
 
     (Incident)-[:HAS_HYPOTHESIS]->(Hypothesis {rank, score, status})-[:BLAMES]->(Change | Service)
-    (Hypothesis)-[:SUPPORTED_BY | CONTRADICTED_BY]->(Evidence {kind, text, weight})-[:CITES]->(Alert | Change | Incident | Service)
+    (Hypothesis)-[:SUPPORTED_BY | CONTRADICTED_BY]->(Evidence {kind, text, weight})
+        -[:CITES]->(Alert | Change | Incident | Service | Operation | LogPattern)
     (Alert)-[:CAUSED_BY {incident, confidence, lag_s, direct, via}]->(Alert | Change | Service)
 
 `build` is pure (plus read-only queries), so the case file can show the argument before anything is written;
@@ -74,6 +75,13 @@ def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | N
             add(False, "change", f"a recent change on or below {s['service']} explains its alert better", [], None)
     if s.get("from_below"):
         add(False, "order", f"something below {s['service']} was alerting first: the failure started deeper", [], None)
+    tel = ranking.get("telemetry") or {}
+    for h in tel.get("hot_ops", {}).get(s["service"], [])[:1]:
+        add(True, "endpoint", f"{h['op']} on {s['service']} slowed at onset: p90 {h['before']:g} → {h['after']:g} ms ({h['ratio']:g}x)",
+            [{"label": "Operation", "id": h["id"]}] + _cite_alerts([{"id": h["alert"]}]))
+    for lp in tel.get("logs", {}).get(s["service"], [])[:2]:
+        add(True, "logs", f"{'new ' if lp['new'] else ''}error log on {s['service']} ×{lp['count']}: {lp['template'][:90]}",
+            [{"label": "LogPattern", "id": lp["id"]}])
     if s["precedents"]:
         n = len(s["precedents"])
         add(True, "precedent", f"{n} past incident{'' if n == 1 else 's'} rooted on {s['service']}",
@@ -221,8 +229,28 @@ def causal_chain(g: Graph, ranking: dict) -> dict:
     return {"links": links, "roots": roots}
 
 
+def telemetry(g: Graph, ranking: dict) -> dict:
+    """What the traces and logs say about this incident's alerting services, where the tenant has them: the
+    endpoint that slowed most on each, and error log patterns that appeared with the incident."""
+    ids = [a["id"] for a in ranking.get("alerts") or [] if a.get("id")]
+    hot: dict[str, list[dict]] = {}
+    for r in g.read("""
+            MATCH (a:Alert)-[r:ON_OPERATION]->(o:Operation) WHERE a.id IN $ids
+            RETURN a.id AS alert, o.service AS service, o.name AS op, o.id AS id, r.p90_before_ms AS before,
+                   r.p90_after_ms AS after, r.ratio AS ratio ORDER BY r.ratio DESC""", {"ids": ids}):
+        hot.setdefault(r["service"], []).append(r)
+    logs: dict[str, list[dict]] = {}
+    for r in g.read("""
+            MATCH (l:LogPattern)-[s:SEEN_IN]->(:Incident {id: $inc}), (l)-[:LOGGED_BY]->(svc:Service)
+            RETURN svc.name AS service, l.id AS id, l.template AS template, l.new AS new, s.count AS count,
+                   s.first_at AS first_at ORDER BY l.new DESC, s.count DESC""", {"inc": ranking["incident"]["id"]}):
+        logs.setdefault(r["service"], []).append(r)
+    return {"hot_ops": hot, "logs": logs}
+
+
 def build(g: Graph, ranking: dict) -> dict:
-    return {"hypotheses": hypotheses(ranking), "chain": causal_chain(g, ranking)}
+    ranking["telemetry"] = telemetry(g, ranking)
+    return {"hypotheses": hypotheses(ranking), "chain": causal_chain(g, ranking), "telemetry": ranking["telemetry"]}
 
 
 def write(g: Graph, incident_id: str, reasoning: dict) -> dict:
@@ -257,7 +285,8 @@ def write(g: Graph, incident_id: str, reasoning: dict) -> dict:
                 UNWIND $ev AS e MATCH (h:Hypothesis {{id: e.h}})
                 CREATE (h)-[:{rel}]->(:Evidence {{id: e.id, kind: e.kind, text: e.text, weight: e.weight}})""", {"ev": rows})
     cites = [{"e": e["id"], **c} for e in ev for c in e["cites"]]
-    for label, key in (("Alert", "id"), ("Change", "id"), ("Incident", "id"), ("Service", "name")):
+    for label, key in (("Alert", "id"), ("Change", "id"), ("Incident", "id"), ("Service", "name"), ("Operation", "id"),
+                       ("LogPattern", "id")):
         rows = [c for c in cites if c["label"] == label]
         if rows:
             g.write(f"""

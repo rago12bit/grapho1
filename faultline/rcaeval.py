@@ -229,6 +229,17 @@ SOCKSHOP_EDGES = [
     ("orders", "payment"), ("orders", "shipping"), ("orders", "carts"), ("orders", "user"), ("user", "user-db"),
     ("shipping", "rabbitmq"), ("queue-master", "rabbitmq"),
 ]
+# Online Boutique's traces miss calls into services that aren't instrumented on that path (adservice, shipping,
+# and cart from frontend and checkout). Its release manifests name every dependency in the callers' *_ADDR
+# environment variables (github.com/GoogleCloudPlatform/microservices-demo, release/kubernetes-manifests.yaml,
+# Apache-2.0); v2 of the eval takes the union of the two.
+BOUTIQUE_MANIFEST_EDGES = [
+    ("frontend", "productcatalogservice"), ("frontend", "currencyservice"), ("frontend", "cartservice"),
+    ("frontend", "recommendationservice"), ("frontend", "shippingservice"), ("frontend", "checkoutservice"),
+    ("frontend", "adservice"), ("checkoutservice", "productcatalogservice"), ("checkoutservice", "shippingservice"),
+    ("checkoutservice", "paymentservice"), ("checkoutservice", "emailservice"), ("checkoutservice", "currencyservice"),
+    ("checkoutservice", "cartservice"), ("recommendationservice", "productcatalogservice"), ("cartservice", "redis"),
+]
 SYSTEMS = {
     "ob": {"title": "Online Boutique", "entry": "frontend", "skip": frozenset(), "datastores": {"redis"}},
     "ss": {"title": "Sock Shop", "entry": "front-end", "skip": frozenset({"rabbitmq-exporter"}),
@@ -237,6 +248,10 @@ SYSTEMS = {
     # Every ts-X-service keeps its own ts-X-mongo / ts-X-mysql, as in its deployment.
     "tt": {"title": "Train Ticket", "entry": "ts-ui-dashboard", "skip": frozenset(), "datastores": set()},
 }
+# v1: the settings committed before any result on these systems (6d9d5a1). v2: two structural fixes found by
+# looking at v1's misses on everything except RE2 Train Ticket, which stayed unseen as the held-out test: the
+# manifest edges above, and the judge letting the symptom service itself be the cause (tools.rank_suspects).
+VERSION = 2
 SIGNALS = ("metrics", "all")      # metrics only (the detector above, unchanged), or metrics + logs + traces
 
 
@@ -318,6 +333,35 @@ def alerts_for(sig: dict, signals: str) -> list[dict]:
     return merge_alerts(sig["alerts"]["metrics"], sig["alerts"]["logs"], sig["alerts"]["traces"])
 
 
+STRENGTH_WINDOW_S = 600   # 10 minutes either side of the injection, the window RCAEval runs its baselines on
+
+
+def strengths(metrics: pd.DataFrame, inject: int, norm=None, skip: frozenset = frozenset()) -> dict[str, float]:
+    """How far each service's metrics moved after the fault: for every metric (latency-50 left out, as RCAEval
+    does), the largest |x - mean| / std over the 10 minutes after, against the 10 minutes before; a service
+    takes its largest. The same n-sigma reading RCAEval's NSigma baseline makes."""
+    norm = norm or _norm
+    before = metrics[(metrics.time < inject) & (metrics.time >= inject - STRENGTH_WINDOW_S)]
+    after = metrics[(metrics.time >= inject) & (metrics.time < inject + STRENGTH_WINDOW_S)]
+    out: dict[str, float] = {}
+    for col in metrics.columns:
+        if col == "time" or "_" not in col or col.endswith("_latency-50"):
+            continue
+        svc = norm(col.rsplit("_", 1)[0])
+        if svc in skip:
+            continue
+        b = before[col].astype(float).replace([np.inf, -np.inf], np.nan).ffill().fillna(0).to_numpy()
+        a = after[col].astype(float).replace([np.inf, -np.inf], np.nan).ffill().fillna(0).to_numpy()
+        if not len(a) or not len(b):
+            continue
+        sd = float(np.std(b))
+        if sd < 1e-9:
+            continue                      # a constant metric says nothing (RCAEval drops these too)
+        z = float(np.max(np.abs(a - np.mean(b))) / sd)
+        out[svc] = max(out.get(svc, 0.0), z)
+    return out
+
+
 def build_case(case: str, signals: str = "metrics") -> dict:
     """One case of any system as its own graph, ready for the unchanged judge."""
     sig = extract(case)
@@ -325,6 +369,9 @@ def build_case(case: str, signals: str = "metrics") -> dict:
     entry = cfg["entry"]
     alerts = alerts_for(sig, signals)
     edges = [tuple(e) for e in sig["edges"]]
+    if sig["system"] == "ob" and VERSION >= 2:
+        present = set(sig["services"]) | {"redis"}
+        edges = sorted(set(edges) | {e for e in BOUTIQUE_MANIFEST_EDGES if e[0] in present and e[1] in present})
     services = sorted({s for e in edges for s in e} | {a["service"] for a in alerts} | {entry})
     g = Graph(f"rca_{abs(hash(case + signals)) % 10**8}")
     g.drop()
@@ -339,8 +386,11 @@ def build_case(case: str, signals: str = "metrics") -> dict:
     g.write("""
         UNWIND $edges AS e MATCH (a:Service {name: e[0]}), (b:Service {name: e[1]})
         CREATE (a)-[:CALLS]->(b)""", {"edges": [list(e) for e in edges]})
-    _write_alerts(g, [{"id": f"A-{i}", "service": a["service"], "at": a["at"], "severity": "page", "signal": a["signal"]}
-                      for i, a in enumerate(alerts)])
+    power = {}
+    if VERSION >= 2:
+        power = strengths(_table(DATA / case, "metrics"), sig["inject"], norm_for(sig["system"]), cfg["skip"])
+    _write_alerts(g, [{"id": f"A-{i}", "service": a["service"], "at": a["at"], "severity": "page", "signal": a["signal"],
+                       "strength": power.get(a["service"])} for i, a in enumerate(alerts)])
     front = next((a["at"] for a in alerts if a["service"] == entry), None)
     started = front if front is not None else (alerts[0]["at"] if alerts else sig["inject"])
     _write_incidents(g, [{"id": "INC-1", "title": case, "symptom": entry, "started": started, "status": "open", "severity": "SEV2"}])
