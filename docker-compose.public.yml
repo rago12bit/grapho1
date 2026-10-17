@@ -1,0 +1,40 @@
+# A public demo on one small server: Faultline behind Caddy (automatic HTTPS), FalkorDB not exposed.
+#   DOMAIN=203-0-113-7.sslip.io FAULTLINE_INGEST_TOKEN=$(openssl rand -hex 16) \
+#     docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --build
+# See deploy/DEPLOY.md.
+services:
+  falkordb:
+    ports: !reset []
+
+  app:
+    ports: !reset []
+    environment:
+      FAULTLINE_PUBLIC: "1"
+      FAULTLINE_INGEST_TOKEN: ${FAULTLINE_INGEST_TOKEN:-}
+    restart: unless-stopped
+
+  mcp:
+    build: .
+    command: ["python", "-m", "faultline.mcp_server", "--http"]
+    environment:
+      FALKOR_HOST: falkordb
+      FALKOR_PORT: "6379"
+      FAULTLINE_PUBLIC: "1"
+    depends_on: [falkordb]
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2.10.2
+    depends_on: [app, mcp]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN, e.g. 203-0-113-7.sslip.io}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

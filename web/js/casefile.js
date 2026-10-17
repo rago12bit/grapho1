@@ -72,7 +72,8 @@ function render(inc, out) {
   $("#case").innerHTML = `
   <article class="cf fade-in">
     <div class="cf-top">${label(`Case file · ${esc(inc.id)}${ran ? ` · ${esc(out.run_id || "")}` : ""}`)}
-      <button class="link" id="replay">replay traversal</button></div>
+      <span class="cf-links"><a class="link" id="export" href="/api/${esc(state.tenant)}/incidents/${esc(inc.id)}/postmortem.md" download>${inc.status === "resolved" ? "export postmortem" : "export draft postmortem"}</a>
+      <button class="link" id="replay">replay traversal</button></span></div>
     <h2 class="verdict-word ${f.change_id ? "" : f.root_cause_service ? "infra" : "none"}">${esc(word)}</h2>
     <div class="chips-row">${sev(inc.severity)} ${status(inc.status)} ${conf(r?.confidence || f.confidence, r?.confidence_p)}
       ${cc ? `<span class="label ${ok ? "ok" : "bad"}" title="Every id, service and time in the verdict was looked up in the graph">${cc.supported}/${cc.total} claims checked</span>` : ""}</div>
@@ -122,7 +123,7 @@ function facts(r, top) {
       : `<b>${esc(top.service)}</b> <span class="faint">alerted ${top.minutes_before} min before the incident, no change on or under it</span>`],
     ["Spread", top.footprint.sequence.map((x) => `${esc(x.service)} <span class="faint">${hhmm(x.at).slice(0, 5)}</span>`).join(" → ") + (top.footprint.in_order ? ` <span class="ok">in order</span>` : ` <span class="warn">out of order</span>`)],
     ["Explains", `${top.footprint.explained.length} of ${top.footprint.observed} alerting services`],
-    ["Fix", esc(act_.summary || "")],
+    ["Fix", esc(act_.summary || "") + (act_.track_record ? `<div class="small ${act_.track_record.failed ? "warn" : "ok"}">${esc(act_.track_record.note)}</div>` : "")],
     ["Owners", `${esc(owner.team || "")}${owner.on_call ? ` · on call <b>${esc(owner.on_call.name)}</b>` : ""}`],
     ["Score", `<span class="num">${top.score.toFixed(2)}</span> · margin ${r.margin != null ? r.margin.toFixed(2) : "?"} over #2`],
   ];
@@ -163,6 +164,7 @@ function timelineHtml(t, r) {
 }
 
 function skeptic(sk) {
+  if (!sk.rounds?.length) return `<p class="faint small">Nothing to challenge: no suspect explains these alerts yet.</p>`;
   const last = sk.rounds[sk.rounds.length - 1];
   const handed = sk.rounds.filter((x) => x.handed_to).map((x) => `${esc(x.leader)} → ${esc(x.handed_to)}`);
   return `${handed.length ? `<p class="small">Handed over: ${handed.join(", ")}</p>` : ""}
@@ -245,11 +247,11 @@ export function renderActions(inc) {
   box.innerHTML = `
     ${acts.length ? section("Proposed fixes", acts.map((a) => `<div class="action ${esc(a.status)}">
         <div class="ak label">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}${(a.covers || []).length > 1 ? ` · covers ${a.covers.map(esc).join(", ")}` : ""}</div>
-        <div class="s">${esc(a.summary)}</div>
+        <div class="s">${esc(a.summary)}</div>${a.status === "proposed" ? recordFor(a) : ""}
         ${a.status === "proposed" ? `<div class="btns"><button class="btn solid hot" data-a="${esc(a.id)}" data-ok="1">Approve fix</button><button class="btn quiet" data-a="${esc(a.id)}" data-ok="0">Reject</button></div>
             <p class="faint small">Approving applies it to the simulated system only. Then Faultline checks the alerts in the graph to see whether it worked.</p>`
           : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · applied to the simulated system" : ""}</div>
-            ${a.verified === true ? `<div class="verify ok">✓ Verified: ${esc(a.verification)}</div>` : a.verified === false ? `<div class="verify no">✗ Did not work: ${esc(a.verification)}. The incident is open again.</div>` : ""}`}
+            ${a.verified === true ? `<div class="verify ok">✓ Verified: ${esc(a.verification)}</div>` : a.verified === false ? `<div class="verify no">✗ Did not work: ${esc(a.verification)}. The incident is open again.</div>` : a.verification ? `<div class="verify wait">… ${esc(a.verification)}</div>` : ""}`}
       </div>`).join(""), pending ? `<span class="label warn">needs your approval</span>` : "")
       : inc.status !== "resolved" ? section("Proposed fixes", `<p class="faint small">The responder agent proposes the fix. Run the agents to get one.</p>`) : ""}
     ${inc.status !== "resolved" && (executed || f) ? section("Close it and teach the graph", `
@@ -261,6 +263,7 @@ export function renderActions(inc) {
     await tapi(`/actions/${b.dataset.a}`, { method: "POST", body: JSON.stringify({ approve: b.dataset.ok === "1", who: "you" }) });
     renderActions(await tapi(`/incidents/${inc.id}`));
     act.refreshBoard?.();
+    act.refreshMemory?.();
   }));
   const rb = $("#resolve");
   if (rb) rb.addEventListener("click", async () => {
@@ -276,4 +279,9 @@ export function renderActions(inc) {
     act.refreshBoard?.();
     act.refreshMemory?.();
   });
+}
+
+function recordFor(a) {
+  const rec = (state.last?.ranking?.suspects || []).map((s) => s.recommended_action).find((r) => r && r.kind === a.kind && r.target === a.target)?.track_record;
+  return rec ? `<div class="small ${rec.failed ? "warn" : "ok"} rec">${esc(rec.note)}</div>` : "";
 }

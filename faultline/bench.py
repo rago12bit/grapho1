@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import statistics
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -26,13 +27,35 @@ def _verdict(out: dict) -> str | None:
     return out["findings"].get("change_id") or out["findings"].get("root_cause_service")
 
 
+_one_at_a_time = threading.Lock()
+
+
+class Busy(Exception):
+    pass
+
+
+def run_once(runs: int, workers: int, source: str) -> dict:
+    """The web version: one benchmark at a time across the server, inputs clamped so a button can't flood it."""
+    if not _one_at_a_time.acquire(blocking=False):
+        raise Busy("a benchmark is already running")
+    try:
+        return run(max(4, min(int(runs), 50)), max(1, min(int(workers), 8)), source)
+    finally:
+        _one_at_a_time.release()
+
+
 def run(runs: int = 40, workers: int = 8, source: str = "kestrel") -> dict:
-    seed.build(source, force=False)
+    if source in seed.TENANTS:
+        seed.build(source, force=False)
     tenant = "bench_" + uuid.uuid4().hex[:8]
     client().connection.execute_command("GRAPH.COPY", graph_name(source), graph_name(tenant))
     try:
-        reference = {i: _verdict(agent.investigate_offline(tenant, i, propose=False)) for i in INCIDENTS}
-        jobs = [(INCIDENTS[k % len(INCIDENTS)], f"BENCH-{k:04d}-{uuid.uuid4().hex[:6]}") for k in range(runs)]
+        open_ = [i["id"] for i in tools.list_incidents(Graph(tenant), None) if i["status"] != "resolved"]
+        incidents = [i for i in INCIDENTS if i in open_] or sorted(open_)[:4]
+        if not incidents:
+            raise ValueError("no unresolved incident to investigate in this graph")
+        reference = {i: _verdict(agent.investigate_offline(tenant, i, propose=False)) for i in incidents}
+        jobs = [(incidents[k % len(incidents)], f"BENCH-{k:04d}-{uuid.uuid4().hex[:6]}") for k in range(runs)]
         retries_before = db.retry_count
 
         def one(job):
@@ -60,6 +83,7 @@ def run(runs: int = 40, workers: int = 8, source: str = "kestrel") -> dict:
             "p50_s": round(statistics.median(lat), 3), "p95_s": round(lat[int(0.95 * (len(lat) - 1))], 3),
             "retries": db.retry_count - retries_before, "cross_run_reads": crossed,
             "incomplete_runs": len(incomplete), "verdict_mismatches": len(mismatched), "reference": reference,
+            "incidents": incidents, "source": source,
         }
     finally:
         Graph(tenant).drop()

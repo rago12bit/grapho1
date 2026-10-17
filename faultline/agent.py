@@ -226,6 +226,9 @@ def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
             f"{', '.join(d['teams'])} ({len(set(d['services']) & set(fp['explained']))} alerting)" for d in doms))
     for b in (books or [])[:1]:
         ev.append(f"Runbook {b['id']} “{b['title']}”: " + "; ".join(b["steps"][:3]))
+    rec = (top.get("recommended_action") or {}).get("track_record")
+    if rec:
+        ev.append("Fix track record: " + rec["note"])
     if top["type"] == "change":
         c = top["change"]
         ev.insert(0, f"{c['id']} by {c['author']} at {_hhmm(c['at'])}, {top['minutes_before']:g} min before the incident: {c['summary']}")

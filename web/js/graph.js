@@ -6,33 +6,49 @@ let cy = null;
 let home = {};          // node positions in the whole-system layout, restored when switching back
 let shown = null;       // the case spec currently drawn, if any
 
-const STYLE = [
-  { selector: "node", style: {
-    shape: "rectangle", width: "label", height: 30, padding: "data(pad)",
-    "background-color": "#15140f", "border-width": 1, "border-color": "#3a372c",
-    label: "data(id)", color: "#a9a391", "font-family": "IBM Plex Mono, monospace", "font-size": 11, "font-weight": 600,
-    "text-valign": "center", "text-halign": "center",
-    "transition-property": "background-color, border-color, opacity, color", "transition-duration": "250ms",
-  } },
-  { selector: "node[kind = 'datastore']", style: { "border-style": "double", "border-width": 3 } },
-  { selector: "node[kind = 'external']", style: { "border-style": "dashed" } },
-  { selector: "node[?exposed]", style: { "border-color": "#a9a391", color: "#ece7d9" } },
-  { selector: "edge", style: {
-    width: 1.2, "line-color": "#3a372c", "target-arrow-color": "#3a372c", "target-arrow-shape": "triangle",
-    "arrow-scale": 0.7, "curve-style": "taxi", "taxi-direction": "downward", "taxi-turn": "45%",
-    "transition-property": "line-color, width, opacity", "transition-duration": "250ms",
-  } },
-  { selector: ".gone", style: { display: "none" } },
-  { selector: ".dim", style: { opacity: 0.22 } },
-  { selector: "node.alerting", style: { "border-color": "#e2b04a", "border-width": 2, color: "#ece7d9" } },
-  { selector: "node.symptom", style: { "border-color": "#ef6a55", "border-width": 2, color: "#ece7d9", "background-color": "#211510" } },
-  { selector: "node.suspect", style: { "background-color": "#ef6a55", "border-color": "#ef6a55", color: "#1a0f0c" } },
-  { selector: "node.lit", style: { color: "#ece7d9" } },
-  { selector: "node.sel", style: { "border-color": "#ece7d9", "border-width": 3 } },
-  { selector: "edge.path", style: { "line-color": "#ef6a55", "target-arrow-color": "#ef6a55", width: 2.4, opacity: 1, "z-index": 9 } },
-  { selector: "edge.hit", style: { "line-color": "#ece7d9", "target-arrow-color": "#ece7d9", width: 1.8, opacity: 1 } },
-  { selector: "edge.reach", style: { "line-color": "#e2b04a", "target-arrow-color": "#e2b04a", width: 1.6, "line-style": "dashed", opacity: 0.9 } },
-];
+// Cytoscape draws on a canvas and can't read CSS, so its stylesheet is built from the page's colour tokens and
+// rebuilt when the theme changes.
+function tokens() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (n) => cs.getPropertyValue(n).trim();
+  return { bg: v("--node-bg"), line: v("--node-line"), text: v("--node-text"), ink: v("--text"), muted: v("--muted"),
+    accent: v("--accent"), amber: v("--amber"), symptom: v("--symptom-bg"), onAccent: v("--on-accent") };
+}
+
+function style() {
+  const t = tokens();
+  return [
+    { selector: "node", style: {
+      shape: "rectangle", width: "label", height: 30, padding: "data(pad)",
+      "background-color": t.bg, "border-width": 1, "border-color": t.line,
+      label: "data(id)", color: t.text, "font-family": "IBM Plex Mono, monospace", "font-size": 11, "font-weight": 600,
+      "text-valign": "center", "text-halign": "center",
+      "transition-property": "background-color, border-color, opacity, color", "transition-duration": "250ms",
+    } },
+    { selector: "node[kind = 'datastore']", style: { "border-style": "double", "border-width": 3 } },
+    { selector: "node[kind = 'external']", style: { "border-style": "dashed" } },
+    { selector: "node[?exposed]", style: { "border-color": t.muted, color: t.ink } },
+    { selector: "edge", style: {
+      width: 1.2, "line-color": t.line, "target-arrow-color": t.line, "target-arrow-shape": "triangle",
+      "arrow-scale": 0.7, "curve-style": "taxi", "taxi-direction": "downward", "taxi-turn": "45%",
+      "transition-property": "line-color, width, opacity", "transition-duration": "250ms",
+    } },
+    { selector: ".gone", style: { display: "none" } },
+    { selector: ".dim", style: { opacity: 0.22 } },
+    { selector: "node.alerting", style: { "border-color": t.amber, "border-width": 2, color: t.ink } },
+    { selector: "node.symptom", style: { "border-color": t.accent, "border-width": 2, color: t.ink, "background-color": t.symptom } },
+    { selector: "node.suspect", style: { "background-color": t.accent, "border-color": t.accent, color: t.onAccent } },
+    { selector: "node.lit", style: { color: t.ink } },
+    { selector: "node.sel", style: { "border-color": t.ink, "border-width": 3 } },
+    { selector: "edge.path", style: { "line-color": t.accent, "target-arrow-color": t.accent, width: 2.4, opacity: 1, "z-index": 9 } },
+    { selector: "edge.hit", style: { "line-color": t.ink, "target-arrow-color": t.ink, width: 1.8, opacity: 1 } },
+    { selector: "edge.reach", style: { "line-color": t.amber, "target-arrow-color": t.amber, width: 1.6, "line-style": "dashed", opacity: 0.9 } },
+  ];
+}
+
+export function restyle() {
+  if (cy) cy.style(style());
+}
 
 export async function loadGraph() {
   const g = await tapi("/graph");
@@ -44,7 +60,7 @@ export async function loadGraph() {
   ];
   if (cy) cy.destroy();
   shown = null;
-  cy = window.cytoscape({ container: $("#cy"), elements, style: STYLE, wheelSensitivity: 0.2, minZoom: 0.2, maxZoom: 2.5,
+  cy = window.cytoscape({ container: $("#cy"), elements, style: style(), wheelSensitivity: 0.2, minZoom: 0.2, maxZoom: 2.5,
     layout: { name: "breadthfirst", directed: true, spacingFactor: 1.05, padding: 24, nodeDimensionsIncludeLabels: true,
       roots: g.nodes.filter((n) => n.exposed).map((n) => n.id) } });
   home = Object.fromEntries(cy.nodes().map((n) => [n.id(), { ...n.position() }]));

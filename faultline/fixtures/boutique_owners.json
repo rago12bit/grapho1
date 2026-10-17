@@ -1,0 +1,701 @@
+{
+ "source": "https://github.com/GoogleCloudPlatform/microservices-demo",
+ "fetched": "2026-10-17",
+ "codeowners": [
+  {
+   "pattern": "*",
+   "owners": [
+    "@GoogleCloudPlatform/devrel-flagship-app-maintainers",
+    "@yoshi-approver"
+   ]
+  }
+ ],
+ "dirs": {
+  "frontend": "src/frontend",
+  "checkoutservice": "src/checkoutservice",
+  "paymentservice": "src/paymentservice",
+  "emailservice": "src/emailservice",
+  "currencyservice": "src/currencyservice",
+  "shippingservice": "src/shippingservice",
+  "productcatalogservice": "src/productcatalogservice",
+  "recommendationservice": "src/recommendationservice",
+  "adservice": "src/adservice",
+  "cartservice": "src/cartservice",
+  "redis": "src/cartservice"
+ },
+ "history": {
+  "src/adservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 182,
+     "last": "2026-09-18T02:53:53Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 8,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 4,
+     "last": "2025-12-01T07:13:40Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 3,
+     "last": "2022-11-29T17:48:48Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 2,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/cartservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 173,
+     "last": "2026-08-24T20:45:04Z",
+     "bot": true
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 10,
+     "last": "2025-12-01T07:13:40Z",
+     "bot": false
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 7,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 4,
+     "last": "2022-12-05T20:33:51Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 2,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "GabeWeiss",
+     "name": "Gabe Weiss",
+     "commits": 1,
+     "last": "2023-03-17T13:12:50Z",
+     "bot": false
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 1,
+     "last": "2024-05-10T01:10:18Z",
+     "bot": true
+    },
+    {
+     "login": "laxman-gupta1006",
+     "name": "Laxman Gupta",
+     "commits": 1,
+     "last": "2025-08-07T16:57:24Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/checkoutservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 165,
+     "last": "2026-09-18T03:15:15Z",
+     "bot": true
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 11,
+     "last": "2026-03-24T14:51:20Z",
+     "bot": true
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 9,
+     "last": "2025-12-27T19:04:37Z",
+     "bot": false
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 6,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 5,
+     "last": "2023-07-17T19:17:59Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 2,
+     "last": "2022-11-29T15:46:51Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 1,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/currencyservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 171,
+     "last": "2026-09-18T02:55:12Z",
+     "bot": true
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 13,
+     "last": "2026-08-11T19:40:41Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 5,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 4,
+     "last": "2025-12-01T07:13:40Z",
+     "bot": false
+    },
+    {
+     "login": "DracFiendMG",
+     "name": "DracFiendMG",
+     "commits": 1,
+     "last": "2023-11-23T19:17:36Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 1,
+     "last": "2022-12-05T20:33:51Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 1,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 1,
+     "last": "2023-01-18T19:35:56Z",
+     "bot": false
+    },
+    {
+     "login": "pablochacin",
+     "name": "pablochacin",
+     "commits": 1,
+     "last": "2023-10-19T17:30:30Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    },
+    {
+     "login": "vpadi",
+     "name": "Victor Padi",
+     "commits": 1,
+     "last": "2025-08-07T16:57:33Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/emailservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 176,
+     "last": "2026-08-24T20:44:54Z",
+     "bot": true
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 9,
+     "last": "2026-02-10T22:31:18Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 8,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 3,
+     "last": "2025-12-01T07:13:40Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 2,
+     "last": "2024-11-26T19:05:16Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 1,
+     "last": "2023-07-14T18:03:07Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/frontend": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 163,
+     "last": "2026-09-18T03:15:15Z",
+     "bot": true
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 8,
+     "last": "2026-03-24T18:09:53Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 8,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 5,
+     "last": "2024-04-08T21:14:11Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 5,
+     "last": "2023-07-17T19:17:59Z",
+     "bot": false
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 4,
+     "last": "2025-12-27T19:04:37Z",
+     "bot": false
+    },
+    {
+     "login": "Deleplace",
+     "name": "Valentin Deleplace",
+     "commits": 1,
+     "last": "2023-04-18T18:09:40Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 1,
+     "last": "2022-11-29T14:52:54Z",
+     "bot": false
+    },
+    {
+     "login": "aslafy-z",
+     "name": "Zadkiel AHARONIAN",
+     "commits": 1,
+     "last": "2024-07-22T15:08:28Z",
+     "bot": false
+    },
+    {
+     "login": "emzola",
+     "name": "Emmanuel Idika",
+     "commits": 1,
+     "last": "2024-03-25T19:08:51Z",
+     "bot": false
+    },
+    {
+     "login": "iennae",
+     "name": "Jennifer Davis",
+     "commits": 1,
+     "last": "2024-03-08T13:53:25Z",
+     "bot": false
+    },
+    {
+     "login": "katzio",
+     "name": "Aryeh Katz",
+     "commits": 1,
+     "last": "2022-12-01T15:38:29Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/paymentservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 171,
+     "last": "2026-09-18T02:55:12Z",
+     "bot": true
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 10,
+     "last": "2026-08-11T19:39:37Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 6,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 4,
+     "last": "2025-12-01T07:13:40Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 3,
+     "last": "2022-12-05T20:33:51Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 2,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "DracFiendMG",
+     "name": "DracFiendMG",
+     "commits": 1,
+     "last": "2023-11-23T19:17:36Z",
+     "bot": false
+    },
+    {
+     "login": "pablochacin",
+     "name": "pablochacin",
+     "commits": 1,
+     "last": "2023-10-19T17:30:30Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    },
+    {
+     "login": "vpadi",
+     "name": "Victor Padi",
+     "commits": 1,
+     "last": "2025-08-07T16:57:33Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/productcatalogservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 164,
+     "last": "2026-09-18T03:15:15Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 10,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 9,
+     "last": "2026-07-09T14:17:48Z",
+     "bot": true
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 8,
+     "last": "2025-12-27T19:04:37Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 4,
+     "last": "2023-07-17T19:17:59Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 2,
+     "last": "2022-11-29T15:46:51Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 1,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    },
+    {
+     "login": "splint-disk-8i",
+     "name": "splint-disk-8i",
+     "commits": 1,
+     "last": "2026-03-24T14:57:07Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/recommendationservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 173,
+     "last": "2026-08-24T20:44:54Z",
+     "bot": true
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 10,
+     "last": "2026-02-10T22:31:04Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 9,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 4,
+     "last": "2025-12-01T07:13:40Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 2,
+     "last": "2024-12-20T20:27:46Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 1,
+     "last": "2023-07-14T18:03:07Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    }
+   ]
+  },
+  "src/shippingservice": {
+   "commits_read": 200,
+   "people": [
+    {
+     "login": "renovate-bot",
+     "name": "Mend Renovate",
+     "commits": 170,
+     "last": "2026-09-18T03:15:15Z",
+     "bot": true
+    },
+    {
+     "login": "mathieu-benoit",
+     "name": "Mathieu Benoit",
+     "commits": 11,
+     "last": "2025-12-27T19:04:37Z",
+     "bot": false
+    },
+    {
+     "login": "dependabot[bot]",
+     "name": "dependabot[bot]",
+     "commits": 8,
+     "last": "2026-09-18T02:53:09Z",
+     "bot": true
+    },
+    {
+     "login": "olivi-eh",
+     "name": "Olivier Bourgeois",
+     "commits": 4,
+     "last": "2026-03-11T20:55:33Z",
+     "bot": false
+    },
+    {
+     "login": "Mathieu Benoit",
+     "name": "Mathieu Benoit",
+     "commits": 2,
+     "last": "2022-11-29T15:46:51Z",
+     "bot": false
+    },
+    {
+     "login": "arbrown",
+     "name": "Drew Brown",
+     "commits": 2,
+     "last": "2023-07-17T19:17:59Z",
+     "bot": false
+    },
+    {
+     "login": "NimJay",
+     "name": "Nim Jayawardena",
+     "commits": 1,
+     "last": "2023-06-13T16:46:18Z",
+     "bot": false
+    },
+    {
+     "login": "pellared",
+     "name": "Robert Paj\u0105k",
+     "commits": 1,
+     "last": "2024-09-05T17:22:39Z",
+     "bot": false
+    },
+    {
+     "login": "splint-disk-8i",
+     "name": "splint-disk-8i",
+     "commits": 1,
+     "last": "2026-03-18T00:35:55Z",
+     "bot": false
+    }
+   ]
+  }
+ }
+}

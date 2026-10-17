@@ -1,0 +1,12 @@
+# HTTPS in front of Faultline. DOMAIN is your host name, e.g. 203-0-113-7.sslip.io for a bare IP
+# (sslip.io resolves it to the IP, so Let's Encrypt can issue a certificate with no DNS setup).
+{$DOMAIN} {
+	encode gzip
+	# read-only MCP endpoint for any MCP client (streamable HTTP)
+	handle /mcp* {
+		reverse_proxy mcp:8091
+	}
+	handle {
+		reverse_proxy app:8090
+	}
+}

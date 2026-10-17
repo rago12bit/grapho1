@@ -4,6 +4,20 @@
 
 **An on-call agent that blames a change only when alerts trace an unbroken path from it up to the symptom, and says so when nothing changed at all.**
 
+Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB), entering **Tracks 01, 02 and 03**. Run all of it with one command (`docker compose up -d --build`, then http://localhost:8090), or put it on a public URL with [deploy/DEPLOY.md](deploy/DEPLOY.md).
+
+![Faultline's case file for INC-301: the failure path drawn from checkout down to payments-db in red, the blast radius in dashed amber, the verdict and its evidence on the right](docs/img/case-file.png)
+
+<sub>INC-301 opened: the answer is on screen at once. Red is the failure path the alerts climbed (payments-db → payments → checkout), dashed amber the callers it reaches. The `cart` deploy one hop away is newer and closer, but nothing under it alerted, so it scores 0.27 against 0.94.</sub>
+
+| Track | What Faultline does |
+|---|---|
+| **01 · Agents that act on connected data** | An alert-chain judge over `CALLS*1..5`, a fault simulator per suspect, and **WCC, SPpaths, betweenness, label propagation and PageRank used during the investigation**. Every claim is checked against the graph. Fixes wait for a human, then are **verified from the alerts clearing**. **Monitoring and CI push in live** (Alertmanager webhook, change events): Faultline opens the incident and investigates it by itself. An MCP server exposes the same tools. |
+| **02 · Agent memory and coordination** | Four agents hand off **only through `Episode` nodes** (resumable by another process). Lessons and precedent change the score; past incidents are matched by shape on a vector index and by full text. A **fix track record** (what worked, what didn't, counted from verified outcomes) shapes what the responder says. A load test **in the app** shows isolation and consistency under 50 parallel investigations. |
+| **03 · Company brain** | Ownership and on-call, **experts ranked by the fixes they approved, the changes they made and their commits** (real CODEOWNERS and git history for Online Boutique), runbooks per service, lessons searchable by full text, a postmortem export for any incident, and a card per service with the queries behind it. |
+
+**What's real.** Online Boutique's call graph, telemetry, root causes, owners and contributors are real (RCAEval RE2-OB; the project's CODEOWNERS and git history). Kestrel Pay is a synthetic company built to show every kind of answer. Nobody's on-call rota or fix approvals are public, so the Boutique tenant has none rather than invented ones.
+
 Most "what broke?" tools blame the most recent deploy near the failing service. Faultline walks a FalkorDB graph of services, owners, deploys, config changes, feature flags, alerts and past incidents, and asks a stricter question: *is there a path in the call graph from this change to the symptom where every service along the way started alerting after the change landed?* Only those changes are real suspects. It shows the path hop by hop with every Cypher query it ran, proposes a fix that waits for a human, and writes what it learned back into the graph for the next incident.
 
 ## What's different
@@ -19,9 +33,9 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
 9. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
-Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**.
+Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**, **03 Company Brain**.
 
-Kestrel Pay and Harbor Freight are synthetic. **Online Boutique** is real: 54 failures from the public RCAEval benchmark (its call graph, metrics and root causes; only the org chart is invented). Nothing outside the graph is ever changed.
+Kestrel Pay and Harbor Freight are synthetic. **Online Boutique** is real: 54 failures from the public RCAEval benchmark (call graph, metrics, root causes), with owners and contributors from the project's own CODEOWNERS and git history. Nothing outside the graph is ever changed.
 
 ## Run it
 
@@ -42,7 +56,26 @@ The graphs are built on first start. **Reset** in the header rebuilds them. **Gu
 - **Focused graph.** With a case open, the canvas shows only what the case touches (the symptom, the top suspects' paths, everything alerting, the callers the cause reaches) and lays it out again; *Whole system* puts everything back. *replay traversal* walks the failure path again.
 - **Risk board** (every incident, open first by severity, with the suspect the judge leads with and its confidence), **Memory** (solved incidents, lessons, full-text search over them) and **Company** (teams and on-call, chokepoints by betweenness, failure domains by label propagation, and a card per service: owners, who actually knows it, callers, recent changes, past incidents, runbooks, and the queries behind the card). Click any node on the graph to open its card.
 - **Command bar** (ctrl k): an incident id opens it; anything else is a question for the graph, answered with the tool calls and queries behind it.
-- The header shows FalkorDB's live node and edge counts, the test count and the two eval numbers, and turns red with a banner if the database goes away.
+- The header shows FalkorDB's live node and edge counts, the test count and the two eval numbers, and turns red with a banner if the database goes away. Light and dark themes follow the OS; the ◐ button overrides it.
+- **Export postmortem** on any case file: Markdown built only from the graph (summary, root cause with author and lag, how we know, a timeline, impact, the fix and its verification, linked incidents, the lesson, similar past incidents, and the Cypher behind it). A draft until the incident is resolved.
+
+![Real RCAEval telemetry in the Boutique tenant: each alert's metric as a sparkline, the leader highlighted](docs/img/real-data.png)
+
+### Live input: monitoring and CI push, Faultline acts
+
+```bash
+demo/fire.sh            # CI posts a fraud-scoring deploy, Alertmanager posts three alerts climbing to checkout
+demo/fire.sh resolve    # the same alerts, resolved: an approved fix is verified by real recovery
+```
+
+- `POST /api/{tenant}/changes`: a deploy, config or flag change from CI/CD (`{kind, service, summary, at, author, version, ...}`).
+- `POST /api/{tenant}/alerts/alertmanager`: Alertmanager's webhook body (Grafana alerting sends the same). Alerts are idempotent on their fingerprint; unknown services are reported back, not fatal; bodies over 1 MB are refused.
+- **Opening rule** (`faultline/ingest.py`): a paging alert on a tier-1 or internet-facing service opens an incident unless an unresolved one already covers that service (it is the symptom or below it) within an hour. The symptom is the paging service with the most new alerts below it. The four agents investigate at once, and the response names the cause: the `fire.sh` run opens INC-501 and blames `D-6001` with high confidence, and the responder adds that rolling back `fraud-scoring` worked the one time it was tried (INC-221).
+- An approved fix on a live incident is not simulated: it waits for monitoring, and the resolved alerts verify it. One investigation per incident at a time (a second gets 409).
+
+### Bring your own incident
+
+On the start panel, or `POST /api/upload`: a JSON file in Faultline's format ([web/examples/incident.json](web/examples/incident.json): services, calls or spans, people, changes, alerts, the incident), or one case zipped in RCAEval's layout (`inject_time.txt`, metrics and traces as parquet or CSV, read with the same detector as the benchmark). Each upload becomes its own graph (`up_…`) and the judge reads it at once; the example's answer is `C-102`, a connection limit cut two hops below the storefront. Uploads are capped (2 MB JSON, 40 MB zip, 400 MB unzipped), names and counts validated, zip members read by name only (no paths), one at a time, and only the 8 newest are kept. A trace export has no deploys in it, so its answers are always "nothing changed" infrastructure suspects.
 
 To let Claude drive the investigation instead of the offline playbook, put a key in `.env` before starting:
 
@@ -180,10 +213,10 @@ The 18 cases per repetition are every fault type (CPU, memory, disk, delay, pack
 
 `python -m faultline.rcaeval --fixture` boils all 54 cases down to a 130 KB fixture (`faultline/fixtures/boutique.json`): the call graph seen in the traces, and for each case the detector's alerts (time from the injection, peak z-score, and a 5-second z-score trace from 60 s before the fault to 4 minutes after) and RCAEval's answer key. No raw metrics or traces are kept. The seed turns it into a tenant:
 
-- **36 solved incidents** (repetitions 1 and 2): `ROOT_CAUSE` on the true service, a fix, an approver, a lesson written from what the detector saw, and a shape vector each. This is the memory.
+- **36 solved incidents** (repetitions 1 and 2): `ROOT_CAUSE` on the true service, a verified fix (approver unknown: none is published), a lesson written from what the detector saw, and a shape vector each. This is the memory.
 - **18 open incidents** (repetition 3), placed four hours apart so no two cases' alerts overlap. Their titles say only how many services alerted, never the metric that fired (a "socket" alarm on the frontend would give away a socket fault).
 - **The answer key** goes to `world.py` only, so approving a fix is verified against what RCAEval says caused the case: paging the wrong team leaves the alerts firing.
-- Teams and people are invented; the benchmark has none.
+- Owners come from the project's CODEOWNERS (one maintainers team for everything) and who knows each service from the last 200 commits to its `src/` directory, merged by name, bots kept apart (`python -m faultline.owners --fetch`, snapshot committed so the build stays offline).
 
 With that memory, the judge + skeptic leads with the right service on **15 of the 18** open cases (17 in the top three). A test pins the number.
 
@@ -191,12 +224,14 @@ With that memory, the judge + skeptic leads with the right service on **15 of th
 
 - **Four agents.** *Triage* reads the incident, its dependencies, recent changes and alerts. *Investigator* reads triage's handoff from the graph, runs the judge and the fault simulator, and checks precedent. *Skeptic* reads the investigator's handoff and challenges the leader (deterministic checks, up to two rounds, may overturn). *Responder* reads the skeptic's verdict, finds the owner and the runbook, and proposes the fix. Each writes an `Episode` that the next reads back (`(:Episode)-[:READ]->(:Episode)`); nothing is passed in memory.
 - **Claude** (`claude-opus-5-5`, adaptive thinking) plays each role with only that role's tools. The **offline playbook** runs the same roles and tools in a fixed order, so the demo works without a key. Both return the same steps, labelled by agent, with the Cypher behind each.
+- **Fix track record** (procedural memory): for each kind of fix on each service, how often it worked and how often it didn't, counted at read time from executed `Action`s and whether `verify_fix` saw the alerts clear, never kept as counters. The Memory tab lists it; the responder cites it ("revert_config on payments-db worked 1 of 1 time before (INC-212)") and warns when a fix has failed there before. Kestrel's history includes two first attempts that didn't work (rolling back `payments` during INC-212, `cart` during INC-197); a failed fix is never recorded as what resolved an incident.
+- **Load test in the app**: Memory tab → 10 / 25 / 50 investigations, 8 at a time, on a `GRAPH.COPY` of the tenant (deleted afterwards). It shows investigations per second, p50/p95, and the two checks that matter: **isolation** (no run read another run's handoffs) and **consistency** (every run reached the same verdict as a run on its own). One at a time server-wide.
 - **Memory**: every investigation is stored as an `Investigation` node. The next run on the same incident starts by reading it. Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson`, which feed the precedent factor of the next investigation. The Memory tab shows what the agent has learned.
 - **Actions**: the agent can only propose (`rollback`, `revert_config`, `disable_flag`, `page_owner`). A person approves in the UI. Approval writes a remediation change to the graph and marks the incident mitigated. It is a simulation: no real system is touched. Re-running an investigation never stacks duplicate proposals.
 - **Memory you can search and match**: every resolved incident gets an 18-number *signature* of its story (kind of cause, kind of thing that broke, depth below the symptom, tiers, risk) stored in a FalkorDB **vector index**, so `shape_matches` finds past incidents that looked the same on other services (INC-212's pool change matches INC-230's Kafka retention change at 0.91). Shape matches are shown as evidence but not scored: crediting them helped look-alike decoys as much as real causes in the eval. **Full-text indexes** over lessons, changes, alerts and incident titles back `search_memory` ("pgbouncer pool connections" finds INC-212's lesson, its pool change, today's C-5101 and the payments-db alert). `experts(service)` ranks people by what they did: fixes they approved for incidents caused there, changes they made, owning team.
 - **Concurrency** (`python -m faultline.bench`): copies the demo graph with `GRAPH.COPY` and runs many investigations at once. 40 runs, 8 at a time: about 80 runs a second, no handoff ever read from another run, every run complete, every verdict identical to a single run. Queries retry with backoff when FalkorDB reports it is busy; errors in a query are never retried.
 - **Verification**: approving a fix is not the end. The fix is applied to a simulated system (`faultline/world.py`, which stands in for production and is the only place the true cause of each alert is written down), and monitoring reports which alerts recover. Faultline then verifies from the graph alone: every alert in each covered incident's alert cone must have cleared after the fix. If any is still firing, the fix is marked as not working and the incident reopens. Approving the pool revert clears INC-301 and INC-304 and nothing else; approving a rollback of the unrelated `cart` deploy leaves checkout, payments and payments-db firing and reopens INC-301. A test checks that no agent tool or MCP tool imports the simulator's answer key.
-- **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_boutique`, `faultline_harbor`). Isolation comes from separate graphs, not a property filter, and a test proves it.
+- **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_boutique`, `faultline_harbor`, and `faultline_up_…` per upload). Isolation comes from separate graphs, not a property filter, and a test proves it.
 
 ## MCP
 
@@ -207,6 +242,8 @@ docker compose exec -T app python -m faultline.mcp_server          # stdio
 ```
 
 Claude Code: `claude mcp add faultline -- docker compose -f /path/to/faultline/docker-compose.yml exec -T app python -m faultline.mcp_server`
+
+On a public server (`docker-compose.public.yml`) the same tools are served over streamable HTTP at `https://<host>/mcp`, read-only: `propose_action` is not registered there.
 
 There is deliberately no approve tool. An agent can propose a fix; only a person can run it.
 
@@ -224,7 +261,14 @@ faultline/world.py       the simulated system: true causes, and which alerts a f
 .github/workflows/ci.yml tests + a 60-scenario eval against a real FalkorDB on every push
 faultline/mcp_server.py  MCP server over the same tools
 faultline/api.py         FastAPI: case file, board, company, service cards, memory search + the static UI
-faultline/fixtures/      boutique.json: the 54 RCAEval cases, boiled down (MIT, see rcaeval.py)
+faultline/fixtures/      boutique.json: the 54 RCAEval cases, boiled down (MIT, see rcaeval.py);
+                         boutique_owners.json: CODEOWNERS + per-service commit history (owners.py --fetch)
+faultline/ingest.py      live input: CI change events, the Alertmanager webhook, the incident opening rule
+faultline/upload.py      bring your own incident: JSON or an RCAEval-layout zip, validated, as a new tenant
+faultline/postmortem.py  Markdown postmortem from the graph
+faultline/owners.py      fetches Online Boutique's real owners and commit history from GitHub
+deploy/                  public deployment: Caddy (HTTPS) + docker-compose.public.yml, see DEPLOY.md
+demo/fire.sh             plays a live incident in through the webhooks
 web/index.html           the page: header, three tabs, command bar, graph, case file
 web/js/                  ES modules, no build step: util, parts (shared HTML), graph (Cytoscape: whole
                          system / this case), casefile, board, memory, company, ask (command bar), tour, main
@@ -233,7 +277,7 @@ tests/                   pytest against a real FalkorDB, on separate test graphs
 
 ## Limits
 
-- Kestrel's changes and alerts are synthetic. Online Boutique's are real but recorded, and its org chart is invented. The RCAEval runner shows the path for real data (graph from traces, alerts from metrics), but there is no live ingestion: a real deployment would also read deploys, config and flags from CI/CD and the flag service.
+- Kestrel's changes and alerts are synthetic. Online Boutique's are real but recorded; its owners and contributors are real, but it has no on-call rota or approval history, so none is shown. The RCAEval runner shows the path for real data (graph from traces, alerts from metrics), but there is no live ingestion: a real deployment would also read deploys, config and flags from CI/CD and the flag service.
 - The anomaly detector is deliberately simple (a sustained robust z-score). It found the true root cause's anomaly in all 54 RCAEval cases, but it has no change-point or slow-leak detection.
 - The clock is frozen at 14:00 UTC on 17 Oct 2026, so every run tells the same story.
 - Scoring weights are hand-set and explained in the UI, not learned. The eval shows what each one contributes.

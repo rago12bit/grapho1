@@ -116,14 +116,26 @@ def detect(metrics: pd.DataFrame, inject: int) -> list[dict]:
     return sorted(best.values(), key=lambda a: a["at"])
 
 
+def _table(d: Path, stem: str, columns: list[str] | None = None) -> pd.DataFrame:
+    if (d / f"{stem}.parquet").exists():
+        return pd.read_parquet(d / f"{stem}.parquet", columns=columns)
+    return pd.read_csv(d / f"{stem}.csv", usecols=columns)
+
+
+def load_case(d: Path) -> dict:
+    """One RCAEval-layout case directory (inject_time.txt, metrics and traces as parquet or CSV) boiled down to
+    what the graph needs: call edges from the spans and the detector's alerts."""
+    inject = int((d / "inject_time.txt").read_text().strip().split(".")[0])
+    metrics = _table(d, "metrics")
+    traces = _table(d, "traces", ["spanID", "parentSpanID", "serviceName"])
+    return {"inject": inject, "edges": call_edges(traces), "alerts": detect(metrics, inject)}
+
+
 def build(case: str) -> dict:
     """Load one case into its own tenant graph. Returns what the judge needs plus the answer key."""
     d = DATA / case
-    inject = int((d / "inject_time.txt").read_text().strip())
-    metrics = pd.read_parquet(d / "metrics.parquet")
-    traces = pd.read_parquet(d / "traces.parquet", columns=["spanID", "parentSpanID", "serviceName"])
-    edges = call_edges(traces)
-    alerts = detect(metrics, inject)
+    c = load_case(d)
+    inject, edges, alerts = c["inject"], c["edges"], c["alerts"]
     services = sorted({s for e in edges for s in e} | {a["service"] for a in alerts} | {SYMPTOM})
 
     g = Graph(f"rca_{abs(hash(case)) % 10**8}")

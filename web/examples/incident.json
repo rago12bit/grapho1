@@ -1,0 +1,39 @@
+{
+  "title": "Lark Books (example upload)",
+  "services": [
+    {"name": "storefront", "team": "web", "tier": 1, "exposed": true},
+    {"name": "orders", "team": "commerce", "tier": 1},
+    {"name": "search", "team": "discovery", "tier": 2},
+    {"name": "inventory", "team": "commerce", "tier": 1},
+    {"name": "payments-api", "team": "payments", "tier": 1},
+    {"name": "inventory-db", "team": "commerce", "kind": "datastore", "tier": 1},
+    {"name": "search-index", "team": "discovery", "kind": "datastore", "tier": 2},
+    {"name": "stripe", "team": "payments", "kind": "external", "tier": 1}
+  ],
+  "calls": [
+    ["storefront", "orders"], ["storefront", "search"], ["orders", "inventory"], ["orders", "payments-api"],
+    ["inventory", "inventory-db"], ["search", "search-index"], ["payments-api", "stripe"]
+  ],
+  "people": [
+    {"handle": "maya", "name": "Maya Ortiz", "team": "web", "on_call": true},
+    {"handle": "dev", "name": "Dev Patel", "team": "commerce", "on_call": true},
+    {"handle": "hugo", "name": "Hugo Lind", "team": "commerce"},
+    {"handle": "sena", "name": "Sena Aydin", "team": "discovery", "on_call": true},
+    {"handle": "omar", "name": "Omar Haddad", "team": "payments", "on_call": true}
+  ],
+  "changes": [
+    {"id": "D-101", "kind": "deploy", "service": "search", "version": "4.2.0", "author": "sena",
+     "summary": "search 4.2.0: new ranking model", "at": "2026-10-17T09:31:00Z", "risk": "medium"},
+    {"id": "C-102", "kind": "config", "service": "inventory-db", "key": "max_connections", "old": "200", "new": "40",
+     "author": "hugo", "summary": "inventory-db: max_connections 200 -> 40 (memory savings)", "at": "2026-10-17T09:12:00Z", "risk": "high"},
+    {"id": "F-103", "kind": "flag", "service": "payments-api", "key": "3ds-v2", "author": "omar",
+     "summary": "payments-api: 3ds-v2 on for 5% of cards", "at": "2026-10-17T09:20:00Z", "risk": "low"}
+  ],
+  "alerts": [
+    {"service": "inventory-db", "at": "2026-10-17T09:15:00Z", "signal": "connections at limit (40/40)"},
+    {"service": "inventory", "at": "2026-10-17T09:18:00Z", "signal": "p99 latency 5.4s"},
+    {"service": "orders", "at": "2026-10-17T09:24:00Z", "signal": "5xx 14%"},
+    {"service": "storefront", "at": "2026-10-17T09:33:00Z", "signal": "checkout errors 11%"}
+  ],
+  "incident": {"symptom": "storefront", "title": "Checkout failing for 1 in 10 orders", "severity": "SEV1"}
+}

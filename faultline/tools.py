@@ -33,6 +33,17 @@ def now() -> int:
     return NOW
 
 
+def clock(g: Graph, incident_ids: list[str]) -> int:
+    """The time a decision on these incidents happens. The demo world is frozen at NOW, but incidents opened
+    from live alerts can be later than that, so a decision is never stamped before the alerts it answers."""
+    r = g.read("""
+        MATCH (i:Incident)-[:SYMPTOM_ON]->(:Service) WHERE i.id IN $ids
+        OPTIONAL MATCH (a:Alert) WHERE a.at >= i.started - 3600 AND a.at <= i.started + 7200
+        RETURN max(i.started) AS started, max(a.at) AS last""", {"ids": incident_ids})
+    latest = max([x for x in (r[0]["started"], r[0]["last"]) if x is not None], default=0) if r else 0
+    return max(now(), latest + 60 if latest > now() else 0)
+
+
 # --- reading the graph -------------------------------------------------------------------------
 
 def list_incidents(g: Graph, status: str | None = "open") -> list[dict]:
@@ -40,7 +51,7 @@ def list_incidents(g: Graph, status: str | None = "open") -> list[dict]:
         MATCH (i:Incident)-[:SYMPTOM_ON]->(s:Service)
         WHERE $status IS NULL OR i.status = $status
         RETURN i.id AS id, i.title AS title, i.severity AS severity, i.status AS status,
-               i.started AS started, s.name AS symptom
+               i.started AS started, s.name AS symptom, i.source AS source
         ORDER BY i.started DESC""", {"status": status})
     return rows
 
@@ -330,7 +341,55 @@ def _precedent(g: Graph, service: str, kind: str | None) -> tuple[float, list[di
     return (1.0, hits) if hits else (0.5, same)
 
 
+def fix_track_record(g: Graph, service: str | None = None, kind: str | None = None) -> list[dict]:
+    """Procedural memory: how each kind of fix has done on each service. Counted at read time from executed
+    actions and whether verify_fix saw the alerts clear (verified), never kept as counters that could drift."""
+    rows = g.read("""
+        MATCH (a:Action {status: 'executed'})-[:TARGETS]->(s:Service)
+        WHERE ($svc IS NULL OR s.name = $svc) AND ($kind IS NULL OR a.kind = $kind)
+        OPTIONAL MATCH (a)-[:FOR]->(i:Incident)
+        WITH a, s, collect(DISTINCT i.id) AS incs
+        WITH a.kind AS kind, s.name AS service,
+             sum(CASE WHEN a.verified = true THEN 1 ELSE 0 END) AS worked,
+             sum(CASE WHEN a.verified = false THEN 1 ELSE 0 END) AS failed,
+             sum(CASE WHEN a.verified IS NULL THEN 1 ELSE 0 END) AS unchecked,
+             collect({action: a.id, incidents: incs, verified: a.verified, at: coalesce(a.decided_at, a.at),
+                      summary: a.summary}) AS history
+        RETURN kind, service, worked, failed, unchecked, history
+        ORDER BY worked + failed DESC, failed DESC, service, kind""", {"svc": service, "kind": kind})
+    for r in rows:
+        for k in ("worked", "failed", "unchecked"):
+            r[k] = int(r[k])
+        r["history"] = sorted(r["history"], key=lambda h: -(h["at"] or 0))[:5]
+    return rows
+
+
+def _record_note(g: Graph, kind: str, target: str) -> dict | None:
+    """What memory says about the fix the responder is about to propose."""
+    rec = fix_track_record(g, target, kind)
+    if not rec:
+        return None
+    r = rec[0]
+    tried = r["worked"] + r["failed"]
+    if not tried:
+        return None
+    incs = sorted({i for h in r["history"] for i in h["incidents"]})
+    note = (f"{kind} on {target} worked {r['worked']} of {tried} time{'s' if tried > 1 else ''} before"
+            f" ({', '.join(incs)})")
+    if r["failed"]:
+        note += ": it has not always cleared the alerts, so watch them after approving"
+    return {"worked": r["worked"], "failed": r["failed"], "incidents": incs, "note": note}
+
+
 def _recommend(g: Graph, cand: dict) -> dict:
+    act = _recommend_kind(g, cand)
+    rec = _record_note(g, act["kind"], act["target"])
+    if rec:
+        act["track_record"] = rec
+    return act
+
+
+def _recommend_kind(g: Graph, cand: dict) -> dict:
     if cand["type"] == "signal":
         return {"kind": "page_owner", "target": cand["service"],
                 "summary": f"No change explains this. Page the {cand['service']} owner to check the infrastructure."}
@@ -557,7 +616,7 @@ def propose_action(g: Graph, incident_id: str, kind: str, target: str, summary: 
         OPTIONAL MATCH (c:Change {id: $change})
         FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END | CREATE (a)-[:REVERTS]->(c))""",
             {"inc": incident_id, "target": target, "id": aid, "kind": kind, "summary": summary,
-             "reason": reason, "at": now(), "change": change_id})
+             "reason": reason, "at": clock(g, [incident_id]), "change": change_id})
     linked = [i for i in (also_for or []) if i != incident_id]
     if linked:
         g.write("""
@@ -592,9 +651,12 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
     a = rows[0]
     if a["status"] != "proposed":
         raise ValueError(f"{action_id} is already {a['status']}")
+    covered = [r["id"] for r in g.read(
+        "MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id", {"id": action_id})]
+    at = clock(g, covered)
     if not approve:
         g.write("MATCH (a:Action {id: $id}) SET a.status = 'rejected', a.decided_by = $who, a.decided_at = $at",
-                {"id": action_id, "who": who, "at": now()})
+                {"id": action_id, "who": who, "at": at})
         return {"id": action_id, "status": "rejected"}
     g.write("""
         MATCH (a:Action {id: $id})
@@ -602,9 +664,7 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
         WITH a
         OPTIONAL MATCH (p:Person {handle: $who})
         FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | MERGE (p)-[:APPROVED]->(a))""",
-            {"id": action_id, "who": who, "at": now()})
-    covered = [r["id"] for r in g.read(
-        "MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id", {"id": action_id})]
+            {"id": action_id, "who": who, "at": at})
     if a["kind"] != "page_owner":
         g.write("""
             MATCH (a:Action {id: $id})-[:FOR]->(i:Incident) WHERE i.status = 'open'
@@ -612,7 +672,7 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
         g.write("""
             MATCH (a:Action {id: $id})-[:TARGETS]->(s:Service)
             CREATE (a)-[:CREATED]->(:Change {id: 'R-' + $id, kind: 'remediation', at: $at, summary: a.summary,
-                                             risk: 'low'})-[:CHANGED]->(s)""", {"id": action_id, "at": now()})
+                                             risk: 'low'})-[:CHANGED]->(s)""", {"id": action_id, "at": at})
     return {"id": action_id, "status": "executed", "incident": a["incident"], "incidents": covered}
 
 
@@ -636,8 +696,8 @@ def resolve_incident(g: Graph, incident_id: str, root_cause_change_id: str | Non
         SET i.status = 'resolved', i.resolved = $at
         CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson, at: $at})
         WITH i
-        MATCH (a:Action {status: 'executed'})-[:FOR]->(i)
-        MERGE (i)-[:RESOLVED_BY]->(a)""", {"inc": incident_id, "lesson": lesson, "at": now()})
+        MATCH (a:Action {status: 'executed'})-[:FOR]->(i) WHERE coalesce(a.verified, true)
+        MERGE (i)-[:RESOLVED_BY]->(a)""", {"inc": incident_id, "lesson": lesson, "at": clock(g, [incident_id])})
     store_signature(g, incident_id)
     return {"incident": incident_id, "status": "resolved"}
 
@@ -825,7 +885,7 @@ def skeptic_review(ranking: dict, groups: list[dict] | None = None) -> dict:
     most). Deterministic: the same ranking always gets the same review."""
     sus = list(ranking["suspects"])
     if not sus:
-        return {"verdict": "no suspect", "rounds": [], "leader": None, "overturned": False,
+        return {"verdict": "no suspect", "rounds": [], "leader": None, "overturned": False, "failed_checks": 0,
                 "confidence_p": 0.0, "confidence": "none", "suspects": sus}
     lead, rounds, tried = sus[0], [], set()
     for _ in range(SKEPTIC_ROUNDS):
@@ -1119,18 +1179,23 @@ def experts(g: Graph, service: str, limit: int = 5) -> list[dict]:
     team = g.read("""
         MATCH (:Service {name: $svc})-[:OWNED_BY]->(:Team)<-[:MEMBER_OF]-(p:Person)
         RETURN p.handle AS handle, p.on_call AS on_call""", {"svc": service})
+    commits = g.read("""
+        MATCH (p:Person)-[c:COMMITTED]->(:Service {name: $svc})
+        RETURN p.handle AS handle, c.count AS n, c.last AS last""", {"svc": service})
     names = {r["h"]: r["n"] for r in g.read("MATCH (p:Person) RETURN p.handle AS h, p.name AS n")}
     people: dict[str, dict] = {}
 
     def person(h):
         return people.setdefault(h, {"handle": h, "name": names.get(h, h), "score": 0, "fixed": [], "changed": [],
-                                     "owner_team": False, "on_call": False})
+                                     "owner_team": False, "on_call": False, "commits": 0, "last_commit": None})
     for r in fixes:
         p = person(r["handle"]); p["fixed"] = sorted(r["incidents"]); p["score"] += 3 * len(r["incidents"])
     for r in made:
         p = person(r["handle"]); p["changed"] = sorted(r["changes"]); p["score"] += len(r["changes"])
     for r in team:
         p = person(r["handle"]); p["owner_team"] = True; p["on_call"] = bool(r["on_call"]); p["score"] += 1
+    for r in commits:   # commits to the service's code: a point per 3, at most 4, so history counts but can't swamp
+        p = person(r["handle"]); p["commits"] = r["n"]; p["last_commit"] = r["last"]; p["score"] += min(4, 1 + r["n"] // 3)
     return sorted(people.values(), key=lambda p: (-p["score"], p["handle"]))[:limit]
 
 
@@ -1321,4 +1386,6 @@ def service_card(g: Graph, service: str) -> dict:
         "betweenness": chokes.get(service), "domain": domain,
         "changes": recent, "history": similar_incidents(g, service), "runbooks": runbooks(g, service),
         "alerting_now": open_,
+        "bot_commits": (g.read("MATCH (s:Service {name: $svc}) RETURN s.bot_commits AS n, s.bots AS b", {"svc": service})
+                        or [{}])[0],
     }

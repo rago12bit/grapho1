@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <script>try { const t = localStorage.getItem("faultline.theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}</script>
   <link rel="stylesheet" href="/static/styles.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ef6a55' stroke-width='3'/></svg>">
 </head>
@@ -22,6 +23,7 @@
       <span id="db" class="db mono"><i></i><span id="db-stats">connecting…</span></span>
       <span id="proof" class="proof mono" title="pytest; python -m faultline.eval (held-out seeds); python -m faultline.rcaeval (36 unseen real cases)"></span>
       <span class="mono faint agent">agent: <b id="mode"></b></span>
+      <button id="theme" class="theme-btn" aria-label="Switch theme">◐</button>
       <button id="reset" class="btn quiet" title="Rebuild the demo graphs">Reset</button>
       <button id="tour-btn" class="btn solid">Guided demo</button>
     </div>

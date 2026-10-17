@@ -187,6 +187,8 @@ def _history_kestrel() -> list[dict]:
          "days_ago": 61, "severity": "SEV1", "cause_service": "payments-db", "cause_kind": "config",
          "cause_summary": "payments-db: pgbouncer pool_size 120 -> 40", "cause_author": "marta",
          "fix": "revert_config", "fix_summary": "Reverted pool_size to 120; latency recovered in 4 min",
+         "tried": [{"kind": "rollback", "target": "payments", "by": "lin", "firing": "payments, payments-db",
+                    "summary": "Rolled back payments 3.4.1 to 3.4.0; latency did not move"}],
          "lesson": "Pool/connection limits on payments-db must be load-tested against peak; checkout feels it first."},
         {"id": "INC-188", "title": "Login 401 spike after auth release", "symptom": "auth",
          "days_ago": 94, "severity": "SEV1", "cause_service": "auth", "cause_kind": "deploy",
@@ -202,6 +204,8 @@ def _history_kestrel() -> list[dict]:
          "days_ago": 80, "severity": "SEV2", "cause_service": "session-redis", "cause_kind": "config",
          "cause_summary": "session-redis: maxmemory-policy changed to allkeys-lru", "cause_author": "ravi",
          "fix": "revert_config", "fix_summary": "Restored volatile-lru",
+         "tried": [{"kind": "rollback", "target": "cart", "by": "priya", "firing": "cart, session-redis",
+                    "summary": "Rolled back cart 2.8.0 to 2.7.6; carts still emptied"}],
          "lesson": "session-redis eviction policy is load-bearing for cart and auth."},
         {"id": "INC-221", "title": "Fraud checks timing out", "symptom": "payments",
          "days_ago": 47, "severity": "SEV2", "cause_service": "fraud-scoring", "cause_kind": "deploy",
@@ -331,7 +335,10 @@ def _write_history(g: Graph, history: list[dict]) -> None:
                           risk: 'high'})-[:CHANGED]->(cs)
         CREATE (i)-[:ROOT_CAUSE]->(c)
         CREATE (i)-[:RESOLVED_BY]->(a:Action {id: 'ACT-' + h.id, kind: h.fix, summary: h.fix_summary,
-                                              status: 'executed', at: h.resolved, decided_by: h.approver})
+                                              status: 'executed', at: h.resolved, decided_at: h.resolved,
+                                              decided_by: h.approver, verified: true,
+                                              verification: h.id + ': all alerts cleared after the fix'})
+        CREATE (a)-[:FOR]->(i), (a)-[:TARGETS]->(cs)
         CREATE (i)-[:TAUGHT]->(:Lesson {text: h.lesson, at: h.resolved})
         WITH h, c, a
         OPTIONAL MATCH (p:Person {handle: h.cause_author})
@@ -339,6 +346,20 @@ def _write_history(g: Graph, history: list[dict]) -> None:
         WITH h, a
         OPTIONAL MATCH (ap:Person {handle: h.approver})
         FOREACH (_ IN CASE WHEN ap IS NULL THEN [] ELSE [1] END | CREATE (ap)-[:APPROVED]->(a))""", {"rows": rows})
+    # Fixes that were tried first and did not clear the alerts: the other half of the fix track record.
+    tried = [{**t, "incident": h["id"], "at": h["started"] + 25 * MIN if h.get("started") else NOW - h["days_ago"] * DAY + 25 * MIN}
+             for h in history for t in h.get("tried", [])]
+    if tried:
+        g.write("""
+            UNWIND $tried AS t
+            MATCH (i:Incident {id: t.incident}), (s:Service {name: t.target})
+            CREATE (a:Action {id: 'ACT-' + t.incident + '-TRY', kind: t.kind, summary: t.summary, status: 'executed',
+                              at: t.at, decided_at: t.at, decided_by: t.by, verified: false,
+                              verification: t.incident + ': still firing: ' + t.firing})
+            CREATE (a)-[:FOR]->(i), (a)-[:TARGETS]->(s)
+            WITH a, t
+            OPTIONAL MATCH (p:Person {handle: t.by})
+            FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | CREATE (p)-[:APPROVED]->(a))""", {"tried": tried})
 
 
 FULLTEXT = [("Lesson", "text"), ("Change", "summary"), ("Alert", "signal"), ("Incident", "title")]
@@ -360,21 +381,39 @@ def _write_indexes(g: Graph) -> None:
 BOUTIQUE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "boutique.json"
 
 # The call graph, the alerts and every root cause come from RCAEval RE2-OB (see faultline/rcaeval.py,
-# --fixture). The benchmark has no org chart, so the teams and people below are invented.
-BOUTIQUE = {
-    "title": "Online Boutique · RCAEval",
-    "teams": {"storefront": "Storefront", "orders": "Orders", "catalog": "Catalog", "cart": "Cart"},
-    "people": [
-        ("ines", "Inés Duarte", "storefront", True), ("kai", "Kai Brenner", "storefront", False),
-        ("mo", "Mo Adeyemi", "orders", True), ("hana", "Hana Kim", "orders", False),
-        ("luca", "Luca Bianchi", "catalog", True), ("zoe", "Zoë Laurent", "catalog", False),
-        ("arjun", "Arjun Nair", "cart", True),
-    ],
-    "owner": {"frontend": "storefront", "checkoutservice": "orders", "paymentservice": "orders",
-              "emailservice": "orders", "currencyservice": "orders", "shippingservice": "orders",
-              "productcatalogservice": "catalog", "recommendationservice": "catalog", "adservice": "catalog",
-              "cartservice": "cart", "redis": "cart"},
-}
+# --fixture). Owners come from the project's real CODEOWNERS and who works on each service from its real commit
+# history (faultline/owners.py, snapshot in fixtures/boutique_owners.json). The project has no on-call rota and no
+# record of who approved the benchmark's fixes, so neither is invented: on-call is empty and approvals unknown.
+BOUTIQUE_OWNERS = Path(__file__).resolve().parent / "fixtures" / "boutique_owners.json"
+BOUTIQUE = {"title": "Online Boutique · RCAEval"}
+
+
+def boutique_people() -> dict:
+    """Teams from CODEOWNERS, people and their commit counts per service from the git history."""
+    snap = json.loads(BOUTIQUE_OWNERS.read_text())
+    rule = snap["codeowners"][-1]["owners"] if snap["codeowners"] else []
+    team = next((o.lstrip("@").split("/")[-1] for o in rule if "/" in o), "maintainers")
+    by_name: dict[str, dict] = {}
+    committed, bots = [], {}
+    for svc, d in snap["dirs"].items():
+        for p in snap["history"][d]["people"]:
+            if p["bot"]:
+                bots.setdefault(svc, {})[p["login"]] = p["commits"]
+                continue
+            # one person can appear under their login and under a bare name (commits not linked to an account)
+            key = p["name"].strip().lower()
+            cur = by_name.setdefault(key, {"handle": p["login"], "name": p["name"]})
+            if cur["handle"] == cur["name"] and p["login"] != p["name"]:
+                cur["handle"] = p["login"]
+            committed.append({"key": key, "service": svc, "count": p["commits"], "last": p["last"]})
+    rows: dict[tuple, dict] = {}
+    for c in committed:
+        k = (by_name[c["key"]]["handle"], c["service"])
+        r = rows.setdefault(k, {"handle": k[0], "service": c["service"], "count": 0, "last": ""})
+        r["count"] += c["count"]
+        r["last"] = max(r["last"], c["last"])
+    return {"team": team, "owners_rule": rule, "people": sorted({(v["handle"], v["name"]) for v in by_name.values()}),
+            "committed": list(rows.values()), "bots": bots, "source": snap["source"], "fetched": snap["fetched"]}
 OPEN_REP = 3   # repetition 3 of every case is open for the agents; repetitions 1 and 2 are solved history
 
 
@@ -403,11 +442,25 @@ def boutique_cases() -> dict:
 
 def _boutique(g: Graph) -> None:
     data = boutique_cases()
-    names = sorted({s for e in data["edges"] for s in e} | set(BOUTIQUE["owner"]))
-    spec = {**BOUTIQUE, "services": [(n, BOUTIQUE["owner"][n], "datastore" if n == "redis" else "service", 1,
-                                      n == "frontend") for n in names], "calls": data["edges"]}
+    real = boutique_people()
+    team = real["team"]
+    names = sorted({s for e in data["edges"] for s in e} | {a["service"] for c in data["cases"] for a in c["alerts"]})
+    spec = {**BOUTIQUE, "teams": {team: team}, "people": [],
+            "services": [(n, team, "datastore" if n == "redis" else "service", 1, n == "frontend") for n in names],
+            "calls": data["edges"]}
     _write_org(g, spec)
-    on_call = {t: h for h, _, t, oc in BOUTIQUE["people"] if oc}
+    g.write("MATCH (o:Org) SET o.owners_source = $src, o.owners_fetched = $f, o.codeowners = $rule",
+            {"src": real["source"], "f": real["fetched"], "rule": " ".join(real["owners_rule"])})
+    g.write("UNWIND $people AS p CREATE (:Person {handle: p[0], name: p[1], on_call: false, source: 'git history'})",
+            {"people": [list(p) for p in real["people"]]})
+    g.write("""
+        UNWIND $rows AS r
+        MATCH (p:Person {handle: r.handle}), (s:Service {name: r.service})
+        CREATE (p)-[:COMMITTED {count: r.count, last: r.last}]->(s)""", {"rows": real["committed"]})
+    g.write("""
+        UNWIND $bots AS b MATCH (s:Service {name: b.service})
+        SET s.bot_commits = b.n, s.bots = b.names""",
+            {"bots": [{"service": k, "n": sum(v.values()), "names": sorted(v)} for k, v in real["bots"].items()]})
     cases = data["open"] + data["done"]
     g.write("""
         UNWIND $alerts AS a
@@ -430,7 +483,7 @@ def _boutique(g: Graph) -> None:
             "severity": "SEV2", "cause_service": rc, "cause_kind": "infra", "cause_at": c["inject"],
             "cause_summary": f"{rc}: {c['fault']} fault injected (RCAEval {c['case']})", "cause_author": None,
             "fix": "page_owner", "fix_summary": f"Fault removed from {rc}; metrics back to baseline",
-            "approver": on_call[BOUTIQUE["owner"][rc]],
+            "approver": None,
             "lesson": (f"A {c['fault']} fault on {rc} showed first as {mine[0]['signal']}" if mine else
                        f"A {c['fault']} fault on {rc} raised no alert on {rc} itself") +
                       (f"; then {', '.join(after)} alerted." if after else ".")})
