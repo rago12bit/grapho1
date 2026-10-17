@@ -576,15 +576,22 @@ def investigate_claude(tenant: str, incident_id: str, run_id: str) -> dict:
 
 # --- entry points -------------------------------------------------------------------------------
 
+def judged(g: Graph, incident_id: str, limit: int = 6) -> dict:
+    """The judge's ranking after the skeptic's review, with the alert groups it used: the verdict the
+    agents start from, without running them."""
+    ranking = tools.rank_suspects(g, incident_id, limit=limit)
+    groups = tools.alert_clusters(g, incident_id)["groups"]
+    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking, groups))
+    ranking["alert_groups"] = groups
+    return ranking
+
+
 def preview(tenant: str, incident_id: str) -> dict:
     """The case file without running the agents: the judge, the skeptic, the alert groups and the narrative,
     read-only, so the answer is on screen the moment an incident is opened. Running the four agents adds the
     step-by-step trace and the fix proposal."""
     g = Graph(tenant)
-    ranking = tools.rank_suspects(g, incident_id)
-    groups = tools.alert_clusters(g, incident_id)["groups"]
-    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking, groups))
-    ranking["alert_groups"] = groups
+    ranking = judged(g, incident_id)
     top = ranking["suspects"][0] if ranking["suspects"] else None
     if top:
         ranking["impact"] = tools.impact(g, top["service"], incident_id)
@@ -592,8 +599,11 @@ def preview(tenant: str, incident_id: str) -> dict:
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = tools.search_memory(g, words.split(":", 1)[-1])
     findings = _narrate(ranking, tools.runbooks(g, top["service"]) if top else [])
+    check = tools.verify_claims(g, incident_id, findings, ranking)
+    q = g.trace.queries
     return {"mode": "preview", "incident_id": incident_id, "steps": [], "findings": findings, "ranking": ranking,
-            "answer": findings["summary"], "claim_check": tools.verify_claims(g, incident_id, findings, ranking)}
+            "answer": findings["summary"], "claim_check": check, "timeline": tools.timeline(g, incident_id),
+            "graph": {"queries": len(q), "ms": round(sum(x["ms"] for x in q), 1)}}
 
 
 
@@ -611,6 +621,7 @@ def investigate(tenant: str, incident_id: str) -> dict:
     top = out["ranking"]["suspects"][0] if out["ranking"]["suspects"] else None
     if top and "impact" not in out["ranking"]:
         out["ranking"]["impact"] = tools.impact(g, top["service"], incident_id)
+    out["timeline"] = tools.timeline(g, incident_id)
     out["claim_check"] = check = tools.verify_claims(g, incident_id, out["findings"], out["ranking"])
     if out["mode"] == "claude":
         # Claims the graph can't back are dropped from the evidence, not shown as fact.

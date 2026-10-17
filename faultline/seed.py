@@ -394,6 +394,8 @@ def boutique_cases() -> dict:
         n = c["id"].split("-")[1]
         for i, a in enumerate(c["alerts"]):
             a.update(id=f"A-{n}{i:02d}", at=c["inject"] + a["offset"])
+            if a["z"] >= 1000:   # a flat baseline makes z astronomical; past 999 the number says nothing more
+                a["signal"] = a["signal"].split(" z=")[0] + " z>999"
         front = [a["at"] for a in c["alerts"] if a["service"] == "frontend"]
         c["started"] = front[0] if front else (c["alerts"][0]["at"] if c["alerts"] else c["inject"])
     return {**data, "open": open_, "done": done}
@@ -410,13 +412,13 @@ def _boutique(g: Graph) -> None:
     g.write("""
         UNWIND $alerts AS a
         MATCH (s:Service {name: a.service})
-        CREATE (:Alert {id: a.id, at: a.at, severity: 'page', signal: a.signal, z: a.z, series: a.series})-[:FIRED_ON]->(s)""",
+        CREATE (:Alert {id: a.id, at: a.at, severity: 'page', signal: a.signal, z: a.z, series: a.series,
+                        offset: a.offset})-[:FIRED_ON]->(s)""",
             {"alerts": [a for c in cases for a in c["alerts"]]})
 
     def title(c):
-        front = next((a for a in c["alerts"] if a["service"] == "frontend"), None)
-        return f"Storefront degraded · frontend {front['signal'].split(' ')[0]}" if front else \
-            f"Storefront degraded · {len(c['alerts'])} services alerting"
+        # Says only what on-call would see first. The metric that fired is left out: it can name the fault.
+        return f"Storefront degraded · {len(c['alerts'])} services alerting"
     _write_incidents(g, [{"id": c["id"], "title": title(c), "symptom": "frontend", "started": c["started"],
                           "status": "open", "severity": "SEV2"} for c in data["open"]])
     history = []

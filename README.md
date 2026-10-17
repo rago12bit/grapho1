@@ -14,14 +14,14 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
 4. **Memory changes the score, not just the display.** Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson` into the graph, and the next investigation scores precedent from them. A test deletes the memory and checks that the same change then scores lower.
 5. **A fault simulator checks every suspect.** For each one it asks "if this broke, which services would alert, and in what order?" and compares that with what actually alerted: "explains 3 of 3 alerting services, in the predicted order". Alerts the leader can't explain point to **independent faults**: in INC-302 the auth deploy explains 2 of the 7 alerting services under `mobile-bff`, and Faultline names the other two faults behind the rest (the pool change of INC-301/304, the search cluster of INC-303). A cause that never alerts itself (a queue, a database) still counts when everything above it did, and a change the failure climbed *past* is marked down.
 6. **Four agents, one graph, and a skeptic among them.** Triage, Investigator, Skeptic and Responder never pass anything to each other in code: each writes an `Episode` to the graph and the next one starts by reading it back, so an investigation can be resumed by another process or session. The **Skeptic** tries to knock the leader over before anyone acts: what doesn't it explain, did its alerts come in the right order, did the change land before the incident, is it clearly ahead? If a rival explains more and scores within reach, the verdict is overturned. Confidence comes from the **gap** to the runner-up, not the raw score. Verdicts stay in the graph as scored `SUSPECTED_CAUSE` and `SIMILAR_TO` edges, and the Responder attaches the team's `Runbook`.
-7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 96–97.5% top-1 and 100% top-3 on held-out seeds, against 64% for "blame the most recent change". When Faultline says **high** confidence it has been right every time. On **real telemetry** from a public benchmark (RCAEval, 36 unseen cases) it names the right service first 86% of the time and in its top three 94%, on par with the best simple baseline (see [Public data](#public-data-rcaeval)).
+7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 95.8–97.5% top-1 and 100% top-3 on held-out seeds, against 64% for "blame the most recent change". When Faultline says **high** confidence it has been right every time. On **real telemetry** from a public benchmark (RCAEval, 36 unseen cases) it names the right service first 92% of the time (33/36) and in its top three 94%, against 86% first for the best simple baseline (see [Public data](#public-data-rcaeval)). Those 54 real failures are also loaded into the app as a third company, so you can open them.
 8. **Every claim is checked, every number is explained, and the agent can't act alone.** Every change id, incident id, service and clock time in a verdict is looked up in the graph, and what the claim *says* must match it ("C-5101 changed auth" fails: it changed payments-db; "D-5102 caused it" fails: it was ruled out; "payments alerted before payments-db" fails: the times say otherwise). The verdict must also hang together (the blamed change exists, changed the named service, and is among the judge's top suspects); claims Claude makes that the graph can't back are dropped from the evidence and shown as such. Each suspect shows its factor scores, its footprint and its path, and every step shows its Cypher. Free-form queries run through `GRAPH.RO_QUERY`, so the database itself refuses writes. The agent and the MCP server can only propose fixes; there is no approve tool.
 9. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
 Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**.
 
-All company data is synthetic. Nothing outside the graph is ever changed.
+Kestrel Pay and Harbor Freight are synthetic. **Online Boutique** is real: 54 failures from the public RCAEval benchmark (its call graph, metrics and root causes; only the org chart is invented). Nothing outside the graph is ever changed.
 
 ## Run it
 
@@ -33,7 +33,16 @@ docker compose up -d --build
 - FalkorDB browser: http://localhost:3003 (graph `faultline_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
 
-The graphs are built on first start. **Reset demo** in the header rebuilds them.
+The graphs are built on first start. **Reset** in the header rebuilds them. **Guided demo** (or http://localhost:8090/?demo=1) plays the whole story on the live app with captions.
+
+### The app
+
+- **Answer first.** Opening an incident shows the case file at once: the verdict, confidence, how many of its claims were checked against the graph, and the one-paragraph story. It is the judge and the skeptic reading the graph directly (about 70 read-only queries, ~20 ms); nothing is written. **Run the four agents** re-derives it step by step, records the handoffs in the graph and proposes the fix. Their steps sit folded under *Agent handoffs*, each with its Cypher.
+- **Case file sections:** root cause (path, change, spread, what it explains, fix, owners, score), **blast radius** (one block per service the failure reaches: the path to it, internet-facing or not, owning team and on-call, alerting now or quiet), proposed fixes with approve and verify, a **timeline** of every alert and change in the window (real metric traces as sparklines on Online Boutique), the skeptic's checks, alert groups (WCC), other faults, memory and precedent, evidence, and every suspect with its factor bars.
+- **Focused graph.** With a case open, the canvas shows only what the case touches (the symptom, the top suspects' paths, everything alerting, the callers the cause reaches) and lays it out again; *Whole system* puts everything back. *replay traversal* walks the failure path again.
+- **Risk board** (every incident, open first by severity, with the suspect the judge leads with and its confidence), **Memory** (solved incidents, lessons, full-text search over them) and **Company** (teams and on-call, chokepoints by betweenness, failure domains by label propagation, and a card per service: owners, who actually knows it, callers, recent changes, past incidents, runbooks, and the queries behind the card). Click any node on the graph to open its card.
+- **Command bar** (ctrl k): an incident id opens it; anything else is a question for the graph, answered with the tool calls and queries behind it.
+- The header shows FalkorDB's live node and edge counts, the test count and the two eval numbers, and turns red with a banner if the database goes away.
 
 To let Claude drive the investigation instead of the offline playbook, put a key in `.env` before starting:
 
@@ -124,7 +133,7 @@ Linked incidents (shared scenarios): precision 1.0, recall 1.0.
 
 Learning: the same 150 faults planted again after the first round was resolved: top-1 96.0% → 97.3%. Without the precedent factor the second round scores 96.0%.
 
-Held-out seeds (400 scenarios each), judge → judge + skeptic: 95.5% → 96.0% (seed 3), 95.8% → 96.8% (seed 11), 96.8% → 97.5% (seed 42); top-3 100% on all three; linked-incident precision and recall 1.0. Confidence on the held-out seeds: **high** was right 100% of the time, **medium** 97.6–99.4%, **low** 85.4–89.2%.
+Held-out seeds (400 scenarios each), judge → judge + skeptic: 95.2% → 95.8% (seed 3), 95.8% → 96.8% (seed 11), 96.8% → 97.5% (seed 42); top-3 100% on all three; linked-incident precision and recall 1.0. Confidence on the held-out seeds: **high** was right 100% of the time, **medium** 97.6–99.4%, **low** 84.1–89.2%.
 
 How to read it honestly:
 - The scenario generator is mine, so this measures the judge against the failure patterns it was designed for, not against real outages. The weights were adjusted while looking at seed 7; the held-out seeds are the fairer number.
@@ -153,15 +162,30 @@ The 18 cases per repetition are every fault type (CPU, memory, disk, delay, pack
 | | top-1 | top-3 |
 |---|---|---|
 | Judge as it was, repetition 1 | 11/18 | 13/18 |
-| Judge after one fix, repetition 1 (seen while fixing) | 13/18 | 15/18 |
-| **Judge after the fix, repetitions 2 + 3 (36 unseen cases)** | **31/36 (86%)** | **34/36 (94%)** |
-| Judge + skeptic, repetitions 2 + 3 | 30/36 (83%) | 34/36 (94%) |
+| Judge after the knock-on fix, repetition 1 (seen while fixing) | 13/18 | 15/18 |
+| Judge after the knock-on fix, repetitions 2 + 3 (36 unseen cases) | 31/36 (86%) | 34/36 (94%) |
+| **Judge with the tie rule, repetitions 2 + 3** | **33/36 (92%)** | **34/36 (94%)** |
+| Judge + skeptic with the tie rule, repetitions 2 + 3 | 32/36 (89%) | 34/36 (94%) |
+| Judge with the tie rule, repetition 1 | 13/18 | 16/18 |
 | Baseline: earliest alert, repetitions 2 + 3 | 31/36 (86%) | 35/36 (97%) |
 | Baseline: biggest anomaly, repetitions 2 + 3 | 1/36 | 28/36 |
 
 **The fix.** The first run showed a real bug: the judge only considered the *deepest* alerting services, so when CPU stress hit `checkoutservice` and `currencyservice` below it slowed down 90 seconds later, checkout was dropped and currency blamed. Now a service is set aside only if something below it alerted *before* it did. Later alerts below are knock-on effects. That was the only change made after seeing RCAEval results, and it did not change the synthetic eval. Repetitions 2 and 3 were downloaded and scored only after it.
 
-**What this says.** On real faults Faultline is as accurate as the strongest simple baseline (blame whatever alerted first), not more. That fits the data: these faults are resource stress with no deploy or config change and one fault per case, so alert timing carries almost all of the signal, and Faultline's change-based factors and linked-incident logic have nothing to work with. What Faultline adds on top is the explanation (path, footprint, order, skeptic checks), the owner, runbook and fix, and claims checked against the graph. The skeptic cost one case here. The detector found an alert on the true root-cause service in all 54 cases, so the misses are the judge's, not the detector's.
+**The tie rule, and how it was found.** Loading the cases into the app showed one (repetition 3, `recommendationservice` packet loss) where two suspects scored exactly the same and the winner was whichever row FalkorDB returned first, so the answer could change between builds. Ties now go to whatever started first (a change's time, a silent failure's first alert), then by name. It was added to make the judge deterministic, but it was found on a held-out case, so treat the 33/36 as partly seen; 31/36 is the number from before it. It changed no synthetic seed except one case in 400 on seed 3 (96.0% → 95.8%).
+
+**What this says.** On real faults Faultline is about as accurate as the strongest simple baseline (blame whatever alerted first): a little better first (33 vs 31 of 36), a little worse in the top three (34 vs 35). That fits the data: these faults are resource stress with no deploy or config change and one fault per case, so alert timing carries almost all of the signal, and Faultline's change-based factors and linked-incident logic have nothing to work with. What Faultline adds on top is the explanation (path, footprint, order, skeptic checks), the owner, runbook and fix, and claims checked against the graph. The skeptic cost one case here, and on Online Boutique (below) it overturns one correct answer and lowers its confidence on six. The detector found an alert on the true root-cause service in all 54 cases, so the misses are the judge's, not the detector's.
+
+### The same failures, in the app: Online Boutique
+
+`python -m faultline.rcaeval --fixture` boils all 54 cases down to a 130 KB fixture (`faultline/fixtures/boutique.json`): the call graph seen in the traces, and for each case the detector's alerts (time from the injection, peak z-score, and a 5-second z-score trace from 60 s before the fault to 4 minutes after) and RCAEval's answer key. No raw metrics or traces are kept. The seed turns it into a tenant:
+
+- **36 solved incidents** (repetitions 1 and 2): `ROOT_CAUSE` on the true service, a fix, an approver, a lesson written from what the detector saw, and a shape vector each. This is the memory.
+- **18 open incidents** (repetition 3), placed four hours apart so no two cases' alerts overlap. Their titles say only how many services alerted, never the metric that fired (a "socket" alarm on the frontend would give away a socket fault).
+- **The answer key** goes to `world.py` only, so approving a fix is verified against what RCAEval says caused the case: paging the wrong team leaves the alerts firing.
+- Teams and people are invented; the benchmark has none.
+
+With that memory, the judge + skeptic leads with the right service on **15 of the 18** open cases (17 in the top three). A test pins the number.
 
 ## Agent, memory and actions
 
@@ -172,7 +196,7 @@ The 18 cases per repetition are every fault type (CPU, memory, disk, delay, pack
 - **Memory you can search and match**: every resolved incident gets an 18-number *signature* of its story (kind of cause, kind of thing that broke, depth below the symptom, tiers, risk) stored in a FalkorDB **vector index**, so `shape_matches` finds past incidents that looked the same on other services (INC-212's pool change matches INC-230's Kafka retention change at 0.91). Shape matches are shown as evidence but not scored: crediting them helped look-alike decoys as much as real causes in the eval. **Full-text indexes** over lessons, changes, alerts and incident titles back `search_memory` ("pgbouncer pool connections" finds INC-212's lesson, its pool change, today's C-5101 and the payments-db alert). `experts(service)` ranks people by what they did: fixes they approved for incidents caused there, changes they made, owning team.
 - **Concurrency** (`python -m faultline.bench`): copies the demo graph with `GRAPH.COPY` and runs many investigations at once. 40 runs, 8 at a time: about 80 runs a second, no handoff ever read from another run, every run complete, every verdict identical to a single run. Queries retry with backoff when FalkorDB reports it is busy; errors in a query are never retried.
 - **Verification**: approving a fix is not the end. The fix is applied to a simulated system (`faultline/world.py`, which stands in for production and is the only place the true cause of each alert is written down), and monitoring reports which alerts recover. Faultline then verifies from the graph alone: every alert in each covered incident's alert cone must have cleared after the fix. If any is still firing, the fix is marked as not working and the incident reopens. Approving the pool revert clears INC-301 and INC-304 and nothing else; approving a rollback of the unrelated `cart` deploy leaves checkout, payments and payments-db firing and reopens INC-301. A test checks that no agent tool or MCP tool imports the simulator's answer key.
-- **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_harbor`). Isolation comes from separate graphs, not a property filter, and a test proves it.
+- **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_boutique`, `faultline_harbor`). Isolation comes from separate graphs, not a property filter, and a test proves it.
 
 ## MCP
 
@@ -192,21 +216,24 @@ There is deliberately no approve tool. An agent can propose a fix; only a person
 faultline/db.py          FalkorDB access, per-tenant graphs, query trace, read-only guard
 faultline/seed.py        the synthetic companies (deterministic)
 faultline/tools.py       graph tools, the judge, actions, memory
-faultline/agent.py       the three agents (Claude or offline playbook) + question router
+faultline/agent.py       the four agents (Claude or offline playbook), the case preview + question router
 faultline/eval.py        planted-fault accuracy eval with ablations, baselines and a learning run
 faultline/rcaeval.py     RCAEval public-benchmark runner: graph from traces, alerts from metrics, score
 faultline/bench.py       concurrency benchmark: many investigations at once on a graph copy, isolation checked
 faultline/world.py       the simulated system: true causes, and which alerts a fix clears (agents never read it)
 .github/workflows/ci.yml tests + a 60-scenario eval against a real FalkorDB on every push
 faultline/mcp_server.py  MCP server over the same tools
-faultline/api.py         FastAPI + static UI
-web/                     UI (Cytoscape.js)
+faultline/api.py         FastAPI: case file, board, company, service cards, memory search + the static UI
+faultline/fixtures/      boutique.json: the 54 RCAEval cases, boiled down (MIT, see rcaeval.py)
+web/index.html           the page: header, three tabs, command bar, graph, case file
+web/js/                  ES modules, no build step: util, parts (shared HTML), graph (Cytoscape: whole
+                         system / this case), casefile, board, memory, company, ask (command bar), tour, main
 tests/                   pytest against a real FalkorDB, on separate test graphs
 ```
 
 ## Limits
 
-- The demo company, its changes and its alerts are synthetic. The RCAEval runner shows the path for real data (graph from traces, alerts from metrics), but there is no live ingestion: a real deployment would also read deploys, config and flags from CI/CD and the flag service.
+- Kestrel's changes and alerts are synthetic. Online Boutique's are real but recorded, and its org chart is invented. The RCAEval runner shows the path for real data (graph from traces, alerts from metrics), but there is no live ingestion: a real deployment would also read deploys, config and flags from CI/CD and the flag service.
 - The anomaly detector is deliberately simple (a sustained robust z-score). It found the true root cause's anomaly in all 54 RCAEval cases, but it has no change-point or slow-leak detection.
 - The clock is frozen at 14:00 UTC on 17 Oct 2026, so every run tells the same story.
 - Scoring weights are hand-set and explained in the UI, not learned. The eval shows what each one contributes.

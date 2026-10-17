@@ -24,6 +24,15 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Faultline", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def revalidate_static(request, call_next):
+    # The UI is plain ES modules; make the browser revalidate them so an update never runs against stale code.
+    res = await call_next(request)
+    if request.url.path.startswith("/static/") or request.url.path == "/":
+        res.headers["Cache-Control"] = "no-cache"
+    return res
+
+
 def _g(tenant: str) -> Graph:
     if tenant not in seed.TENANTS:
         raise HTTPException(404, f"unknown tenant {tenant}")
@@ -56,7 +65,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 52, "planted": "96–97.5%", "real": "31/36"}
+PROOF = {"tests": 63, "planted": "95.8–97.5%", "real": "33/36"}
 
 
 @app.get("/api/health")
@@ -103,7 +112,7 @@ def board(tenant: str):
     for inc in tools.list_incidents(g, None):
         row = dict(inc)
         if inc["status"] != "resolved":
-            r = tools.rank_suspects(g, inc["id"], limit=2)
+            r = agent.judged(g, inc["id"])
             top = r["suspects"][0] if r["suspects"] else None
             row["leader"] = tools._label(top) if top else None
             row["leader_service"] = top["service"] if top else None
@@ -115,7 +124,20 @@ def board(tenant: str):
 
 @app.get("/api/{tenant}/company")
 def company(tenant: str):
-    return tools.company(_g(tenant))
+    g = _g(tenant)
+    return {**tools.company(g), "traces": g.trace.queries}
+
+
+@app.get("/api/{tenant}/services/{service}")
+def service(tenant: str, service: str):
+    """One service's card: owners, experts, callers, changes, history, runbooks, and the queries behind it."""
+    g = _g(tenant)
+    return {**_guard(tools.service_card, g, service), "traces": g.trace.queries}
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/timeline")
+def timeline(tenant: str, incident_id: str):
+    return _guard(tools.timeline, _g(tenant), incident_id)
 
 
 @app.post("/api/{tenant}/incidents/{incident_id}/investigate")
@@ -153,15 +175,38 @@ def ask(tenant: str, body: Ask):
 @app.get("/api/{tenant}/memory")
 def memory(tenant: str):
     """What the agent has learned: resolved incidents, their causes, fixes and lessons."""
-    return _g(tenant).read("""
+    g = _g(tenant)
+    return g.read("""
         MATCH (i:Incident {status: 'resolved'})-[:SYMPTOM_ON]->(sym:Service)
         OPTIONAL MATCH (i)-[:ROOT_CAUSE]->(c:Change)-[:CHANGED]->(cs:Service)
         OPTIONAL MATCH (i)-[:RESOLVED_BY]->(a:Action)
         OPTIONAL MATCH (i)-[:TAUGHT]->(l:Lesson)
         RETURN i.id AS id, i.title AS title, i.started AS started, sym.name AS symptom,
                cs.name AS cause_service, c.kind AS cause_kind, c.summary AS cause,
-               collect(DISTINCT a.summary) AS fixes, collect(DISTINCT l.text) AS lessons
+               collect(DISTINCT a.summary) AS fixes, collect(DISTINCT l.text) AS lessons,
+               collect(DISTINCT a.decided_by)[0] AS approved_by
         ORDER BY started DESC""")
+
+
+@app.get("/api/{tenant}/memory/search")
+def memory_search(tenant: str, q: str):
+    """Full-text search over lessons, change summaries, alert signals and incident titles."""
+    g = _g(tenant)
+    return {"hits": tools.search_memory(g, q[:200]), "traces": g.trace.queries}
+
+
+@app.get("/api/{tenant}/memory/stats")
+def memory_stats(tenant: str):
+    """The numbers above the Memory tab: what is remembered, and how often the agents have used it."""
+    g = _g(tenant)
+    r = g.read("""
+        OPTIONAL MATCH (i:Incident {status: 'resolved'}) WITH count(i) AS solved
+        OPTIONAL MATCH (l:Lesson) WITH solved, count(l) AS lessons
+        OPTIONAL MATCH (v:Investigation) WITH solved, lessons, count(v) AS runs
+        OPTIONAL MATCH (e:Episode) WITH solved, lessons, runs, count(e) AS handoffs
+        OPTIONAL MATCH (x:Incident) WHERE x.signature IS NOT NULL
+        RETURN solved, lessons, runs, handoffs, count(x) AS shapes""")[0]
+    return r
 
 
 @app.post("/api/reset")

@@ -7,79 +7,73 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <link rel="stylesheet" href="/static/styles.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ef6a55' stroke-width='3'/></svg>">
 </head>
 <body>
   <header class="top">
-    <div class="brand">
+    <button class="brand" id="home" title="Back to the start">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>
-      <span>Faultline</span>
-      <span class="tagline">outage root cause on a graph</span>
-    </div>
+      <span class="name serif">Faultline</span>
+      <span class="tagline label">outage root cause on a graph</span>
+    </button>
     <nav id="tenants" class="tenants" aria-label="Company"></nav>
     <div class="status">
-      <span id="db-pill" class="pill"><i></i><b>FalkorDB</b> <span id="db-stats">connecting…</span></span>
-      <span id="mode-pill" class="pill mode"></span>
-      <button id="reset" class="ghost" title="Rebuild the demo graphs">Reset demo</button>
+      <span id="db" class="db mono"><i></i><span id="db-stats">connecting…</span></span>
+      <span id="proof" class="proof mono" title="pytest; python -m faultline.eval (held-out seeds); python -m faultline.rcaeval (36 unseen real cases)"></span>
+      <span class="mono faint agent">agent: <b id="mode"></b></span>
+      <button id="reset" class="btn quiet" title="Rebuild the demo graphs">Reset</button>
+      <button id="tour-btn" class="btn solid">Guided demo</button>
     </div>
   </header>
+  <div id="offline" class="offline" role="alert" hidden><b>FalkorDB is offline.</b> Every answer here is a graph traversal, so there is nothing to show until the database is back. The page reconnects by itself.</div>
 
   <main class="layout">
     <aside class="left">
       <div class="tabs" role="tablist">
-        <button role="tab" class="tab active" data-tab="incidents">Incidents</button>
-        <button role="tab" class="tab" data-tab="memory">Memory</button>
+        <button role="tab" class="tab" data-tab="board" aria-selected="true">Risk board</button>
+        <button role="tab" class="tab" data-tab="memory" aria-selected="false">Memory</button>
+        <button role="tab" class="tab" data-tab="company" aria-selected="false">Company</button>
       </div>
-      <section id="tab-incidents" class="tabpane">
-        <div id="tiles" class="tiles"></div>
-        <div class="listhead">Open first, by severity</div>
-        <ul id="incident-list" class="incidents"></ul>
-      </section>
-      <section id="tab-memory" class="tabpane" hidden>
-        <p class="hint">Resolved incidents the agent learns from. Every new investigation checks these for precedent.</p>
-        <ul id="memory-list" class="memory"></ul>
-      </section>
-      <form id="ask" class="ask">
-        <label for="q">Ask the graph</label>
-        <div class="askrow">
-          <input id="q" placeholder="what breaks if ledger-db goes down?" autocomplete="off">
-          <button type="submit">Ask</button>
-        </div>
-        <div class="chips">
-          <button type="button" data-q="who owns payments-db?">who owns payments-db?</button>
-          <button type="button" data-q="what breaks if ledger-db goes down?">what breaks if ledger-db goes down?</button>
-          <button type="button" data-q="has catalog-es failed before?">has catalog-es failed before?</button>
-          <button type="button" data-q="most critical services">most critical services</button>
-          <button type="button" data-q="runbook for payments-db">runbook for payments-db</button>
-          <button type="button" data-q="single points of failure">single points of failure</button>
-          <button type="button" data-q="failure domains">failure domains</button>
-        </div>
-      </form>
+      <section id="tab-board" class="tabpane"></section>
+      <section id="tab-memory" class="tabpane" hidden></section>
+      <section id="tab-company" class="tabpane" hidden></section>
     </aside>
 
     <section class="center">
-      <div id="cy" aria-label="Service call graph"></div>
-      <div class="legend">
-        <span><i class="dot symptom"></i>symptom</span>
-        <span><i class="dot suspect"></i>root cause</span>
-        <span><i class="dot alerting"></i>alerting</span>
-        <span><i class="line"></i>failure path</span>
-        <span class="muted">node size = PageRank</span>
+      <form id="cmd" class="cmd">
+        <span class="prompt mono" aria-hidden="true">›</span>
+        <input id="q" placeholder="An incident id (INC-301), or ask: what breaks if ledger-db goes down?" autocomplete="off" aria-label="Open an incident or ask the graph">
+        <span class="label kbd">ctrl k</span>
+        <button id="run" class="btn solid" type="submit">Run</button>
+      </form>
+      <div id="answer" class="answer" hidden></div>
+      <div class="canvas">
+        <div id="cy" role="img" aria-label="Service call graph"></div>
+        <div id="scope" class="scope" role="group" aria-label="Graph scope">
+          <button data-scope="case" class="active" disabled>This case</button>
+          <button data-scope="system">Whole system</button>
+        </div>
+        <div id="caption" class="caption" hidden></div>
+        <div class="legend mono">
+          <span><i class="k sym"></i>symptom</span>
+          <span><i class="k sus"></i>root cause</span>
+          <span><i class="k alr"></i>alerting</span>
+          <span><i class="k path"></i>failure path</span>
+          <span><i class="k reach"></i>blast radius</span>
+          <span class="faint">size = PageRank</span>
+        </div>
+        <div id="tour" class="tour" role="status" aria-live="polite" hidden>
+          <div class="tour-track"><div id="tour-progress"></div></div>
+          <div class="tour-body"><span id="tour-n" class="mono num"></span><p id="tour-text" class="serif"></p><button id="tour-stop" class="btn quiet inv">Stop</button></div>
+        </div>
       </div>
-      <div id="caption" class="caption" hidden></div>
     </section>
 
-    <aside class="right" id="case">
-      <div class="empty">
-        <h1>Which change broke production, and how did it get there?</h1>
-        <p>Faultline walks a FalkorDB graph of services, owners, deploys, config changes, alerts and past incidents. It follows the failure from the symptom down the call graph to the change that caused it, shows every hop and every query, and proposes a fix that waits for your approval.</p>
-        <p class="muted">Pick an incident on the left to start.</p>
-      </div>
-    </aside>
+    <aside class="right" id="case"></aside>
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-  <script src="/static/app.js?v=3"></script>
+  <script type="module" src="/static/js/main.js"></script>
 </body>
 </html>

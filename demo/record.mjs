@@ -139,15 +139,16 @@ await scene("s3_inc301", async () => {
   await pause(1500);
   await click("#go");
   await page.mouse.move(W * 0.42, H * 0.92, { steps: 20 });   // out of the way of the case file
-  await page.waitForSelector(".verdict", { timeout: 30000 });
+  await page.waitForSelector("#handoffs", { timeout: 30000 });
+  await page.evaluate(() => { document.querySelector("#handoffs").open = true; });
   await pause(800);
   await scrollRight("#steps", "start", 20);
 });
 
 await scene("s4_verdict", async () => {
-  await scrollRight(".verdict", "start", 16);
+  await scrollRight(".verdict-word", "start", 40);
   await pause(5000);
-  await scrollRight(".skeptic-box", "center");
+  await scrollRight(".sec.skeptic", "center");
   await pause(7000);
   await scrollRight(".shared", "center");
 });
@@ -165,11 +166,11 @@ await scene("s6_inc302", async () => {
   await pause(1200);
   await click("#go");
   await page.mouse.move(W * 0.42, H * 0.92, { steps: 20 });
-  await page.waitForSelector(".groups", { timeout: 30000 });
+  await page.waitForSelector("#handoffs", { timeout: 30000 });
   await pause(1500);
-  await scrollRight(".groups", "center");
+  await scrollRight(".sec.groups", "center");
   await pause(5000);
-  await scrollRight(".others", "center");
+  await scrollRight(".sec.others", "center");
 });
 
 // INC-303: let the agents run first, so the narration starts when the verdict is on screen.
@@ -177,9 +178,10 @@ await click("#incident-list button", "INC-303");
 await pause(1000);
 await click("#go");
 await page.mouse.move(W * 0.42, H * 0.92, { steps: 20 });
-await page.waitForSelector(".verdict", { timeout: 30000 });
+await page.waitForSelector("#handoffs", { timeout: 30000 });
+await page.evaluate(() => { document.querySelector("#handoffs").open = true; });
 await pause(800);
-await scrollRight(".verdict", "start", 16);
+await scrollRight(".verdict-word", "start", 40);
 await pause(600);
 await scene("s7_inc303", async () => {});
 
@@ -199,7 +201,9 @@ await scene("s7b_cypher", async () => {
 });
 
 await scene("s7c_whatif", async () => {
-  await click(".chips button", "what breaks if ledger-db");
+  await click("#q");
+  await page.keyboard.type("what breaks if ledger-db goes down?", { delay: 12 });
+  await page.keyboard.press("Enter");
   await pause(800);
   await page.evaluate(() => document.querySelector(".right").scrollTo({ top: 0 }));
   await page.mouse.move(W * 0.5, H * 0.45, { steps: 20 });

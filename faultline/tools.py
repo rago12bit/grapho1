@@ -496,11 +496,15 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
             "type": "signal", "service": svc, "change": None, "hops": hops[svc], "path": path,
             "minutes_before": round((start - first) / 60, 1), "factors": factors,
             "score": round(sum(SIGNAL_WEIGHTS[k] * v for k, v in factors.items()), 3),
-            "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp,
+            "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp, "first_alert": first,
         })
 
     _shape_precedent(g, inc, suspects, incident_id)
-    suspects.sort(key=lambda s: (s["score"], s["footprint"]["coverage"]), reverse=True)
+    # Ties go to whichever started first (a change's time, a silent failure's first alert), then by name, so
+    # the same graph always gives the same answer whatever order the database returned rows in.
+    suspects.sort(key=lambda s: (s["change"]["id"] if s["change"] else s["service"]))
+    suspects.sort(key=lambda s: (s["score"], s["footprint"]["coverage"],
+                                 -(s["change"]["at"] if s["change"] else s["first_alert"])), reverse=True)
     suspects = suspects[:limit]
     for i, s in enumerate(suspects):
         s["recommended_action"] = _recommend(g, s)
@@ -1276,3 +1280,45 @@ def company(g: Graph) -> dict:
         t["on_call"] = [x for x in t["on_call"] if x]
     return {"teams": teams, "chokepoints": single_points_of_failure(g, 6), "domains": failure_domains(g),
             "critical": critical_services(g, 6)}
+
+
+def timeline(g: Graph, incident_id: str) -> dict:
+    """Every alert and change in the incident's window, across all services, in time order. Alerts from real
+    telemetry (the Boutique tenant) carry the z-score trace of the metric that fired."""
+    inc = get_incident(g, incident_id)
+    alerts = g.read("""
+        MATCH (a:Alert)-[:FIRED_ON]->(s:Service)
+        WHERE a.at >= $from AND a.at <= $to
+        RETURN a.id AS id, s.name AS service, a.at AS at, a.signal AS signal, a.z AS z, a.series AS series,
+               a.offset AS offset, a.cleared_at AS cleared_at
+        ORDER BY a.at""", {"from": inc["started"] - WINDOW_MIN * 60, "to": inc["started"] + 30 * 60})
+    changes = all_changes_near(g, inc["started"])
+    return {"incident": incident_id, "started": inc["started"], "alerts": alerts, "changes": changes}
+
+
+def service_card(g: Graph, service: str) -> dict:
+    """Everything the graph knows about one service: owners and on-call, who actually knows it, what it calls
+    and who calls it, recent changes, past incidents rooted in it, runbooks, and where it sits in the
+    PageRank, betweenness and community structure."""
+    own = who_owns(g, service)
+    br = blast_radius(g, service)
+    chokes = {r["service"]: r for r in single_points_of_failure(g, 100)}
+    domain = next((d for d in failure_domains(g) if service in d.get("services", [])), None)
+    recent = g.read("""
+        MATCH (c:Change)-[:CHANGED]->(:Service {name: $svc})
+        WHERE c.kind IN ['deploy', 'config', 'flag']
+        OPTIONAL MATCH (p:Person)-[:MADE]->(c)
+        RETURN c.id AS id, c.kind AS kind, c.at AS at, c.summary AS summary, c.risk AS risk, p.name AS author
+        ORDER BY c.at DESC LIMIT 6""", {"svc": service})
+    open_ = g.read("""
+        MATCH (a:Alert)-[:FIRED_ON]->(:Service {name: $svc})
+        WHERE a.cleared_at IS NULL AND a.at >= $since
+        RETURN count(a) AS n""", {"svc": service, "since": now() - 2 * HOUR_S})[0]["n"]
+    return {
+        "service": service, "team": own["team"], "people": own["people"], "on_call": own["on_call"],
+        "experts": experts(g, service), "callers": br["callers"], "exposed_via": br["exposed_entry_points"],
+        "calls": dependencies(g, service, 1), "pagerank": br["pagerank"], "rank": br["criticality_rank"],
+        "betweenness": chokes.get(service), "domain": domain,
+        "changes": recent, "history": similar_incidents(g, service), "runbooks": runbooks(g, service),
+        "alerting_now": open_,
+    }
