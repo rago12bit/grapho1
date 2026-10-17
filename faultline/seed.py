@@ -170,6 +170,9 @@ def _planted_kestrel() -> tuple[list[dict], list[dict], list[dict]]:
          "started": NOW - 20 * MIN, "status": "open", "severity": "SEV1"},
         {"id": "INC-303", "title": "Search returns empty results", "symptom": "search",
          "started": NOW - 13 * MIN, "status": "open", "severity": "SEV2"},
+        # Opened separately by the Payments team: the same pool change is behind it and INC-301.
+        {"id": "INC-304", "title": "Refund API timing out", "symptom": "payments",
+         "started": NOW - 40 * MIN, "status": "open", "severity": "SEV2"},
     ]
     return changes, alerts, incidents
 

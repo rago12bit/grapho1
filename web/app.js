@@ -127,6 +127,16 @@ async function animatePath(path, alerts, symptom, suspect) {
   if (suspect) cy.$id(suspect).addClass("suspect");
 }
 
+async function drawLinked(path, symptom) {
+  const cy = state.cy;
+  cy.$id(symptom).removeClass("dim").addClass("symptom lit");
+  for (let i = 0; i < path.length - 1; i++) {
+    await sleep(250);
+    cy.$id(`${path[i]}->${path[i + 1]}`).removeClass("dim").addClass("path");
+    cy.$id(path[i + 1]).removeClass("dim");
+  }
+}
+
 function highlightServices(names, edges = []) {
   const cy = state.cy;
   clearGraph();
@@ -253,7 +263,14 @@ async function renderResult(out, v = state.view) {
     await animatePath(top.path, alerting, r.incident.symptom, top.service);
     if (v !== state.view) return;
     caption(`<b>${esc(r.incident.id)}</b> · ${top.change ? `${esc(top.change.id)} on <b>${esc(top.service)}</b>, ${top.hops} hop${top.hops === 1 ? "" : "s"} below ${esc(r.incident.symptom)}` : `no change on the path; <b>${esc(top.service)}</b> failed first`}`);
+    for (const o of top.also_explains || []) {
+      await sleep(300);
+      if (v !== state.view) return;
+      await drawLinked(o.path, o.symptom);
+    }
+    if (top.also_explains?.length) caption(`<b>${esc(top.change.id)}</b> on <b>${esc(top.service)}</b> explains ${[r.incident.id, ...top.also_explains.map((o) => o.id)].map(esc).join(" and ")}`);
   }
+  const shared = top?.change && (!f.change_id || f.change_id === top.change.id) ? (top.also_explains || []) : [];
   const verdict = document.createElement("div");
   verdict.className = "section";
   verdict.innerHTML = `
@@ -261,11 +278,13 @@ async function renderResult(out, v = state.view) {
     <div class="verdict ${f.change_id ? "" : "none"}">
       <div class="head"><span class="big">${esc(f.change_id || (f.root_cause_service ? f.root_cause_service : "no cause found"))}</span>
         <span class="conf ${esc(f.confidence)}">${esc(f.confidence || "")} confidence</span></div>
+      ${shared.length ? `<div class="shared"><b>Shared root cause.</b> ${esc(top.change.id)} also explains ${shared.map((o) => `<button class="linkbtn" data-inc="${esc(o.id)}">${esc(o.id)}</button> ${esc(o.title)}`).join(", ")}. One fix covers ${shared.length === 1 ? "both" : "all of them"}.</div>` : ""}
       <p>${esc(f.summary || out.answer || "")}</p>
       ${f.evidence?.length ? `<ul class="evidence">${f.evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
       ${f.ruled_out?.length ? `<div class="section"><h3>Ruled out</h3><ul class="ruled">${f.ruled_out.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
     </div>`;
   box.appendChild(verdict);
+  verdict.querySelectorAll(".linkbtn").forEach((b) => b.addEventListener("click", () => selectIncident(b.dataset.inc)));
   if (r?.suspects?.length) box.appendChild(suspectsTable(r));
 }
 
@@ -300,7 +319,8 @@ function suspectsTable(r) {
         <td>${s.change ? `<b>${esc(s.change.id)}</b> ${esc(s.change.kind)} on ${esc(s.service)}<br><span class="muted">${esc(s.change.summary)}</span>`
           : `<b>${esc(s.service)}</b> alerting, no change`}
           <div class="factors">${keys.map((k) => `<span class="factor" title="${k} ${s.factors[k]}"><i style="width:${Math.round(100 * s.factors[k])}%"></i></span>`).join("")}</div>
-          <div class="flabels">${keys.map((k) => `<span>${k.replace("_", " ")}</span>`).join("")}</div></td>
+          <div class="flabels">${keys.map((k) => `<span>${k.replace("_", " ")}</span>`).join("")}</div>
+          ${s.also_explains?.length ? `<div class="linked">also explains ${s.also_explains.map((o) => esc(o.id)).join(", ")}</div>` : ""}</td>
         <td class="mono">${esc(s.path.join(" → "))}</td></tr>`;
     }).join("")}
     </tbody></table>
@@ -317,7 +337,7 @@ function renderActions(inc) {
   box.innerHTML = `
     ${acts.length ? `<div class="section"><h3>Fixes${acts.some((a) => a.status === "proposed") ? " · need your approval" : ""}</h3>
       ${acts.map((a) => `<div class="action ${esc(a.status)}">
-        <div class="k">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}</div>
+        <div class="k">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}${(a.covers || []).length > 1 ? ` · covers ${a.covers.map(esc).join(", ")}` : ""}</div>
         <div class="s">${esc(a.summary)}</div>
         ${a.status === "proposed" ? `<div class="btns"><button class="primary" data-a="${esc(a.id)}" data-ok="1">Approve</button><button class="ghost" data-a="${esc(a.id)}" data-ok="0">Reject</button></div>`
           : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · written to the graph (simulated, no real systems touched)" : ""}</div>`}

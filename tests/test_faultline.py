@@ -140,3 +140,31 @@ def test_api_end_to_end(fresh):
         mem = c.get("/api/kestrel/memory").json()
         assert any(m["id"] == "INC-301" and "load test pools" in m["lessons"] for m in mem)
         assert c.get("/").status_code == 200
+
+
+def test_one_change_explaining_two_incidents_is_linked(fresh):
+    r301 = tools.rank_suspects(fresh, "INC-301")
+    r304 = tools.rank_suspects(fresh, "INC-304")
+    assert r304["suspects"][0]["change"]["id"] == "C-5101"
+    assert [o["id"] for o in r301["suspects"][0]["also_explains"]] == ["INC-304"]
+    assert [o["id"] for o in r304["suspects"][0]["also_explains"]] == ["INC-301"]
+    assert r301["suspects"][0]["recommended_action"]["also_for"] == ["INC-304"]
+    # a closer deploy with no alert chain explains nothing else
+    cart = next(s for s in r301["suspects"] if (s["change"] or {}).get("id") == "D-5102")
+    assert cart["also_explains"] == []
+    # the auth deploy behind INC-302 is not on checkout's or payments' path
+    assert tools.rank_suspects(fresh, "INC-302")["suspects"][0]["also_explains"] == []
+
+
+def test_one_fix_mitigates_every_linked_incident(fresh):
+    out = agent.investigate("kestrel", "INC-301")
+    assert "INC-304" in out["findings"]["summary"]
+    acts = tools.list_actions(fresh, "INC-304")
+    assert len(acts) == 1 and set(acts[0]["covers"]) == {"INC-301", "INC-304"}
+    # investigating the other incident reuses the same proposal
+    agent.investigate("kestrel", "INC-304")
+    assert [a["id"] for a in tools.list_actions(fresh, "INC-304")] == [acts[0]["id"]]
+    done = tools.decide_action(fresh, acts[0]["id"], True, "tester")
+    assert set(done["incidents"]) == {"INC-301", "INC-304"}
+    assert {tools.get_incident(fresh, i)["status"] for i in ("INC-301", "INC-304")} == {"mitigated"}
+    assert fresh.read("MATCH (c:Change {kind: 'remediation'}) RETURN count(c) AS n")[0]["n"] == 1

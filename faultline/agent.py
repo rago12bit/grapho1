@@ -62,9 +62,12 @@ TOOL_SPECS: list[dict] = [
      "input_schema": _obj({"query": S}, ["query"])},
     {"name": "propose_action", "description": (
         "Propose a remediation. It is NOT executed: a human approves or rejects it in the UI. kind is one of "
-        "rollback, revert_config, disable_flag, page_owner. Include change_id when it reverts a change."),
+        "rollback, revert_config, disable_flag, page_owner. Include change_id when it reverts a change. If the "
+        "change also explains other open incidents (rank_suspects lists them in also_explains), pass their ids in "
+        "also_for so one approval mitigates all of them."),
      "input_schema": _obj({"incident_id": S, "kind": {"type": "string", "enum": ["rollback", "revert_config", "disable_flag", "page_owner"]},
-                           "target": S, "summary": S, "change_id": S, "reason": S},
+                           "target": S, "summary": S, "change_id": S, "reason": S,
+                           "also_for": {"type": "array", "items": S}},
                           ["incident_id", "kind", "target", "summary"])},
     {"name": "submit_findings", "description": "Finish an incident investigation. Call exactly once, last.",
      "input_schema": _obj({
@@ -97,8 +100,8 @@ def _dispatch(g: Graph) -> dict[str, Callable[..., Any]]:
         "critical_services": lambda limit=10: tools.critical_services(g, limit),
         "past_investigations": lambda incident_id: tools.past_investigations(g, incident_id),
         "run_cypher": lambda query: tools.run_cypher(g, query),
-        "propose_action": lambda incident_id, kind, target, summary, change_id=None, reason="":
-            tools.propose_action(g, incident_id, kind, target, summary, change_id, reason),
+        "propose_action": lambda incident_id, kind, target, summary, change_id=None, reason="", also_for=None:
+            tools.propose_action(g, incident_id, kind, target, summary, change_id, reason, also_for),
         "submit_findings": lambda **kw: {"accepted": True},
     }
 
@@ -136,6 +139,8 @@ def _narrate(ranking: dict) -> dict:
     ev = [f"Dependency path {path} ({top['hops']} hop{'s' if top['hops'] != 1 else ''})"]
     ev += [f"{a['service']} alerted at {_hhmm(a['at'])}: {a['signal']}" for a in top["evidence_alerts"]]
     ev += [f"Precedent {p['incident']}: {p['cause']} → {p['fix_summary']}" for p in top["precedents"][:2]]
+    ev += [f"Same change also explains {o['id']} ({o['title']}): alerts trace {' → '.join(o['path'])}"
+           for o in top.get("also_explains", [])]
     if top["type"] == "change":
         c = top["change"]
         ev.insert(0, f"{c['id']} by {c['author']} at {_hhmm(c['at'])}, {top['minutes_before']:g} min before the incident: {c['summary']}")
@@ -143,6 +148,9 @@ def _narrate(ranking: dict) -> dict:
                    f"{top['minutes_before']:g} minutes before {inc['symptom']} degraded, and alerts follow the path {path}. "
                    f"{top['recommended_action']['summary']}; {top['owner']['on_call']['name'] if top['owner'].get('on_call') else top['owner']['team']} "
                    f"({top['owner']['team']}) is on call.")
+        if top.get("also_explains"):
+            ids = ", ".join(o["id"] for o in top["also_explains"])
+            summary += f" The same change also explains {ids}: one fix should clear {'both' if len(top['also_explains']) == 1 else 'all of them'}."
     else:
         summary = (f"No deploy, config or flag change on {inc['symptom']}'s dependency path explains {inc['id']}. "
                    f"{top['service']} started alerting first, {top['minutes_before']:g} minutes before the incident, and the "
@@ -178,7 +186,8 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True) -> 
             ra = top["recommended_action"]
             run("propose_action", "Propose the fix. A human approves it before anything happens.",
                 incident_id=incident_id, kind=ra["kind"], target=ra["target"], summary=ra["summary"],
-                change_id=ra.get("change_id"), reason=f"Top suspect, score {top['score']}")
+                change_id=ra.get("change_id"), reason=f"Top suspect, score {top['score']}",
+                also_for=ra.get("also_for"))
     findings = _narrate(ranking)
     return {"mode": "offline", "incident_id": incident_id, "steps": steps, "findings": findings,
             "ranking": ranking, "answer": findings["summary"]}
@@ -255,7 +264,9 @@ alert chain with alerts_near or paths_between, read precedents with similar_inci
 judge could have missed with run_cypher.
 - A change counts only if it sits on the symptom's dependency path. If nothing on the path changed, say so and \
 look for an alerting dependency instead: "no change found" is a valid answer.
-- Propose one remediation with propose_action. It waits for a human; never say it has been done.
+- If the leading change also explains other open incidents (also_explains), say so: they share one root cause.
+- Propose one remediation with propose_action, with also_for listing those incidents. It waits for a human; \
+never say it has been done.
 - Finish with submit_findings. Every evidence item must come from a tool result. Use the change ids, service \
 names and times exactly as the graph gives them.
 

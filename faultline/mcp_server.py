@@ -84,11 +84,13 @@ def run_cypher(query: str) -> str:
     return _call("run_cypher", query=query)
 
 
-@server.tool(description="Propose a fix (rollback, revert_config, disable_flag, page_owner). A human approves it in the Faultline UI.")
+@server.tool(description=(
+    "Propose a fix (rollback, revert_config, disable_flag, page_owner). A human approves it in the Faultline UI. "
+    "also_for: other open incidents the same change explains, so one approval mitigates all of them."))
 def propose_action(incident_id: str, kind: str, target: str, summary: str, change_id: str | None = None,
-                   reason: str = "") -> str:
+                   reason: str = "", also_for: list[str] | None = None) -> str:
     return _call("propose_action", incident_id=incident_id, kind=kind, target=target, summary=summary,
-                 change_id=change_id, reason=reason)
+                 change_id=change_id, reason=reason, also_for=also_for)
 
 
 if __name__ == "__main__":

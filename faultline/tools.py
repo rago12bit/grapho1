@@ -225,6 +225,28 @@ def _recommend(g: Graph, cand: dict) -> dict:
             "summary": f"Turn off {cand['change'].get('key') or 'the flag'} on {svc}"}
 
 
+def also_explains(g: Graph, change: dict, exclude: str) -> list[dict]:
+    """Other open incidents this change fully explains: it sits on their symptom's dependency path, landed
+    inside their window, and alerts trace an unbroken path from it up to their symptom. One change behind
+    several incidents means one fix for all of them."""
+    out = []
+    for other in list_incidents(g, "open"):
+        if other["id"] == exclude:
+            continue
+        start = other["started"]
+        if not (start - WINDOW_MIN * 60 <= change["at"] <= start + AFTER_GRACE_MIN * 60):
+            continue
+        sym = other["symptom"]
+        if change["service"] != sym and change["service"] not in {d["service"] for d in dependencies(g, sym)}:
+            continue
+        paths = paths_between(g, sym, change["service"])
+        alerts = alerts_near(g, sorted({svc for p in paths for svc in p}), start)
+        full = next((p for p in paths if _alert_chain(p, alerts, change["at"])[0] >= 1.0), None)
+        if full:
+            out.append({"id": other["id"], "title": other["title"], "symptom": sym, "path": full})
+    return out
+
+
 def rank_suspects(g: Graph, incident_id: str) -> dict:
     """Score every change on the symptom's dependency path, plus alerting dependencies with no change.
 
@@ -288,9 +310,12 @@ def rank_suspects(g: Graph, incident_id: str) -> dict:
         })
 
     suspects.sort(key=lambda s: s["score"], reverse=True)
-    for s in suspects:
+    for i, s in enumerate(suspects):
         s["recommended_action"] = _recommend(g, s)
         s["owner"] = who_owns(g, s["service"])
+        s["also_explains"] = also_explains(g, s["change"], incident_id) if s["change"] and i < 3 else []
+        if s["also_explains"]:
+            s["recommended_action"]["also_for"] = [o["id"] for o in s["also_explains"]]
 
     path_set = set(on_path)
     ruled_out = [
@@ -311,7 +336,9 @@ def rank_suspects(g: Graph, incident_id: str) -> dict:
 # --- writes (human-gated) ------------------------------------------------------------------------
 
 def propose_action(g: Graph, incident_id: str, kind: str, target: str, summary: str,
-                   change_id: str | None = None, reason: str = "") -> dict:
+                   change_id: str | None = None, reason: str = "", also_for: list[str] | None = None) -> dict:
+    """Propose a fix. also_for links the same fix to other open incidents the change explains, so one
+    approval mitigates all of them."""
     if kind not in ("rollback", "revert_config", "disable_flag", "page_owner"):
         raise ValueError(f"unknown action kind {kind}")
     get_incident(g, incident_id)
@@ -333,15 +360,23 @@ def propose_action(g: Graph, incident_id: str, kind: str, target: str, summary: 
         FOREACH (_ IN CASE WHEN c IS NULL THEN [] ELSE [1] END | CREATE (a)-[:REVERTS]->(c))""",
             {"inc": incident_id, "target": target, "id": aid, "kind": kind, "summary": summary,
              "reason": reason, "at": now(), "change": change_id})
-    return {"id": aid, "kind": kind, "target": target, "summary": summary, "status": "proposed"}
+    linked = [i for i in (also_for or []) if i != incident_id]
+    if linked:
+        g.write("""
+            MATCH (a:Action {id: $id}), (i:Incident) WHERE i.id IN $ids AND i.status = 'open'
+            CREATE (a)-[:FOR]->(i)""", {"id": aid, "ids": linked})
+    return {"id": aid, "kind": kind, "target": target, "summary": summary, "status": "proposed",
+            "covers": [incident_id] + linked}
 
 
 def list_actions(g: Graph, incident_id: str) -> list[dict]:
     return g.read("""
         MATCH (a:Action)-[:FOR]->(:Incident {id: $inc})
         OPTIONAL MATCH (a)-[:TARGETS]->(s:Service)
+        OPTIONAL MATCH (a)-[:FOR]->(all:Incident)
+        WITH a, s, collect(DISTINCT all.id) AS covers
         RETURN a.id AS id, a.kind AS kind, a.summary AS summary, a.reason AS reason, a.status AS status,
-               a.at AS at, a.decided_by AS decided_by, s.name AS target, a.change_id AS change_id
+               a.at AS at, a.decided_by AS decided_by, s.name AS target, a.change_id AS change_id, covers
         ORDER BY a.at""", {"inc": incident_id})
 
 
@@ -363,14 +398,20 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
                 {"id": action_id, "who": who, "at": now()})
         return {"id": action_id, "status": "rejected"}
     g.write("""
-        MATCH (a:Action {id: $id})-[:FOR]->(i:Incident), (a)-[:TARGETS]->(s:Service)
-        SET a.status = 'executed', a.decided_by = $who, a.decided_at = $at,
-            i.status = CASE WHEN a.kind = 'page_owner' THEN i.status ELSE 'mitigated' END
-        FOREACH (_ IN CASE WHEN a.kind = 'page_owner' THEN [] ELSE [1] END |
-            CREATE (a)-[:CREATED]->(:Change {id: 'R-' + $id, kind: 'remediation', at: $at, summary: a.summary,
-                                             risk: 'low'})-[:CHANGED]->(s))""",
+        MATCH (a:Action {id: $id})
+        SET a.status = 'executed', a.decided_by = $who, a.decided_at = $at""",
             {"id": action_id, "who": who, "at": now()})
-    return {"id": action_id, "status": "executed", "incident": a["incident"]}
+    covered = [r["id"] for r in g.read(
+        "MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id", {"id": action_id})]
+    if a["kind"] != "page_owner":
+        g.write("""
+            MATCH (a:Action {id: $id})-[:FOR]->(i:Incident) WHERE i.status = 'open'
+            SET i.status = 'mitigated'""", {"id": action_id})
+        g.write("""
+            MATCH (a:Action {id: $id})-[:TARGETS]->(s:Service)
+            CREATE (a)-[:CREATED]->(:Change {id: 'R-' + $id, kind: 'remediation', at: $at, summary: a.summary,
+                                             risk: 'low'})-[:CHANGED]->(s)""", {"id": action_id, "at": now()})
+    return {"id": action_id, "status": "executed", "incident": a["incident"], "incidents": covered}
 
 
 def resolve_incident(g: Graph, incident_id: str, root_cause_change_id: str | None, lesson: str,
