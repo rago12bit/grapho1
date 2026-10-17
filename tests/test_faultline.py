@@ -107,7 +107,7 @@ def test_offline_investigation_shows_its_work(fresh):
     assert "4.1." in out["ranking"]["suspects"][0]["recommended_action"]["to_version"]
     assert all(s["cypher"] for s in out["steps"]), "every step must carry the Cypher it ran"
     roles = [s["role"] for s in out["steps"]]
-    assert roles == sorted(roles, key=["triage", "investigator", "responder"].index)
+    assert roles == sorted(roles, key=["triage", "investigator", "skeptic", "responder"].index)
     assert "propose_action" in [s["tool"] for s in out["steps"] if s["role"] == "responder"]
     assert tools.past_investigations(fresh, "INC-302")[0]["top_change"] == "D-5201"
 
@@ -180,12 +180,13 @@ def test_agents_hand_off_only_through_the_graph(fresh):
         OPTIONAL MATCH (e)-[:READ]->(p:Episode)
         RETURN e.role AS role, p.role AS read ORDER BY e.wall_at""", {"run": out["run_id"]})
     assert [(e["role"], e["read"]) for e in eps] == [
-        ("triage", None), ("investigator", "triage"), ("responder", "investigator")]
+        ("triage", None), ("investigator", "triage"), ("skeptic", "investigator"), ("responder", "skeptic")]
     # each later agent's first step is reading the previous handoff back from the graph
     firsts = {}
     for st in out["steps"]:
         firsts.setdefault(st["role"], st["tool"])
-    assert firsts == {"triage": "get_incident", "investigator": "read_handoff", "responder": "read_handoff"}
+    assert firsts == {"triage": "get_incident", "investigator": "read_handoff", "skeptic": "read_handoff",
+                      "responder": "read_handoff"}
 
 
 def test_scored_cause_and_similarity_edges(fresh):
@@ -243,3 +244,63 @@ def test_eval_beats_baselines_and_every_factor_matters():
     assert full > res["most recent change"]["all"] + 15 and full > res["nearest recent change"]["all"] + 50
     assert res["no recency"]["all"] < full and res["no footprint"]["all"] <= full
     assert res["full"]["infra"] >= 90 and res["full"]["shared"] >= 90
+    assert res["full + skeptic"]["all"] >= full
+
+
+def test_confidence_comes_from_the_gap():
+    hi, _ = tools.confidence_from(0.9, 0.6)
+    close, label = tools.confidence_from(0.9, 0.02)
+    weak, _ = tools.confidence_from(0.3, 0.3)
+    assert hi > 0.99 and close < 0.5 and label == "low"
+    assert weak < tools.confidence_from(0.9, 0.3)[0]     # a low-scoring leader is damped even when far ahead
+
+
+def _sus(label, score, explained, in_order=True, chain=1.0, minutes=5.0):
+    return {"type": "change", "service": label, "change": {"id": label}, "score": score, "minutes_before": minutes,
+            "factors": {"alert_chain": chain},
+            "footprint": {"explained": explained, "in_order": in_order, "sequence": []}}
+
+
+def test_skeptic_overturns_a_leader_that_leaves_alerts_unexplained():
+    ranking = {"incident": {"symptom": "web"}, "alert_cone": ["web", "api", "db"],
+               "suspects": [_sus("C-1", 0.80, ["web"]), _sus("C-2", 0.72, ["web", "api", "db"])]}
+    rv = tools.skeptic_review(ranking)
+    assert rv["overturned"] and rv["leader"] == "C-2" and rv["suspects"][0]["change"]["id"] == "C-2"
+    assert rv["rounds"][0]["handed_to"] == "C-2" and len(rv["rounds"]) == 2
+    # a challenger too far behind does not take over, but the doubt is recorded
+    ranking["suspects"][1]["score"] = 0.5
+    rv = tools.skeptic_review(ranking)
+    assert not rv["overturned"] and rv["verdict"] == "upheld with doubts" and rv["confidence"] != "high"
+
+
+def test_skeptic_upholds_the_demo_verdicts(fresh):
+    for inc, lead in [("INC-301", "C-5101"), ("INC-302", "D-5201"), ("INC-303", "catalog-es (no change)")]:
+        rv = tools.skeptic_review(tools.rank_suspects(fresh, inc))
+        assert rv["verdict"] == "upheld" and rv["leader"] == lead and rv["confidence"] == "high"
+
+
+def test_claims_are_checked_against_the_graph(fresh):
+    for inc in ("INC-301", "INC-302", "INC-303", "INC-304"):
+        out = agent.investigate("kestrel", inc)
+        assert out["claim_check"]["supported"] == out["claim_check"]["total"] > 3
+        assert out["claim_check"]["verdict_consistent"]
+    bad = {"summary": "C-9999 broke payments-db at 13:55 UTC", "change_id": "D-5201", "root_cause_service": "payments-db",
+           "evidence": ["auth alerted at 13:38 UTC", "D-5201 by noor at 11:02 UTC"]}
+    v = tools.verify_claims(fresh, "INC-302", bad, tools.rank_suspects(fresh, "INC-302"))
+    assert [c["ok"] for c in v["claims"]] == [False, True, False]
+    assert "C-9999 is not in the graph" in v["claims"][0]["problems"]
+    assert v["verdict_problems"] == ["D-5201 changed auth, not payments-db"]
+
+
+def test_unsupported_claude_claims_are_dropped(fresh, monkeypatch):
+    def fake_claude(tenant, incident_id, run_id):
+        ranking = tools.apply_review(*(lambda r: (r, tools.skeptic_review(r)))(tools.rank_suspects(Graph(tenant), incident_id)))
+        return {"mode": "claude", "model": "x", "incident_id": incident_id, "run_id": run_id, "steps": [],
+                "ranking": ranking, "answer": "",
+                "findings": {"summary": "C-5101 caused it.", "change_id": "C-5101", "root_cause_service": "payments-db",
+                             "confidence": "high", "evidence": ["payments alerted at 13:19 UTC", "INC-999 had the same cause"]}}
+    monkeypatch.setattr(agent, "claude_available", lambda: True)
+    monkeypatch.setattr(agent, "investigate_claude", fake_claude)
+    out = agent.investigate("kestrel", "INC-301")
+    assert out["findings"]["evidence"] == ["payments alerted at 13:19 UTC"]
+    assert out["claim_check"]["supported"] == 2 and out["claim_check"]["total"] == 3

@@ -11,9 +11,9 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
 3. **One change, many incidents.** Two teams often open separate incidents for one cause. Faultline checks whether the leading change also fully explains other open incidents (same alert-chain test), says so, and proposes one fix that covers all of them. One approval mitigates every linked incident. INC-301 (checkout) and INC-304 (refunds) are both the same pool change.
 4. **Memory changes the score, not just the display.** Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson` into the graph, and the next investigation scores precedent from them. A test deletes the memory and checks that the same change then scores lower.
 5. **A fault simulator checks every suspect.** For each one it asks "if this broke, which services would alert, and in what order?" and compares that with what actually alerted: "explains 3 of 3 alerting services, in the predicted order". Alerts the leader can't explain point to **independent faults**: in INC-302 the auth deploy explains 2 of the 7 alerting services under `mobile-bff`, and Faultline names the other two faults behind the rest (the pool change of INC-301/304, the search cluster of INC-303). A cause that never alerts itself (a queue, a database) still counts when everything above it did, and a change the failure climbed *past* is marked down.
-6. **Three agents, one graph.** Triage, Investigator and Responder never pass anything to each other in code: each writes an `Episode` to the graph and the next one starts by reading it back, so an investigation can be resumed by another process or session. Their verdicts stay in the graph as scored `SUSPECTED_CAUSE` and `SIMILAR_TO` edges, and the Responder attaches the team's `Runbook`.
-7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 96% top-1 and 100% top-3, against 65% for "blame the most recent change".
-8. **Every number is explained, and the agent can't act alone.** Each suspect shows its factor scores, its footprint and its path, and every step shows its Cypher. Free-form queries run through `GRAPH.RO_QUERY`, so the database itself refuses writes. The agent and the MCP server can only propose fixes; there is no approve tool.
+6. **Four agents, one graph, and a skeptic among them.** Triage, Investigator, Skeptic and Responder never pass anything to each other in code: each writes an `Episode` to the graph and the next one starts by reading it back, so an investigation can be resumed by another process or session. The **Skeptic** tries to knock the leader over before anyone acts: what doesn't it explain, did its alerts come in the right order, did the change land before the incident, is it clearly ahead? If a rival explains more and scores within reach, the verdict is overturned. Confidence comes from the **gap** to the runner-up, not the raw score. Verdicts stay in the graph as scored `SUSPECTED_CAUSE` and `SIMILAR_TO` edges, and the Responder attaches the team's `Runbook`.
+7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 96–97.5% top-1 and 100% top-3 on held-out seeds, against 64% for "blame the most recent change". When Faultline says **high** confidence it has been right every time.
+8. **Every claim is checked, every number is explained, and the agent can't act alone.** Every change id, incident id, service and clock time in a verdict is looked up in the graph, and the verdict must hang together (the blamed change exists, changed the named service, and is among the judge's top suspects); claims Claude makes that the graph can't back are dropped from the evidence and shown as such. Each suspect shows its factor scores, its footprint and its path, and every step shows its Cypher. Free-form queries run through `GRAPH.RO_QUERY`, so the database itself refuses writes. The agent and the MCP server can only propose fixes; there is no approve tool.
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
 Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**.
@@ -92,7 +92,8 @@ The eval plants faults on Kestrel's real topology, one incident per scenario, sp
 
 | | deep (38) | silent (38) | infra (37) | shared (37) | **all (150)** | top-3 all |
 |---|---|---|---|---|---|---|
-| **Faultline (full judge)** | 100.0% | 84.2% | 100.0% | 100.0% | **96.0%** | 100.0% |
+| **Faultline (judge)** | 100.0% | 84.2% | 100.0% | 100.0% | **96.0%** | 100.0% |
+| **Faultline (judge + skeptic)** | 100.0% | 89.5% | 100.0% | 100.0% | **97.3%** | 100.0% |
 | no recency | 100.0% | 44.7% | 100.0% | 100.0% | **86.0%** | 100.0% |
 | no proximity | 100.0% | 86.8% | 100.0% | 100.0% | **96.7%** | 100.0% |
 | no alert_chain | 89.5% | 84.2% | 100.0% | 86.5% | **90.0%** | 100.0% |
@@ -102,21 +103,24 @@ The eval plants faults on Kestrel's real topology, one incident per scenario, sp
 | nearest recent change | 7.9% | 2.6% | 0.0% | 24.3% | **8.7%** | 75.3% |
 | most recent change | 81.6% | 89.5% | 0.0% | 86.5% | **64.7%** | 75.3% |
 
+When it says… **high** confidence (60 cases): right 100.0%; **medium** confidence (56 cases): right 96.4%; **low** confidence (34 cases): right 94.1%.
+
 Linked incidents (shared scenarios): precision 1.0, recall 1.0.
 
 Learning: the same 150 faults planted again after the first round was resolved: top-1 96.0% → 97.3%. Without the precedent factor the second round scores 96.0%.
 
-Held-out seeds (400 scenarios each): top-1 95.5% (seed 3), 95.8% (seed 11), 96.8% (seed 42); top-3 100% on all three; linked-incident precision and recall 1.0.
+Held-out seeds (400 scenarios each), judge → judge + skeptic: 95.5% → 96.0% (seed 3), 95.8% → 96.8% (seed 11), 96.8% → 97.5% (seed 42); top-3 100% on all three; linked-incident precision and recall 1.0. Confidence on the held-out seeds: **high** was right 100% of the time, **medium** 97.6–99.4%, **low** 85.4–89.2%.
 
 How to read it honestly:
 - The scenario generator is mine, so this measures the judge against the failure patterns it was designed for, not against real outages. The weights were adjusted while looking at seed 7; the held-out seeds are the fairer number.
 - Risk labels are drawn at random for causes and distractors alike, so in this eval risk is noise and switching it off can help some kinds. In real change logs risky changes do break things more often.
 - Precedent does nothing on a first sighting (memory is empty). Its effect is the learning row: the same faults again after round one was resolved.
-- Silent causes are the weak spot (about 84%): with no alert of their own, a recent change one level up can still look better.
+- Silent causes are the weak spot (84–90% with the skeptic): with no alert of their own, a recent change one level up can still look better.
+- Confidence is conservative: "medium" and "low" verdicts are right more often than the labels suggest. It is still ordered correctly (high > medium > low), which is what an on-call engineer needs to know when to double-check.
 
 ## Agent, memory and actions
 
-- **Three agents.** *Triage* reads the incident, its dependencies, recent changes and alerts. *Investigator* reads triage's handoff from the graph, runs the judge and the fault simulator, and checks precedent. *Responder* reads the investigator's handoff, finds the owner and the runbook, and proposes the fix. Each writes an `Episode` that the next reads back (`(:Episode)-[:READ]->(:Episode)`); nothing is passed in memory.
+- **Four agents.** *Triage* reads the incident, its dependencies, recent changes and alerts. *Investigator* reads triage's handoff from the graph, runs the judge and the fault simulator, and checks precedent. *Skeptic* reads the investigator's handoff and challenges the leader (deterministic checks, up to two rounds, may overturn). *Responder* reads the skeptic's verdict, finds the owner and the runbook, and proposes the fix. Each writes an `Episode` that the next reads back (`(:Episode)-[:READ]->(:Episode)`); nothing is passed in memory.
 - **Claude** (`claude-opus-5-5`, adaptive thinking) plays each role with only that role's tools. The **offline playbook** runs the same roles and tools in a fixed order, so the demo works without a key. Both return the same steps, labelled by agent, with the Cypher behind each.
 - **Memory**: every investigation is stored as an `Investigation` node. The next run on the same incident starts by reading it. Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson`, which feed the precedent factor of the next investigation. The Memory tab shows what the agent has learned.
 - **Actions**: the agent can only propose (`rollback`, `revert_config`, `disable_flag`, `page_owner`). A person approves in the UI. Approval writes a remediation change to the graph and marks the incident mitigated. It is a simulation: no real system is touched. Re-running an investigation never stacks duplicate proposals.

@@ -161,14 +161,17 @@ def _most_recent(r: dict) -> list[dict]:
 
 
 def _evaluate(g: Graph, scenarios: list[dict]) -> dict:
-    variants = ["full"] + [f"no {k}" for k in tools.WEIGHTS] + ["nearest recent change", "most recent change"]
+    variants = ["full", "full + skeptic"] + [f"no {k}" for k in tools.WEIGHTS] + ["nearest recent change", "most recent change"]
+    calib = defaultdict(list)
     top1 = {v: defaultdict(list) for v in variants}
     top3 = {v: defaultdict(list) for v in variants}
     link_tp = link_fp = link_fn = 0
     for sc in scenarios:
         r = tools.rank_suspects(g, sc["incident"], limit=50)
-        orders = {"full": r["suspects"], "nearest recent change": _nearest_recent(r),
-                  "most recent change": _most_recent(r)}
+        review = tools.skeptic_review(r)
+        orders = {"full": r["suspects"], "full + skeptic": review["suspects"],
+                  "nearest recent change": _nearest_recent(r), "most recent change": _most_recent(r)}
+        calib[review["confidence"]].append(bool(review["suspects"]) and _hit(review["suspects"][0], sc["truth"]))
         for k in tools.WEIGHTS:
             orders[f"no {k}"] = _rescore(r["suspects"], k)
         for v, order in orders.items():
@@ -188,6 +191,7 @@ def _evaluate(g: Graph, scenarios: list[dict]) -> dict:
         "top1": {v: {b: pct(x) for b, x in d.items()} for v, d in top1.items()},
         "top3": {v: {b: pct(x) for b, x in d.items()} for v, d in top3.items()},
         "counts": {b: len(x) for b, x in top1["full"].items()},
+        "calibration": {k: {"n": len(v), "correct": pct(v)} for k, v in sorted(calib.items())},
         "links": {"precision": round(link_tp / (link_tp + link_fp), 3) if link_tp + link_fp else None,
                   "recall": round(link_tp / (link_tp + link_fn), 3) if link_tp + link_fn else None},
     }
@@ -232,10 +236,13 @@ def table(res: dict) -> str:
     head = "| | " + " | ".join(f"{k} ({p1['counts'][k]})" for k in kinds) + f" | **all ({p1['counts']['all']})** | top-3 all |"
     lines = [head, "|---" * (len(kinds) + 3) + "|"]
     for v, row in p1["top1"].items():
-        name = "**Faultline (full judge)**" if v == "full" else v
+        name = {"full": "**Faultline (judge)**", "full + skeptic": "**Faultline (judge + skeptic)**"}.get(v, v)
         lines.append(f"| {name} | " + " | ".join(f"{row.get(k)}%" for k in kinds)
                      + f" | **{row['all']}%** | {p1['top3'][v]['all']}% |")
     out = "\n".join(lines)
+    cal = p1["calibration"]
+    out += "\n\nWhen it says… " + "; ".join(f"**{k}** confidence ({cal[k]['n']} cases): right {cal[k]['correct']}%"
+                                           for k in ("high", "medium", "low") if k in cal) + "."
     out += (f"\n\nLinked incidents (shared scenarios): precision {p1['links']['precision']}, "
             f"recall {p1['links']['recall']}.")
     if "phase2" in res:

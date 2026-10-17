@@ -49,6 +49,11 @@ def rank_suspects(incident_id: str) -> str:
     return _call("rank_suspects", incident_id=incident_id)
 
 
+@server.tool(description="Skeptic review of the leading suspect: what it doesn't explain, order, timing, margin. May overturn it. Returns the verdict, each check and a calibrated confidence.")
+def challenge_leader(incident_id: str) -> str:
+    return _call("challenge_leader", incident_id=incident_id)
+
+
 @server.tool(description="Services a service depends on, with hop counts.")
 def dependencies(service: str, max_hops: int = 5) -> str:
     return _call("dependencies", service=service, max_hops=max_hops)

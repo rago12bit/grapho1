@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import time
 import uuid
 from typing import Any
@@ -23,6 +24,7 @@ RECENCY_HALF_MIN = 45
 WEIGHTS = {"recency": 0.20, "proximity": 0.05, "alert_chain": 0.30, "risk": 0.15, "precedent": 0.15, "footprint": 0.15}
 SIGNAL_WEIGHTS = {"alert_chain": 0.25, "earliness": 0.15, "precedent": 0.15, "proximity": 0.05, "footprint": 0.20,
                   "unchanged": 0.20}
+HOUR_S = 3600
 RISK = {"high": 1.0, "medium": 0.5, "low": 0.2}
 
 
@@ -390,6 +392,18 @@ def runbooks(g: Graph, service: str) -> list[dict]:
         RETURN r.id AS id, r.title AS title, r.when AS applies_to, r.steps AS steps""", {"svc": service})
 
 
+CONF_SLOPE, CONF_MID = 12.0, 0.10
+
+
+def confidence_from(top: float, gap: float) -> tuple[float, str]:
+    """Confidence comes from how far the leader is ahead, not from its raw score: a 0.9 with a 0.88 runner-up
+    is a coin toss. A logistic on the gap to the runner-up (0.5 at a 0.10 gap), damped when the leader itself
+    scores low."""
+    p = 1 / (1 + math.exp(-CONF_SLOPE * (gap - CONF_MID))) * min(1.0, top / 0.6)
+    p = round(p, 3)
+    return p, "high" if p >= 0.85 else "medium" if p >= 0.6 else "low"
+
+
 def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
     """Score every change on the symptom's dependency path, plus alerting dependencies with no change.
 
@@ -485,11 +499,11 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
     ]
     top = suspects[0] if suspects else None
     margin = round(top["score"] - suspects[1]["score"], 3) if len(suspects) > 1 else (top["score"] if top else 0)
-    confidence = "none" if not top else "high" if top["score"] >= 0.75 and margin >= 0.2 else \
-        "medium" if top["score"] >= 0.5 else "low"
+    p_conf, confidence = confidence_from(top["score"] if top else 0.0, margin) if top else (0.0, "none")
     return {
         "incident": inc, "dependency_count": len(deps), "suspects": suspects, "alert_cone": sorted(cone),
-        "ruled_out": ruled_out, "confidence": confidence, "margin": margin, "other_faults": other_faults,
+        "ruled_out": ruled_out, "confidence": confidence, "confidence_p": p_conf, "margin": margin,
+        "other_faults": other_faults,
         "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS},
     }
 
@@ -647,7 +661,7 @@ def stats(g: Graph) -> dict[str, Any]:
 
 # --- agent handoffs and scored links -------------------------------------------------------------
 
-ROLES = ("triage", "investigator", "responder")
+ROLES = ("triage", "investigator", "skeptic", "responder")
 
 
 def new_run_id() -> str:
@@ -718,3 +732,146 @@ def record_suspicions(g: Graph, incident_id: str, ranking: dict) -> None:
             MATCH (i:Incident {id: $inc}), (p:Incident {id: x.past})
             CREATE (i)-[:SIMILAR_TO {score: x.score, reason: x.reason}]->(p)""",
                 {"inc": incident_id, "sims": list(sims.values())})
+
+
+# --- the skeptic ---------------------------------------------------------------------------------
+
+SKEPTIC_TOLERANCE = 0.15   # a challenger this close to the leader's score may take over if it explains more
+SKEPTIC_ROUNDS = 2
+
+
+def _challenges(lead: dict, ranking: dict, others: list[dict]) -> tuple[list[dict], dict | None]:
+    """Every check the skeptic runs against one leader. Returns the checks and, if one fails in a way another
+    suspect answers better, that suspect."""
+    cone = set(ranking.get("alert_cone") or [])
+    sym = ranking["incident"]["symptom"]
+    fp = lead["footprint"]
+    explained = set(fp["explained"])
+    missing = sorted(cone - explained - {sym}) if cone else []
+    checks = []
+    better = None
+    if missing:
+        rivals = [o for o in others if len(cone & set(o["footprint"]["explained"])) > len(cone & explained)
+                  and o["score"] >= lead["score"] - SKEPTIC_TOLERANCE]
+        better = max(rivals, key=lambda o: (len(cone & set(o["footprint"]["explained"])), o["score"]), default=None)
+        checks.append({"check": "explains every alert joined to the symptom", "passed": False,
+                       "detail": f"leaves {', '.join(missing)} unexplained"
+                                 + (f"; {_label(better)} explains more and scores {better['score']}" if better else
+                                    "; no other suspect does better within reach")})
+    else:
+        checks.append({"check": "explains every alert joined to the symptom", "passed": True,
+                       "detail": f"{len(cone & explained)} of {len(cone)}"})
+    checks.append({"check": "alerts arrive in the predicted order", "passed": bool(fp["in_order"]),
+                   "detail": " → ".join(x["service"] for x in fp["sequence"]) or "no alerts after it"})
+    if lead["change"]:
+        checks.append({"check": "the change landed before the incident", "passed": lead["minutes_before"] >= 0,
+                       "detail": f"{lead['minutes_before']:g} min before"})
+    chain = lead["factors"]["alert_chain"]
+    checks.append({"check": "alerts trace a full path to the symptom", "passed": chain >= 0.7,
+                   "detail": "silent cause under a fully alerting path" if chain == 0.6 else f"alert chain {chain}"})
+    runner = next((o for o in others if o is not lead), None)
+    gap = round(lead["score"] - runner["score"], 3) if runner else lead["score"]
+    checks.append({"check": "clearly ahead of the runner-up", "passed": gap >= 0.1,
+                   "detail": f"{gap} ahead of {_label(runner)}" if runner else "no runner-up"})
+    return checks, better
+
+
+def _label(s: dict | None) -> str:
+    if not s:
+        return "nothing"
+    return (s["change"] or {}).get("id") or f"{s['service']} (no change)"
+
+
+def skeptic_review(ranking: dict) -> dict:
+    """Challenge the judge's leader: what doesn't it explain, did its alerts come in the right order, did the
+    change land before the incident, is it clearly ahead? If another suspect explains more of the symptom's
+    alerts and scores within reach, it takes over, and the new leader faces the same checks (two rounds at
+    most). Deterministic: the same ranking always gets the same review."""
+    sus = list(ranking["suspects"])
+    if not sus:
+        return {"verdict": "no suspect", "rounds": [], "leader": None, "overturned": False,
+                "confidence_p": 0.0, "confidence": "none", "suspects": sus}
+    lead, rounds, tried = sus[0], [], set()
+    for _ in range(SKEPTIC_ROUNDS):
+        tried.add(_label(lead))
+        others = [o for o in sus if o is not lead]
+        checks, better = _challenges(lead, ranking, others)
+        rounds.append({"leader": _label(lead), "score": lead["score"], "checks": checks,
+                       "handed_to": _label(better) if better and _label(better) not in tried else None})
+        if not better or _label(better) in tried:
+            break
+        lead = better
+    failed = sum(not c["passed"] for c in rounds[-1]["checks"])
+    overturned = lead is not sus[0]
+    ordered = [lead] + [o for o in sus if o is not lead]
+    runner = ordered[1]["score"] if len(ordered) > 1 else 0.0
+    p, _ = confidence_from(lead["score"], lead["score"] - runner)
+    p = round(p * (0.85 ** failed), 3)
+    label = "high" if p >= 0.85 else "medium" if p >= 0.6 else "low"
+    verdict = "overturned" if overturned else "upheld" if failed == 0 else "upheld with doubts"
+    return {"verdict": verdict, "overturned": overturned, "leader": _label(lead), "rounds": rounds,
+            "failed_checks": failed, "confidence_p": p, "confidence": label, "suspects": ordered}
+
+
+def apply_review(ranking: dict, review: dict) -> dict:
+    """The ranking as the skeptic left it: leader first, confidence from the review."""
+    return {**ranking, "suspects": review["suspects"], "confidence": review["confidence"],
+            "confidence_p": review["confidence_p"], "skeptic": {k: v for k, v in review.items() if k != "suspects"}}
+
+
+def challenge_leader(g: Graph, incident_id: str) -> dict:
+    """Tool form for agents: rank, then review."""
+    ranking = rank_suspects(g, incident_id)
+    review = skeptic_review(ranking)
+    return {k: v for k, v in apply_review(ranking, review).items() if k in ("skeptic", "confidence", "confidence_p")} | {
+        "leader": review["suspects"][0] if review["suspects"] else None}
+
+
+# --- checking claims against the graph -----------------------------------------------------------
+
+_ID = re.compile(r"\b(?:INC|ACT|RB|[CDFAH])-[0-9A-Z]{1,8}\b")
+_TIME = re.compile(r"\b(\d{2}):(\d{2}) UTC\b")
+
+
+def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> dict:
+    """Every id, service and clock time a verdict cites must exist in the graph, and the verdict itself must
+    hang together: the blamed change exists, changed the named service, and is one of the judge's suspects.
+    Claims that fail are reported (and dropped from the evidence by the caller)."""
+    items = [("summary", findings.get("summary") or "")] + [("evidence", e) for e in findings.get("evidence") or []]
+    ids = sorted({m for _, t in items for m in _ID.findall(t)} | ({findings["change_id"]} if findings.get("change_id") else set()))
+    known = {r["id"]: r for r in g.read("""
+        MATCH (n) WHERE n.id IN $ids
+        RETURN n.id AS id, labels(n)[0] AS label, n.at AS at""", {"ids": ids})} if ids else {}
+    services = {r["s"] for r in g.read("MATCH (s:Service) RETURN s.name AS s")}
+    start = get_incident(g, incident_id)["started"]
+    times = {r["at"] for r in g.read("""
+        MATCH (n) WHERE (n:Alert OR n:Change) AND n.at >= $a AND n.at <= $b RETURN n.at AS at""",
+                                     {"a": start - 3 * HOUR_S, "b": start + HOUR_S})}
+    clock = {(t // 60) % 1440 for t in times}
+
+    claims = []
+    for kind, text in items:
+        problems = [f"{i} is not in the graph" for i in _ID.findall(text) if i not in known]
+        for hh, mm in _TIME.findall(text):
+            minute = int(hh) * 60 + int(mm)
+            if not any(abs(minute - c) <= 1 for c in clock):
+                problems.append(f"nothing in the graph happened at {hh}:{mm} UTC")
+        named = {w for w in re.findall(r"[a-z][a-z0-9-]+", text) if w in services}
+        claims.append({"kind": kind, "text": text, "ok": not problems, "problems": problems, "services": sorted(named)})
+
+    verdict = []
+    cid, svc = findings.get("change_id"), findings.get("root_cause_service")
+    if cid:
+        hit = g.read("MATCH (c:Change {id: $id})-[:CHANGED]->(s:Service) RETURN s.name AS s", {"id": cid})
+        if not hit:
+            verdict.append(f"{cid} is not a change in the graph")
+        elif svc and hit[0]["s"] != svc:
+            verdict.append(f"{cid} changed {hit[0]['s']}, not {svc}")
+    if svc and svc not in services:
+        verdict.append(f"{svc} is not a service")
+    top3 = [(_label(s), s["service"]) for s in ranking["suspects"][:3]]
+    if svc and not any((cid and lab == cid) or (not cid and s == svc) for lab, s in top3):
+        verdict.append("the blamed cause is not among the judge's top three suspects")
+    ok = [c for c in claims if c["ok"]]
+    return {"total": len(claims), "supported": len(ok), "claims": claims, "verdict_problems": verdict,
+            "verdict_consistent": not verdict}

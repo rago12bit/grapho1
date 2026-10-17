@@ -285,10 +285,13 @@ async function renderResult(out, v = state.view) {
     <h3>Verdict</h3>
     <div class="verdict ${f.change_id ? "" : "none"}">
       <div class="head"><span class="big">${esc(f.change_id || (f.root_cause_service ? f.root_cause_service : "no cause found"))}</span>
-        <span class="conf ${esc(f.confidence)}">${esc(f.confidence || "")} confidence</span></div>
+        <span class="conf ${esc(r?.confidence || f.confidence)}">${esc(r?.confidence || f.confidence || "")} confidence${r?.confidence_p != null ? ` · ${Math.round(100 * r.confidence_p)}%` : ""}</span>
+        ${out.claim_check ? `<span class="claims ${out.claim_check.supported === out.claim_check.total && out.claim_check.verdict_consistent ? "ok" : "bad"}" title="Every id, service and time in the verdict was looked up in the graph">${out.claim_check.supported}/${out.claim_check.total} claims checked against the graph</span>` : ""}</div>
       ${shared.length ? `<div class="shared"><b>Shared root cause.</b> ${esc(top.change.id)} also explains ${shared.map((o) => `<button class="linkbtn" data-inc="${esc(o.id)}">${esc(o.id)}</button> ${esc(o.title)}`).join(", ")}. One fix covers ${shared.length === 1 ? "both" : "all of them"}.</div>` : ""}
       <p>${esc(f.summary || out.answer || "")}</p>
       ${top?.footprint ? `<div class="seq"><span class="muted">How it spread:</span> ${top.footprint.sequence.map((x) => `<span class="mono">${esc(x.service)} ${hhmm(x.at).slice(0, 5)}</span>`).join(" → ")}${top.footprint.in_order ? ` <span class="ok">in the predicted order</span>` : ""}</div>` : ""}
+      ${r?.skeptic ? skepticHtml(r.skeptic) : ""}
+      ${out.claim_check && (out.claim_check.supported < out.claim_check.total || !out.claim_check.verdict_consistent) ? `<div class="dropped"><b>Not backed by the graph${out.mode === "claude" ? " (dropped from the evidence)" : ""}</b>${out.claim_check.claims.filter((c) => !c.ok).map((c) => `<div>“${esc(c.text)}”: ${esc(c.problems.join("; "))}</div>`).join("")}${out.claim_check.verdict_problems.map((p) => `<div>${esc(p)}</div>`).join("")}</div>` : ""}
       ${r?.other_faults?.length ? `<div class="others"><b>Other faults active below ${esc(r.incident.symptom)}</b>${r.other_faults.map((o) => `<div>${esc((o.change || {}).id || o.service)}${o.change ? "" : " (no change)"} explains ${esc(o.explains.join(", "))}${o.incidents.length ? ` · ${o.incidents.map((i) => `<button class="linkbtn" data-inc="${esc(i.id)}">${esc(i.id)}</button>`).join(" ")}` : ""}</div>`).join("")}</div>` : ""}
       ${f.evidence?.length ? `<ul class="evidence">${f.evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>` : ""}
       ${f.ruled_out?.length ? `<div class="section"><h3>Ruled out</h3><ul class="ruled">${f.ruled_out.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></div>` : ""}
@@ -301,8 +304,16 @@ async function renderResult(out, v = state.view) {
 const ROLE_NOTE = {
   triage: "what is failing, what changed, what is alerting",
   investigator: "scores suspects and simulates each one's footprint",
+  skeptic: "tries to knock the leader over before anyone acts",
   responder: "owner, runbook, and the fix to approve",
 };
+
+function skepticHtml(sk) {
+  const last = sk.rounds[sk.rounds.length - 1];
+  const handed = sk.rounds.filter((x) => x.handed_to).map((x) => `${esc(x.leader)} → ${esc(x.handed_to)}`);
+  return `<div class="skeptic-box ${esc(sk.verdict.replace(/ /g, "-"))}"><b>Skeptic: ${esc(sk.verdict)}</b>${handed.length ? ` <span class="muted">(${handed.join(", ")})</span>` : ""}
+    ${last.checks.map((c) => `<div class="chk ${c.passed ? "ok" : "no"}"><span>${c.passed ? "✓" : "✗"}</span> ${esc(c.check)} <span class="muted">· ${esc(c.detail)}</span></div>`).join("")}</div>`;
+}
 
 function stepHtml(s) {
   const args = Object.entries(s.input || {}).filter(([k]) => k !== "summary" && k !== "reason")

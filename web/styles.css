@@ -154,8 +154,21 @@ button.ghost:hover { color: var(--text); }
 .role { font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 1px 7px; border-radius: 4px; border: 1px solid; }
 .role.triage { color: var(--blue); border-color: rgba(106,168,255,.4); }
 .role.investigator { color: var(--accent); border-color: rgba(255,122,69,.4); }
+.role.skeptic { color: var(--amber); border-color: rgba(245,185,66,.4); }
 .role.responder { color: var(--green); border-color: rgba(76,195,138,.4); }
 .steps li.handoff .tool { color: var(--muted); }
+.claims { font: 11px var(--mono); border-radius: 4px; padding: 0 6px; border: 1px solid; margin-left: auto; }
+.claims.ok { color: var(--green); border-color: rgba(76,195,138,.4); }
+.claims.bad { color: var(--red); border-color: rgba(255,93,93,.45); }
+.verdict .head { flex-wrap: wrap; }
+.skeptic-box { margin-top: 10px; padding: 8px 10px; border-radius: 6px; font-size: 12px; border: 1px solid rgba(245,185,66,.35); }
+.skeptic-box.upheld { border-color: rgba(76,195,138,.35); }
+.skeptic-box b { display: block; font-weight: 500; margin-bottom: 4px; }
+.chk span:first-child { display: inline-block; width: 14px; font-weight: 600; }
+.chk.ok span:first-child { color: var(--green); }
+.chk.no span:first-child { color: var(--red); }
+.dropped { margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(255,93,93,.45); border-radius: 6px; font-size: 12px; }
+.dropped b { display: block; color: var(--red); font-weight: 500; margin-bottom: 4px; }
 .fp { margin-top: 3px; font: 11px var(--mono); color: var(--dim); }
 .seq { margin-top: 10px; font-size: 12px; line-height: 1.8; }
 .seq .ok { color: var(--green); font-size: 11px; }

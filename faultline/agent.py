@@ -76,8 +76,14 @@ TOOL_SPECS: list[dict] = [
      "input_schema": _obj({"service": S}, ["service"])},
     {"name": "runbooks", "description": "The team's runbooks for a service: when each applies and its steps.",
      "input_schema": _obj({"service": S}, ["service"])},
-    {"name": "read_handoff", "description": "Read the previous agent's handoff for this incident from the graph. role: triage or investigator.",
-     "input_schema": _obj({"incident_id": S, "role": {"type": "string", "enum": ["triage", "investigator"]}}, ["incident_id", "role"])},
+    {"name": "read_handoff", "description": "Read the previous agent's handoff for this incident from the graph. role: triage, investigator or skeptic.",
+     "input_schema": _obj({"incident_id": S, "role": {"type": "string", "enum": ["triage", "investigator", "skeptic"]}}, ["incident_id", "role"])},
+    {"name": "challenge_leader", "description": (
+        "Skeptic review of the judge's leader: does it explain every alert joined to the symptom, did alerts come in "
+        "the predicted order, did the change land before the incident, does the alert chain reach the symptom, is it "
+        "clearly ahead? If another suspect explains more and scores within 0.15, it takes over. Returns the verdict "
+        "(upheld / upheld with doubts / overturned), each check, the final leader and a calibrated confidence."),
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
     {"name": "write_handoff", "description": "Write your handoff to the graph for the next agent: a short summary plus the facts it needs. Call once, last.",
      "input_schema": _obj({"incident_id": S, "summary": S, "data": {"type": "object"}}, ["incident_id", "summary"])},
     {"name": "submit_findings", "description": "Finish an incident investigation. Call exactly once, last.",
@@ -100,6 +106,7 @@ def _start(g: Graph, incident_id: str) -> int:
 def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> dict[str, Callable[..., Any]]:
     return {
         "simulate_failure": lambda service: tools.simulate_failure(g, service),
+        "challenge_leader": lambda incident_id: tools.challenge_leader(g, incident_id),
         "runbooks": lambda service: tools.runbooks(g, service),
         "read_handoff": lambda incident_id, role: tools.read_handoff(g, incident_id, role, run_id),
         "write_handoff": lambda incident_id, summary, data=None:
@@ -243,9 +250,23 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
               "confidence": ranking["confidence"], "action": top["recommended_action"] if top else None,
               "other_faults": ranking["other_faults"]})
 
+    # Skeptic: try to knock the leader over before anyone acts on it.
+    run("skeptic", "read_handoff", "Pick up the investigator's handoff from the graph.", incident_id=incident_id, role="investigator")
+    challenged = run("skeptic", "challenge_leader",
+                     "What doesn't the leader explain? Wrong order, too late, too close to the runner-up?",
+                     incident_id=incident_id)
+    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking))
+    top = ranking["suspects"][0] if ranking["suspects"] else None
+    sk = challenged["skeptic"]
+    run("skeptic", "write_handoff", "Hand the reviewed verdict to the responder through the graph.", incident_id=incident_id,
+        summary=f"Verdict {sk['verdict']}: leader {sk['leader']}, {sk['failed_checks']} failed check(s), "
+                f"confidence {challenged['confidence']} ({challenged['confidence_p']}).",
+        data={"leader": sk["leader"], "verdict": sk["verdict"], "confidence": challenged["confidence"],
+              "action": top["recommended_action"] if top else None})
+
     # Responder: who to page, which runbook applies, and the fix to propose.
-    handoff = run("responder", "read_handoff", "Pick up the investigator's handoff from the graph.",
-                  incident_id=incident_id, role="investigator")
+    handoff = run("responder", "read_handoff", "Pick up the skeptic's reviewed verdict from the graph.",
+                  incident_id=incident_id, role="skeptic")
     act = (handoff or {}).get("data", {}).get("action")
     if act:
         run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
@@ -359,6 +380,7 @@ ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
     "investigator": ["read_handoff", "rank_suspects", "alerts_near", "paths_between", "similar_incidents",
                      "simulate_failure", "run_cypher", "write_handoff"],
+    "skeptic": ["read_handoff", "challenge_leader", "alerts_near", "paths_between", "write_handoff"],
     "responder": ["read_handoff", "who_owns", "runbooks", "blast_radius", "propose_action", "submit_findings"],
 }
 ROLE_BRIEF = {
@@ -370,7 +392,11 @@ ROLE_BRIEF = {
                     "precedents, and other_faults for alerts it cannot explain. Finish with write_handoff: summary "
                     "plus data {service, change_id, confidence, action, other_faults}, where action is the leader's "
                     "recommended_action.",
-    "responder": "You are the RESPONDER agent. Start with read_handoff(role='investigator'). Find the owner and on-call, "
+    "skeptic": "You are the SKEPTIC agent. Start with read_handoff(role='investigator'), then challenge_leader. Your job is to "
+               "find what the leader does not explain. Check any failed check yourself with alerts_near or paths_between. "
+               "Finish with write_handoff: summary plus data {leader, verdict, confidence, action}, where action is the "
+               "final leader's recommended_action.",
+    "responder": "You are the RESPONDER agent. Start with read_handoff(role='skeptic'). Find the owner and on-call, "
                  "read the runbook, then propose_action exactly once (with also_for when the cause also explains other "
                  "open incidents). Finish with submit_findings.",
 }
@@ -390,7 +416,8 @@ def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | No
     steps: list[dict] = []
     findings = None
     answer = ""
-    done_tool = {"triage": "write_handoff", "investigator": "write_handoff", "responder": "submit_findings"}.get(role)
+    done_tool = {"triage": "write_handoff", "investigator": "write_handoff", "skeptic": "write_handoff",
+                 "responder": "submit_findings"}.get(role)
     for _ in range(MAX_TURNS):
         resp = client.beta.messages.create(
             model=MODEL,
@@ -448,6 +475,7 @@ def investigate_claude(tenant: str, incident_id: str, run_id: str) -> dict:
         out = run_claude(tenant, f"Incident {incident_id}.", incident_id, role=role, run_id=run_id)
         steps += out["steps"]
     ranking = tools.rank_suspects(Graph(tenant), incident_id)
+    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking))
     findings = out.get("findings") or _narrate(ranking)
     return {"mode": "claude", "model": MODEL, "incident_id": incident_id, "run_id": run_id, "steps": steps,
             "findings": findings, "answer": findings.get("summary", ""), "ranking": ranking}
@@ -466,6 +494,11 @@ def investigate(tenant: str, incident_id: str) -> dict:
     else:
         out = investigate_offline(tenant, incident_id, run_id=run_id)
     g = Graph(tenant)
+    out["claim_check"] = check = tools.verify_claims(g, incident_id, out["findings"], out["ranking"])
+    if out["mode"] == "claude":
+        # Claims the graph can't back are dropped from the evidence, not shown as fact.
+        bad = {c["text"] for c in check["claims"] if c["kind"] == "evidence" and not c["ok"]}
+        out["findings"]["evidence"] = [e for e in out["findings"].get("evidence") or [] if e not in bad]
     tools.record_suspicions(g, incident_id, out["ranking"])
     out["investigation_id"] = tools.record_investigation(
         g, incident_id, out["mode"], out["ranking"], out.get("answer") or "", len(out["steps"]))
