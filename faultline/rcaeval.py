@@ -1,0 +1,217 @@
+"""Faultline on public data: RCAEval RE2-OB (Online Boutique), real metrics and traces with a known root cause.
+
+    docker compose run --rm app python -m faultline.rcaeval --download     # ~190 MB, 18 cases, into data/rcaeval
+    docker compose run --rm app python -m faultline.rcaeval                # build each case's graph, run the judge
+
+Dataset: https://huggingface.co/datasets/phamquiluan/RCAEval (MIT), paper arXiv:2412.17015.
+
+For every case:
+  graph   one Service per service seen in the traces or metrics; CALLS from a parent span's service to its
+          child span's service (seen at least MIN_CALLS times). redis gets cartservice -> redis, the one
+          dependency the traces don't show (it is not instrumented).
+  alerts  simple spike detection on each service's metrics (cpu, mem, diskio, socket, latency p50/p90, error):
+          robust z-score against the normal period before the injection, alert when it stays above Z_ALERT
+          for SUSTAIN_S seconds. One Alert per service at its earliest onset.
+  incident on `frontend`, the user-facing entry point, opened at frontend's first alert (or the first alert
+          anywhere if frontend never alerts).
+Then the unchanged judge ranks suspects and we compare its top answer with the case's root_cause_service.
+
+The detector settings below were fixed before looking at any result. The injection time is used only to split
+"normal" from "after", which is how RCAEval's own baselines are run.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import time
+import urllib.request
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+from . import tools
+from .db import Graph
+from .seed import _write_alerts, _write_incidents, _write_indexes
+
+DATA = Path(__file__).resolve().parent.parent / "data" / "rcaeval"
+HF = "https://huggingface.co/datasets/phamquiluan/RCAEval/resolve/main"
+FAULTS = ["cpu", "mem", "disk", "delay", "loss", "socket"]
+SERVICES = ["checkoutservice", "currencyservice", "emailservice", "productcatalogservice", "recommendationservice"]
+
+# Detector settings, fixed up front.
+Z_ALERT = 5.0          # robust z-score that counts as anomalous
+SUSTAIN_S = 30         # ...for at least this many consecutive seconds
+METRICS = ("cpu", "mem", "diskio", "socket", "latency-50", "latency-90", "error")
+MIN_CALLS = 5          # parent->child span pairs needed before we draw a CALLS edge
+SYMPTOM = "frontend"
+
+
+def selection(rep: int = 1) -> list[str]:
+    """18 cases: every fault type on three different services (rotating), one repetition. Not hand-picked."""
+    out = []
+    for i, f in enumerate(FAULTS):
+        for k in range(3):
+            out.append(f"re2ob_{SERVICES[(i + k) % len(SERVICES)]}_{f}_{rep}")
+    return out
+
+
+def download(cases: list[str]) -> None:
+    DATA.mkdir(parents=True, exist_ok=True)
+    if not (DATA / "cases.parquet").exists():
+        urllib.request.urlretrieve(f"{HF}/cases.parquet", DATA / "cases.parquet")
+    for c in cases:
+        (DATA / c).mkdir(exist_ok=True)
+        for f in ("inject_time.txt", "metrics.parquet", "traces.parquet"):
+            dest = DATA / c / f
+            if not dest.exists() or dest.stat().st_size == 0:
+                urllib.request.urlretrieve(f"{HF}/{c}/{f}", dest)
+        print("downloaded", c)
+
+
+def _norm(name: str) -> str:
+    return "frontend" if name in ("frontendservice", "frontend-external") else name
+
+
+def call_edges(traces: pd.DataFrame) -> list[tuple[str, str]]:
+    """Service-level CALLS edges from span parent/child links."""
+    spans = traces[["spanID", "parentSpanID", "serviceName"]].copy()
+    spans["serviceName"] = spans["serviceName"].map(_norm)
+    joined = spans.merge(spans, left_on="parentSpanID", right_on="spanID", suffixes=("_child", "_parent"))
+    pairs = joined[joined.serviceName_child != joined.serviceName_parent]
+    counts = pairs.groupby(["serviceName_parent", "serviceName_child"]).size()
+    edges = [(a, b) for (a, b), n in counts.items() if n >= MIN_CALLS]
+    return sorted(set(edges) | {("cartservice", "redis")})
+
+
+def detect(metrics: pd.DataFrame, inject: int) -> list[dict]:
+    """Earliest sustained anomaly per service. Returns alerts sorted by onset."""
+    normal = metrics[metrics.time < inject]
+    after = metrics[metrics.time >= inject]
+    best: dict[str, dict] = {}
+    for col in metrics.columns:
+        if col == "time" or "_" not in col:
+            continue
+        svc, kind = col.rsplit("_", 1)
+        if kind not in METRICS:
+            continue
+        svc = _norm(svc)
+        base = normal[col].astype(float).to_numpy()
+        med = np.nanmedian(base)
+        mad = np.nanmedian(np.abs(base - med)) * 1.4826
+        scale = max(mad, 1e-6, abs(med) * 0.01)       # flat baselines: a 1% floor stops division blow-ups
+        z = (after[col].astype(float).to_numpy() - med) / scale
+        hot = np.nan_to_num(z, nan=0.0) > Z_ALERT
+        run, onset = 0, None
+        for i, h in enumerate(hot):
+            run = run + 1 if h else 0
+            if run >= SUSTAIN_S:
+                onset = int(after.time.iloc[i - SUSTAIN_S + 1])
+                break
+        if onset is None:
+            continue
+        peak = float(np.nanmax(z))
+        if svc not in best or onset < best[svc]["at"]:
+            best[svc] = {"service": svc, "at": onset, "signal": f"{kind} z={peak:.0f}", "z": peak}
+    return sorted(best.values(), key=lambda a: a["at"])
+
+
+def build(case: str) -> dict:
+    """Load one case into its own tenant graph. Returns what the judge needs plus the answer key."""
+    d = DATA / case
+    inject = int((d / "inject_time.txt").read_text().strip())
+    metrics = pd.read_parquet(d / "metrics.parquet")
+    traces = pd.read_parquet(d / "traces.parquet", columns=["spanID", "parentSpanID", "serviceName"])
+    edges = call_edges(traces)
+    alerts = detect(metrics, inject)
+    services = sorted({s for e in edges for s in e} | {a["service"] for a in alerts} | {SYMPTOM})
+
+    g = Graph(f"rca_{abs(hash(case)) % 10**8}")
+    g.drop()
+    _write_indexes(g)
+    g.write("CREATE (:Org {title: $t}), (:Team {id: 'ob', name: 'Online Boutique'})", {"t": case})
+    g.write("""
+        UNWIND $svcs AS s MATCH (t:Team {id: 'ob'})
+        CREATE (:Service {name: s, kind: CASE WHEN s = 'redis' THEN 'datastore' ELSE 'service' END, tier: 1,
+                          internet_exposed: s = 'frontend'})-[:OWNED_BY]->(t)""", {"svcs": services})
+    g.write("""
+        UNWIND $edges AS e MATCH (a:Service {name: e[0]}), (b:Service {name: e[1]})
+        CREATE (a)-[:CALLS]->(b)""", {"edges": [list(e) for e in edges]})
+    _write_alerts(g, [{"id": f"A-{i}", "service": a["service"], "at": a["at"], "severity": "page",
+                       "signal": a["signal"]} for i, a in enumerate(alerts)])
+    front = next((a["at"] for a in alerts if a["service"] == SYMPTOM), None)
+    started = front if front is not None else (alerts[0]["at"] if alerts else inject)
+    _write_incidents(g, [{"id": "INC-1", "title": case, "symptom": SYMPTOM, "started": started,
+                          "status": "open", "severity": "SEV2"}])
+    return {"graph": g, "inject": inject, "alerts": alerts, "edges": edges}
+
+
+def run(cases: list[str]) -> dict:
+    idx = pd.read_parquet(DATA / "cases.parquet").set_index("case")
+    rows = []
+    for case in cases:
+        truth = idx.loc[case, "root_cause_service"]
+        b = build(case)
+        g = b["graph"]
+        r = tools.rank_suspects(g, "INC-1", limit=50)
+        review = tools.skeptic_review(r)
+        names = lambda order: [s["service"] for s in order]  # noqa: E731
+        judge, skeptic = names(r["suspects"]), names(review["suspects"])
+        earliest = [a["service"] for a in b["alerts"] if a["service"] != SYMPTOM]
+        loudest = [a["service"] for a in sorted(b["alerts"], key=lambda a: -a["z"]) if a["service"] != SYMPTOM]
+        rows.append({
+            "case": case, "fault": idx.loc[case, "fault"], "truth": truth,
+            "judge": judge[:3], "skeptic": skeptic[:3], "confidence": review["confidence"],
+            "alerting": [a["service"] for a in b["alerts"]], "truth_alerted": truth in {a["service"] for a in b["alerts"]},
+            "hit": {"judge": judge[:1] == [truth], "judge+skeptic": skeptic[:1] == [truth],
+                    "earliest alert": earliest[:1] == [truth], "biggest anomaly": loudest[:1] == [truth]},
+            "hit3": {"judge": truth in judge[:3], "judge+skeptic": truth in skeptic[:3],
+                     "earliest alert": truth in earliest[:3], "biggest anomaly": truth in loudest[:3]},
+        })
+        g.drop()
+        print(f"{case:42} truth={truth:22} judge={','.join(judge[:3]) or '-':50} {'OK' if rows[-1]['hit']['judge+skeptic'] else '--'}")
+    n = len(rows)
+    methods = ["judge+skeptic", "judge", "earliest alert", "biggest anomaly"]
+    return {"n": n, "rows": rows,
+            "top1": {m: sum(r["hit"][m] for r in rows) for m in methods},
+            "top3": {m: sum(r["hit3"][m] for r in rows) for m in methods},
+            "detected": sum(r["truth_alerted"] for r in rows),
+            "settings": {"Z_ALERT": Z_ALERT, "SUSTAIN_S": SUSTAIN_S, "METRICS": METRICS, "MIN_CALLS": MIN_CALLS}}
+
+
+def table(res: dict) -> str:
+    n = res["n"]
+    lines = ["| method | top-1 | top-3 |", "|---|---|---|"]
+    for m in res["top1"]:
+        name = {"judge+skeptic": "**Faultline (judge + skeptic)**", "judge": "Faultline (judge only)"}.get(m, m)
+        lines.append(f"| {name} | {res['top1'][m]}/{n} | {res['top3'][m]}/{n} |")
+    by: dict[str, list[bool]] = {}
+    for r in res["rows"]:
+        by.setdefault(r["fault"], []).append(r["hit"]["judge+skeptic"])
+    lines.append("")
+    lines.append("By fault (judge + skeptic, top-1): " + ", ".join(f"{f} {sum(v)}/{len(v)}" for f, v in by.items()) + ".")
+    lines.append(f"The detector raised an alert on the true root-cause service in {res['detected']}/{n} cases.")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--download", action="store_true")
+    ap.add_argument("--rep", type=int, default=1, help="which repetition of each fault/service pair (1-3)")
+    ap.add_argument("--json", type=Path, default=None)
+    a = ap.parse_args()
+    cases = selection(a.rep)
+    if a.download:
+        download(cases)
+        return
+    t0 = time.time()
+    res = run(cases)
+    print()
+    print(table(res))
+    print(f"\n{res['n']} RCAEval RE2-OB cases (repetition {a.rep}), {time.time() - t0:.0f} s")
+    if a.json:
+        a.json.write_text(json.dumps(res, indent=2, default=str))
+
+
+if __name__ == "__main__":
+    main()

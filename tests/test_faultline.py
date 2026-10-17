@@ -304,3 +304,49 @@ def test_unsupported_claude_claims_are_dropped(fresh, monkeypatch):
     out = agent.investigate("kestrel", "INC-301")
     assert out["findings"]["evidence"] == ["payments alerted at 13:19 UTC"]
     assert out["claim_check"]["supported"] == 2 and out["claim_check"]["total"] == 3
+
+
+def test_rcaeval_detector_needs_a_sustained_spike():
+    import numpy as np
+    import pandas as pd
+    from faultline import rcaeval as rc
+    rng = np.random.default_rng(0)
+    t = np.arange(0, 300)
+    a = 1 + rng.normal(0, 0.05, t.size)
+    a[150:] += 5                                    # sustained from t=150
+    b = 1 + rng.normal(0, 0.05, t.size)
+    b[160:170] += 5                                 # a 10-second blip: not enough
+    m = pd.DataFrame({"time": t, "aservice_cpu": a, "bservice_latency-90": b, "cservice_workload": a})
+    alerts = rc.detect(m, inject=120)
+    assert [(x["service"], x["at"]) for x in alerts] == [("aservice", 150)]   # workload is not a metric we alert on
+
+
+def test_rcaeval_call_edges_from_spans():
+    import pandas as pd
+    from faultline import rcaeval as rc
+    rows = [("p", "", "frontendservice")] + [(f"c{i}", "p", "checkoutservice") for i in range(6)] + \
+           [("x", "c0", "emailservice")]
+    spans = pd.DataFrame(rows, columns=["spanID", "parentSpanID", "serviceName"])
+    edges = rc.call_edges(spans)
+    assert ("frontend", "checkoutservice") in edges          # 6 calls, above MIN_CALLS
+    assert ("checkoutservice", "emailservice") not in edges  # 1 call, below
+    assert ("cartservice", "redis") in edges
+
+
+def test_later_alerts_below_are_knock_on_not_origin():
+    """Real data (RCAEval): checkout broke first; currency below it slowed down 90 s later. The origin is the
+    service that alerted first, not the deepest one alerting."""
+    g = Graph("knockon")
+    g.drop()
+    seed._write_indexes(g)
+    g.write("CREATE (:Team {id: 't', name: 'T'})")
+    g.write("""UNWIND ['front', 'mid', 'low'] AS s MATCH (t:Team) CREATE (:Service {name: s, kind: 'service'})-[:OWNED_BY]->(t)""")
+    g.write("MATCH (a:Service {name: 'front'}), (b:Service {name: 'mid'}), (c:Service {name: 'low'}) CREATE (a)-[:CALLS]->(b)-[:CALLS]->(c)")
+    seed._write_alerts(g, [{"id": "A1", "service": "mid", "at": 1000, "severity": "page", "signal": "cpu"},
+                           {"id": "A2", "service": "front", "at": 1030, "severity": "page", "signal": "latency"},
+                           {"id": "A3", "service": "low", "at": 1090, "severity": "page", "signal": "latency"}])
+    seed._write_incidents(g, [{"id": "INC-1", "title": "t", "symptom": "front", "started": 1030, "status": "open", "severity": "SEV2"}])
+    try:
+        assert tools.rank_suspects(g, "INC-1")["suspects"][0]["service"] == "mid"
+    finally:
+        g.drop()

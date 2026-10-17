@@ -12,7 +12,7 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
 4. **Memory changes the score, not just the display.** Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson` into the graph, and the next investigation scores precedent from them. A test deletes the memory and checks that the same change then scores lower.
 5. **A fault simulator checks every suspect.** For each one it asks "if this broke, which services would alert, and in what order?" and compares that with what actually alerted: "explains 3 of 3 alerting services, in the predicted order". Alerts the leader can't explain point to **independent faults**: in INC-302 the auth deploy explains 2 of the 7 alerting services under `mobile-bff`, and Faultline names the other two faults behind the rest (the pool change of INC-301/304, the search cluster of INC-303). A cause that never alerts itself (a queue, a database) still counts when everything above it did, and a change the failure climbed *past* is marked down.
 6. **Four agents, one graph, and a skeptic among them.** Triage, Investigator, Skeptic and Responder never pass anything to each other in code: each writes an `Episode` to the graph and the next one starts by reading it back, so an investigation can be resumed by another process or session. The **Skeptic** tries to knock the leader over before anyone acts: what doesn't it explain, did its alerts come in the right order, did the change land before the incident, is it clearly ahead? If a rival explains more and scores within reach, the verdict is overturned. Confidence comes from the **gap** to the runner-up, not the raw score. Verdicts stay in the graph as scored `SUSPECTED_CAUSE` and `SIMILAR_TO` edges, and the Responder attaches the team's `Runbook`.
-7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 96–97.5% top-1 and 100% top-3 on held-out seeds, against 64% for "blame the most recent change". When Faultline says **high** confidence it has been right every time.
+7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 96–97.5% top-1 and 100% top-3 on held-out seeds, against 64% for "blame the most recent change". When Faultline says **high** confidence it has been right every time. On **real telemetry** from a public benchmark (RCAEval, 36 unseen cases) it names the right service first 86% of the time and in its top three 94%, on par with the best simple baseline (see [Public data](#public-data-rcaeval)).
 8. **Every claim is checked, every number is explained, and the agent can't act alone.** Every change id, incident id, service and clock time in a verdict is looked up in the graph, and the verdict must hang together (the blamed change exists, changed the named service, and is among the judge's top suspects); claims Claude makes that the graph can't back are dropped from the evidence and shown as such. Each suspect shows its factor scores, its footprint and its path, and every step shows its Cypher. Free-form queries run through `GRAPH.RO_QUERY`, so the database itself refuses writes. The agent and the MCP server can only propose fixes; there is no approve tool.
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
@@ -118,6 +118,36 @@ How to read it honestly:
 - Silent causes are the weak spot (84–90% with the skeptic): with no alert of their own, a recent change one level up can still look better.
 - Confidence is conservative: "medium" and "low" verdicts are right more often than the labels suggest. It is still ordered correctly (high > medium > low), which is what an on-call engineer needs to know when to double-check.
 
+## Public data: RCAEval
+
+The synthetic eval measures the judge against the patterns it was built for. To check it on real telemetry, Faultline also runs on [RCAEval](https://huggingface.co/datasets/phamquiluan/RCAEval) (MIT, [paper](https://huggingface.co/papers/2412.17015)): recorded faults in Google's Online Boutique (RE2-OB) with real metrics, traces and the true root-cause service.
+
+```bash
+docker compose run --rm app python -m faultline.rcaeval --download            # 18 cases, ~180 MB, into data/rcaeval
+docker compose run --rm app python -m faultline.rcaeval                       # repetition 1
+docker compose run --rm app python -m faultline.rcaeval --download --rep 2    # and --rep 3 for the held-out cases
+```
+
+For each case (`faultline/rcaeval.py`):
+- **Graph from traces:** a `Service` per service, `CALLS` from each parent span's service to its child span's service (at least 5 calls).
+- **Alerts from metrics:** simple spike detection on CPU, memory, disk I/O, sockets, p50/p90 latency and errors. A robust z-score against the normal period before the fault was injected must stay above 5 for 30 seconds; one `Alert` per service at its earliest onset. These settings were fixed before looking at any result.
+- **Incident** on `frontend`, the user-facing entry point. Then the judge ranks suspects and its first answer is compared with the case's root cause.
+
+The 18 cases per repetition are every fault type (CPU, memory, disk, delay, packet loss, socket exhaustion) on three different services, chosen by a fixed rotation, not by hand.
+
+| | top-1 | top-3 |
+|---|---|---|
+| Judge as it was, repetition 1 | 11/18 | 13/18 |
+| Judge after one fix, repetition 1 (seen while fixing) | 13/18 | 15/18 |
+| **Judge after the fix, repetitions 2 + 3 (36 unseen cases)** | **31/36 (86%)** | **34/36 (94%)** |
+| Judge + skeptic, repetitions 2 + 3 | 30/36 (83%) | 34/36 (94%) |
+| Baseline: earliest alert, repetitions 2 + 3 | 31/36 (86%) | 35/36 (97%) |
+| Baseline: biggest anomaly, repetitions 2 + 3 | 1/36 | 28/36 |
+
+**The fix.** The first run showed a real bug: the judge only considered the *deepest* alerting services, so when CPU stress hit `checkoutservice` and `currencyservice` below it slowed down 90 seconds later, checkout was dropped and currency blamed. Now a service is set aside only if something below it alerted *before* it did. Later alerts below are knock-on effects. That was the only change made after seeing RCAEval results, and it did not change the synthetic eval. Repetitions 2 and 3 were downloaded and scored only after it.
+
+**What this says.** On real faults Faultline is as accurate as the strongest simple baseline (blame whatever alerted first), not more. That fits the data: these faults are resource stress with no deploy or config change and one fault per case, so alert timing carries almost all of the signal, and Faultline's change-based factors and linked-incident logic have nothing to work with. What Faultline adds on top is the explanation (path, footprint, order, skeptic checks), the owner, runbook and fix, and claims checked against the graph. The skeptic cost one case here. The detector found an alert on the true root-cause service in all 54 cases, so the misses are the judge's, not the detector's.
+
 ## Agent, memory and actions
 
 - **Four agents.** *Triage* reads the incident, its dependencies, recent changes and alerts. *Investigator* reads triage's handoff from the graph, runs the judge and the fault simulator, and checks precedent. *Skeptic* reads the investigator's handoff and challenges the leader (deterministic checks, up to two rounds, may overturn). *Responder* reads the skeptic's verdict, finds the owner and the runbook, and proposes the fix. Each writes an `Episode` that the next reads back (`(:Episode)-[:READ]->(:Episode)`); nothing is passed in memory.
@@ -146,6 +176,7 @@ faultline/seed.py        the synthetic companies (deterministic)
 faultline/tools.py       graph tools, the judge, actions, memory
 faultline/agent.py       the three agents (Claude or offline playbook) + question router
 faultline/eval.py        planted-fault accuracy eval with ablations, baselines and a learning run
+faultline/rcaeval.py     RCAEval public-benchmark runner: graph from traces, alerts from metrics, score
 faultline/mcp_server.py  MCP server over the same tools
 faultline/api.py         FastAPI + static UI
 web/                     UI (Cytoscape.js)
@@ -154,7 +185,8 @@ tests/                   pytest against a real FalkorDB, on separate test graphs
 
 ## Limits
 
-- The company, its changes and its alerts are synthetic. A real deployment would ingest them from CI/CD, config management, the feature-flag service and the alerting system.
+- The demo company, its changes and its alerts are synthetic. The RCAEval runner shows the path for real data (graph from traces, alerts from metrics), but there is no live ingestion: a real deployment would also read deploys, config and flags from CI/CD and the flag service.
+- The anomaly detector is deliberately simple (a sustained robust z-score). It found the true root cause's anomaly in all 54 RCAEval cases, but it has no change-point or slow-leak detection.
 - The clock is frozen at 14:00 UTC on 17 Oct 2026, so every run tells the same story.
 - Scoring weights are hand-set and explained in the UI, not learned. The eval shows what each one contributes.
 - The fault simulator models the call graph only. It does not know fault types (CPU, memory, network) or traffic volume, which would sharpen the predicted footprint.

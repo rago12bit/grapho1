@@ -20,6 +20,8 @@ services:
       - falkordb
     ports:
       - "127.0.0.1:8090:8090"
+    volumes:
+      - ./data:/app/data   # downloaded benchmark data (RCAEval), gitignored
 
 volumes:
   falkor_data:

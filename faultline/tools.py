@@ -449,11 +449,12 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
 
     alerting = {a["service"] for a in alerts}
     for svc in alerting - {sym}:
-        # Only the deepest alerting services: if something below it is alerting too, that one is the lead.
-        below = {d["service"] for d in dependencies(g, svc)} if svc in hops else set()
-        if below & alerting:
-            continue
         first = min(a["at"] for a in alerts if a["service"] == svc)
+        # Only where the failure started: if something below this service was already alerting by the time it
+        # alerted, that one is the lead. Things below that alert *later* are knock-on effects, not the origin.
+        below = {d["service"] for d in dependencies(g, svc)} if svc in hops else set()
+        if any(a["at"] <= first for a in alerts if a["service"] in below):
+            continue
         # A recent change on this service or beneath it explains the alert better than "it just broke":
         # then this is a symptom (possibly of a silent cause below), not an independent failure.
         before = [c for c in changes if c["service"] in below | {svc} and c["at"] <= first]
