@@ -42,6 +42,8 @@ function style() {
     { selector: "node.sel", style: { "border-color": t.ink, "border-width": 3 } },
     { selector: "edge.path", style: { "line-color": t.accent, "target-arrow-color": t.accent, width: 2.4, opacity: 1, "z-index": 9 } },
     { selector: "edge.hit", style: { "line-color": t.ink, "target-arrow-color": t.ink, width: 1.8, opacity: 1 } },
+    { selector: "edge.caused", style: { label: "data(lag)", "font-family": "IBM Plex Mono, monospace", "font-size": 9, color: t.ink,
+      "text-background-color": t.bg, "text-background-opacity": 1, "text-background-padding": 2, "text-rotation": "none" } },
     { selector: "edge.reach", style: { "line-color": t.amber, "target-arrow-color": t.amber, width: 1.6, "line-style": "dashed", opacity: 0.9 } },
   ];
 }
@@ -78,7 +80,7 @@ export function fit(cap = 1.3) {
 
 export function clear() {
   if (!cy) return;
-  cy.elements().removeClass("dim symptom suspect alerting path hit lit sel reach");
+  cy.elements().removeClass("dim symptom suspect alerting path hit lit sel reach caused");
   caption(null);
 }
 
@@ -164,6 +166,16 @@ function mark(r, timeline, full) {
     for (let i = 0; i < top.path.length - 1; i++) cy.$id(`${top.path[i]}->${top.path[i + 1]}`).removeClass("dim").addClass("path");
     cy.$id(top.service).addClass("suspect");
     reach(r);
+    caused(r);
+  }
+}
+
+/** Label each call edge a causal link travelled with how long the failure took to climb it. */
+function caused(r) {
+  for (const l of r.reasoning?.chain?.links || []) {
+    if (l.to_label !== "Alert" || !l.direct) continue;
+    const e = cy.$id(`${l.from_service}->${l.to_service}`);
+    if (e.nonempty()) e.data("lag", `+${l.lag_s}s`).removeClass("dim").addClass("caused");
   }
 }
 
@@ -205,7 +217,7 @@ export async function animate(r, timeline, v) {
   }
   if (top.also_explains?.length) caption(`<b>${esc(top.change.id)}</b> on <b>${esc(top.service)}</b> explains ${[r.incident.id, ...top.also_explains.map((o) => o.id)].map(esc).join(" and ")}`);
   await sleep(250);
-  if (v === state.view) reach(r);
+  if (v === state.view) { reach(r); caused(r); }
 }
 
 /** Light up a set of services (answers, teams, a service card) on the whole-system view. */

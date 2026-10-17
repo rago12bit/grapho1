@@ -69,6 +69,28 @@ def download(cases: list[str]) -> None:
         print("downloaded", c)
 
 
+def download_suite(prefixes: list[str]) -> None:
+    """Every case whose name starts with one of `prefixes` (e.g. re2ss, re3tt), with whatever files RCAEval has
+    for it (metrics, and logs and traces where the suite recorded them). Resumable: finished files are skipped."""
+    DATA.mkdir(parents=True, exist_ok=True)
+    if not (DATA / "cases.parquet").exists():
+        urllib.request.urlretrieve(f"{HF}/cases.parquet", DATA / "cases.parquet")
+    idx = pd.read_parquet(DATA / "cases.parquet")
+    api = HF.replace("/datasets/", "/api/datasets/").replace("/resolve/main", "/tree/main")
+    for case in sorted(c for c in idx.case if c.startswith(tuple(prefixes))):
+        (DATA / case).mkdir(exist_ok=True)
+        with urllib.request.urlopen(f"{api}/{case}") as r:
+            files = [(f["path"].split("/", 1)[1], f.get("size") or 0) for f in json.load(r) if f["type"] == "file"]
+        for name, size in files:
+            dest = DATA / case / name
+            if dest.exists() and dest.stat().st_size == size:
+                continue
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            urllib.request.urlretrieve(f"{HF}/{case}/{name}", tmp)
+            tmp.rename(dest)
+        print("downloaded", case, ", ".join(n for n, _ in files), flush=True)
+
+
 def _norm(name: str) -> str:
     return "frontend" if name in ("frontendservice", "frontend-external") else name
 

@@ -54,6 +54,16 @@ def challenge_leader(incident_id: str) -> str:
     return _call("challenge_leader", incident_id=incident_id)
 
 
+@server.tool(description="The stored argument for an incident: every hypothesis (standing / overturned / rejected) with the evidence for and against it and what each piece cites.")
+def argument(incident_id: str) -> str:
+    return _call("argument", incident_id=incident_id)
+
+
+@server.tool(description="Follow an alert's CAUSED_BY links down to where it started, with each link's lag and confidence.")
+def why(alert_id: str) -> str:
+    return _call("why", alert_id=alert_id)
+
+
 @server.tool(description="Services a service depends on, with hop counts.")
 def dependencies(service: str, max_hops: int = 5) -> str:
     return _call("dependencies", service=service, max_hops=max_hops)

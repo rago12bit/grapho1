@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, postmortem, seed, tools, upload, world
+from . import agent, bench, ingest, postmortem, reasoning, seed, tools, upload, world
 from .db import Graph, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -150,7 +150,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 83, "planted": "95.8–97.5%", "real": "33/36"}
+PROOF = {"tests": 90, "planted": "95.8–97.5%", "real": "33/36"}
 
 
 @app.get("/api/health")
@@ -250,6 +250,20 @@ def service(tenant: str, service: str):
     """One service's card: owners, experts, callers, changes, history, runbooks, and the queries behind it."""
     g = _g(tenant)
     return {**_guard(tools.service_card, g, service), "traces": g.trace.queries}
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/argument")
+def argument(tenant: str, incident_id: str):
+    """The argument stored by the last investigation, read back from the graph, with the queries that read it."""
+    g = _g(tenant)
+    _guard(tools.get_incident, g, incident_id)
+    return {"hypotheses": reasoning.argument(g, incident_id), "traces": g.trace.queries}
+
+
+@app.get("/api/{tenant}/alerts/{alert_id}/why")
+def why(tenant: str, alert_id: str):
+    g = _g(tenant)
+    return {**reasoning.why(g, alert_id), "traces": g.trace.queries}
 
 
 @app.get("/api/{tenant}/incidents/{incident_id}/timeline")

@@ -91,10 +91,12 @@ function render(inc, out) {
     </div>
 
     ${top ? section("Root cause", facts(r, top)) : ""}
+    ${chainHtml(r, out)}
     ${impactHtml(r)}
     ${actionsShell()}
     ${timelineHtml(out.timeline, r)}
     ${r?.skeptic ? section("Skeptic · tried to knock the leader over", skeptic(r.skeptic), `<span class="label ${r.skeptic.verdict === "upheld" ? "ok" : "warn"}">${esc(r.skeptic.verdict)}</span>`, "skeptic") : ""}
+    ${argumentHtml(r, out)}
     ${groupsHtml(r)}
     ${othersHtml(r)}
     ${precedentHtml(r, top)}
@@ -110,7 +112,77 @@ function render(inc, out) {
   $("#replay").addEventListener("click", () => { const v = ++state.view; graph.showCase(r, out.timeline, { animate: true }); graph.animate(r, out.timeline, v); });
   $$("#case .linkbtn[data-inc]").forEach((b) => b.addEventListener("click", () => openIncident(b.dataset.inc)));
   $$("#case [data-svc]").forEach((b) => b.addEventListener("click", () => act.showService(b.dataset.svc)));
+  $("#ask-why")?.addEventListener("click", (e) => askWhy(e.target.dataset.alert));
   renderActions(inc);
+}
+
+/** Each chain of CAUSED_BY links, from the top alert down to the change (or silent failure) it started at. The
+ *  chain that reaches the symptom comes first; branches stop where they join an alert already shown. */
+function chains(r) {
+  const links = r?.reasoning?.chain?.links || [];
+  const byFrom = new Map(links.map((l) => [l.from, l]));
+  const pointed = new Set(links.filter((l) => l.to_label === "Alert").map((l) => l.to));
+  const walk = (l, shown) => { const out = []; while (l && !shown.has(l.from)) { shown.add(l.from); out.push(l); l = l.to_label === "Alert" ? byFrom.get(l.to) : null; } return { links: out, joins: l?.from_service || null }; };
+  const sym = r?.incident?.symptom;
+  const tops = links.filter((l) => !pointed.has(l.from)).sort((a, b) => (b.from_service === sym) - (a.from_service === sym) || a.from.localeCompare(b.from));
+  const shown = new Set();
+  return tops.map((t) => walk(t, shown)).filter((c) => c.links.length);
+}
+
+function chainHtml(r, out) {
+  const cs = chains(r);
+  if (!cs.length) return "";
+  const alerts = new Map((r.alerts || []).map((a) => [a.id, a]));
+  const top = r.suspects[0];
+  const changes = new Map((r.suspects || []).filter((s) => s.change).map((s) => [s.change.id, s.change]));
+  const node = (svc, id, sig, at) => `<li class="cnode"><button class="svc-inline mono" data-svc="${esc(svc)}">${esc(svc)}</button>
+    <span class="small">${esc(sig || "")}</span><span class="faint mono tiny">${id ? esc(id) : ""}${at ? ` · ${hhmm(at).slice(0, 5)}` : ""}</span></li>`;
+  const link = (l) => `<li class="clink ${l.confidence >= 0.7 ? "" : "weak"}"><span>↓ caused by</span>
+    <span class="num faint">${l.lag_s >= 0 ? `${l.lag_s} s earlier` : `${-l.lag_s} s later (out of order)`} · ${Math.round(100 * l.confidence)}%${l.direct ? "" : ` · via ${esc(l.via.join(", ") || "silent hops")}`}</span></li>`;
+  const root = (l) => l.to_label === "Change"
+    ? `<li class="cnode root"><b class="mono">${esc(l.to)}</b> <span class="small">${esc(changes.get(l.to)?.summary || "change")}</span></li>`
+    : `<li class="cnode root"><b class="mono">${esc(l.to)}</b> <span class="small">failed on its own: nothing changed on or under it</span></li>`;
+  const body = cs.map((c, i) => {
+    const rows = c.links.map((l) => { const a = alerts.get(l.from) || {}; return node(l.from_service, l.from, a.signal, a.at) + link(l); }).join("");
+    const end = c.links[c.links.length - 1];
+    return `<ol class="cchain ${i ? "branch" : ""}">${i ? `<li class="label faint">${end.to_label === "Alert" ? "branch" : "independent fault"}</li>` : ""}${rows}${end.to_label === "Alert"
+      ? `<li class="cnode"><span class="faint small">joins the chain at</span> <span class="mono">${esc(c.joins || end.to_service)}</span></li>` : root(end)}</ol>`;
+  }).join("");
+  const n = r.reasoning.chain.links.length;
+  const stored = out.reasoning_written;
+  const symAlert = cs[0].links[0];
+  return section(`Causal chain · how ${esc(top.service)} reached ${esc(r.incident.symptom)}`, `${body}
+    <p class="faint small">Topology decides which links are possible (a failure climbs from callee to caller); alert timing picks among them and sets each link's confidence.</p>
+    ${stored ? `<p class="small">Stored as ${plural(stored.causal_links, "CAUSED_BY edge")}. <button class="link" id="ask-why" data-alert="${esc(symAlert.from)}">Ask the graph why ${esc(symAlert.from)} fired</button></p><div id="why-out"></div>`
+      : `<p class="faint small">${plural(n, "link")} inferred. Running the agents writes them to the graph as CAUSED_BY edges you can query.</p>`}`, "", "causal");
+}
+
+async function askWhy(id) {
+  const box = $("#why-out");
+  box.innerHTML = loading("Walking CAUSED_BY");
+  try {
+    const w = await tapi(`/alerts/${encodeURIComponent(id)}/why`);
+    box.innerHTML = `<p class="small">${w.chain.map((x) => `${esc(x.alert)} on <b>${esc(x.service)}</b>`).join(" ← ")} ← <b>${esc(w.root?.id || "?")}</b> ${w.root?.summary ? `<span class="faint">${esc(w.root.summary)}</span>` : ""}</p>${queries(w.traces, 2)}`;
+  } catch (e) { box.innerHTML = `<p class="small warn">${esc(e.message)}</p>`; }
+}
+
+/** The argument: every hypothesis the judge scored, with what backs it and what undercuts it. */
+function argumentHtml(r, out) {
+  const hs = r?.reasoning?.hypotheses || [];
+  if (!hs.length) return "";
+  const ev = (e, ok) => `<li class="${ok ? "ok" : "no"}"><span>${ok ? "✓" : "✗"}</span><div>${esc(e.text)}${e.weight != null ? ` <span class="num faint">+${e.weight.toFixed(2)}</span>` : ""}${e.cites?.length ? `<div class="mono tiny faint">cites ${e.cites.slice(0, 6).map((c) => esc(c.id)).join(", ")}${e.cites.length > 6 ? ` +${e.cites.length - 6}` : ""}</div>` : ""}</div></li>`;
+  const card = (h) => {
+    const items = h.status === "standing" ? [...h.supports.map((e) => ev(e, true)), ...h.contradicts.map((e) => ev(e, false))]
+      : [...h.contradicts.map((e) => ev(e, false)), ...h.supports.map((e) => ev(e, true))];
+    const head = `<span class="label hs-${esc(h.status)}">${esc(h.status)}</span> <b class="mono">${esc(h.label)}</b> <span class="faint small">${esc(h.service)}</span>
+      <span class="num">${h.score.toFixed(2)}</span><span class="faint small">${h.supports.length} for · ${h.contradicts.length} against</span>`;
+    return h.status === "standing" ? `<div class="hyp standing"><div class="hyp-head">${head}</div><ul class="checks">${items.join("")}</ul></div>`
+      : `<details class="hyp"><summary class="hyp-head">${head}</summary><ul class="checks">${items.join("")}</ul></details>`;
+  };
+  const w = out.reasoning_written;
+  return section(`The argument · ${plural(hs.length, "hypothesis", "hypotheses")}`, hs.map(card).join("")
+    + `<p class="faint small">The skeptic's checks run against every hypothesis, so each rejected one says why it lost. ${w
+      ? `Stored as ${w.hypotheses} Hypothesis and ${w.evidence} Evidence nodes with ${w.citations} CITES edges.` : "Running the agents stores it in the graph."}</p>`, "", "argument");
 }
 
 function facts(r, top) {

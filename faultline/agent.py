@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from . import tools
+from . import reasoning, tools
 from .db import Graph, Trace
 
 MODEL = "claude-opus-5-5"
@@ -60,8 +60,9 @@ TOOL_SPECS: list[dict] = [
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
     {"name": "run_cypher", "description": (
         "Read-only Cypher against the tenant graph for questions the other tools don't cover. Labels: Service, Team, "
-        "Person, Change, Alert, Incident, Action, Lesson, Investigation. Relationships: CALLS, OWNED_BY, MEMBER_OF, "
-        "CHANGED, MADE, FIRED_ON, SYMPTOM_ON, ROOT_CAUSE, RESOLVED_BY, TAUGHT. Times are epoch seconds. Max 200 rows."),
+        "Person, Change, Alert, Incident, Action, Lesson, Investigation, Hypothesis, Evidence. Relationships: CALLS, "
+        "OWNED_BY, MEMBER_OF, CHANGED, MADE, FIRED_ON, SYMPTOM_ON, ROOT_CAUSE, RESOLVED_BY, TAUGHT, HAS_HYPOTHESIS, "
+        "BLAMES, SUPPORTED_BY, CONTRADICTED_BY, CITES, CAUSED_BY. Times are epoch seconds. Max 200 rows."),
      "input_schema": _obj({"query": S}, ["query"])},
     {"name": "propose_action", "description": (
         "Propose a remediation. It is NOT executed: a human approves or rejects it in the UI. kind is one of "
@@ -98,6 +99,16 @@ TOOL_SPECS: list[dict] = [
         "clearly ahead? If another suspect explains more and scores within 0.15, it takes over. Returns the verdict "
         "(upheld / upheld with doubts / overturned), each check, the final leader and a calibrated confidence."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "record_argument", "description": (
+        "Write the judge's argument into the graph: every suspect as a Hypothesis (standing / overturned / rejected), "
+        "the Evidence for and against each (the skeptic's checks run against all of them), each piece citing the "
+        "alerts, changes and past incidents it rests on, and the causal chain: Alert-[:CAUSED_BY]->Alert ... "
+        "->Change for the hypothesis left standing. Returns what was written."),
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "argument", "description": "Read the stored argument back from the graph: each hypothesis with its supporting and contradicting evidence and what each cites.",
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "why", "description": "Follow an alert's CAUSED_BY links down to where it started (a change, or a service that failed on its own), with the lag and confidence of each link.",
+     "input_schema": _obj({"alert_id": S}, ["alert_id"])},
     {"name": "write_handoff", "description": "Write your handoff to the graph for the next agent: a short summary plus the facts it needs. Call once, last.",
      "input_schema": _obj({"incident_id": S, "summary": S, "data": {"type": "object"}}, ["incident_id", "summary"])},
     {"name": "submit_findings", "description": "Finish an incident investigation. Call exactly once, last.",
@@ -121,6 +132,9 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
     return {
         "simulate_failure": lambda service: tools.simulate_failure(g, service),
         "challenge_leader": lambda incident_id: tools.challenge_leader(g, incident_id),
+        "record_argument": lambda incident_id: record_argument(g, incident_id),
+        "argument": lambda incident_id: reasoning.argument(g, incident_id),
+        "why": lambda alert_id: reasoning.why(g, alert_id),
         "experts": lambda service: tools.experts(g, service),
         "search_memory": lambda query: tools.search_memory(g, query),
         "shape_matches": lambda incident_id: tools.shape_matches(g, incident_id),
@@ -320,6 +334,8 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     ranking["alert_groups"] = groups
     top = ranking["suspects"][0] if ranking["suspects"] else None
     sk = challenged["skeptic"]
+    run("skeptic", "record_argument", "Write every hypothesis, the evidence for and against it, and the causal chain into the graph.",
+        incident_id=incident_id)
     run("skeptic", "write_handoff", "Hand the reviewed verdict to the responder through the graph.", incident_id=incident_id,
         summary=f"Verdict {sk['verdict']}: leader {sk['leader']}, {sk['failed_checks']} failed check(s), "
                 f"confidence {challenged['confidence']} ({challenged['confidence_p']}).",
@@ -330,6 +346,10 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     handoff = run("responder", "read_handoff", "Pick up the skeptic's reviewed verdict from the graph.",
                   incident_id=incident_id, role="skeptic")
     act = (handoff or {}).get("data", {}).get("action")
+    sym_alert = next((a for a in ranking.get("alerts") or [] if a["service"] == inc["symptom"] and a.get("id")), None)
+    if sym_alert and top:
+        run("responder", "why", f"Follow {inc['symptom']}'s alert down its CAUSED_BY links to where it started.",
+            alert_id=sym_alert["id"])
     if act:
         run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
         ranking["experts"] = run("responder", "experts", f"Who actually knows {act['target']}, from what they did.",
@@ -473,8 +493,9 @@ ROLE_TOOLS = {
     "investigator": ["read_handoff", "rank_suspects", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
                      "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
                      "write_handoff"],
-    "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "write_handoff"],
-    "responder": ["read_handoff", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
+    "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",
+                "write_handoff"],
+    "responder": ["read_handoff", "argument", "why", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
                   "failure_domains", "propose_action", "submit_findings"],
 }
 ROLE_BRIEF = {
@@ -488,7 +509,7 @@ ROLE_BRIEF = {
                     "recommended_action.",
     "skeptic": "You are the SKEPTIC agent. Start with read_handoff(role='investigator'), then challenge_leader. Your job is to "
                "find what the leader does not explain. Check any failed check yourself with alerts_near or paths_between. "
-               "Finish with write_handoff: summary plus data {leader, verdict, confidence, action}, where action is the "
+               "Then record_argument, so every hypothesis and the causal chain are in the graph. Finish with write_handoff: summary plus data {leader, verdict, confidence, action}, where action is the "
                "final leader's recommended_action.",
     "responder": "You are the RESPONDER agent. Start with read_handoff(role='skeptic'). Find the owner and on-call, "
                  "read the runbook, then propose_action exactly once (with also_for when the cause also explains other "
@@ -497,7 +518,7 @@ ROLE_BRIEF = {
 ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "failure_paths", "similar_incidents",
              "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
              "failure_domains", "alert_clusters", "runbooks", "experts", "search_memory", "shape_matches",
-             "run_cypher"]
+             "argument", "why", "run_cypher"]
 
 
 def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,
@@ -589,6 +610,13 @@ def judged(g: Graph, incident_id: str, limit: int = 6) -> dict:
     return ranking
 
 
+def record_argument(g: Graph, incident_id: str) -> dict:
+    ranking = judged(g, incident_id)
+    out = reasoning.write(g, incident_id, reasoning.build(g, ranking))
+    top = ranking["suspects"][0] if ranking["suspects"] else None
+    return out | {"standing": tools._label(top) if top else None}
+
+
 def preview(tenant: str, incident_id: str) -> dict:
     """The case file without running the agents: the judge, the skeptic, the alert groups and the narrative,
     read-only, so the answer is on screen the moment an incident is opened. Running the four agents adds the
@@ -601,6 +629,7 @@ def preview(tenant: str, incident_id: str) -> dict:
         ranking["experts"] = tools.experts(g, top["service"])
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = tools.search_memory(g, words.split(":", 1)[-1])
+    ranking["reasoning"] = reasoning.build(g, ranking)
     findings = _narrate(ranking, tools.runbooks(g, top["service"]) if top else [])
     check = tools.verify_claims(g, incident_id, findings, ranking)
     q = g.trace.queries
@@ -631,6 +660,10 @@ def investigate(tenant: str, incident_id: str) -> dict:
         bad = {c["text"] for c in check["claims"] if c["kind"] == "evidence" and not c["ok"]}
         out["findings"]["evidence"] = [e for e in out["findings"].get("evidence") or [] if e not in bad]
     tools.record_suspicions(g, incident_id, out["ranking"])
+    # The argument as the final ranking stands, whichever agents ran (Claude's may not have written it).
+    out["ranking"].setdefault("alert_groups", tools.alert_clusters(g, incident_id)["groups"])
+    out["ranking"]["reasoning"] = reasoning.build(g, out["ranking"])
+    out["reasoning_written"] = reasoning.write(g, incident_id, out["ranking"]["reasoning"])
     out["investigation_id"] = tools.record_investigation(
         g, incident_id, out["mode"], out["ranking"], out.get("answer") or "", len(out["steps"]))
     return out

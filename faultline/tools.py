@@ -502,7 +502,8 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         paths = paths_between(g, sym, svc)
         best = max(((_alert_chain(p, alerts, c["at"]), p) for p in paths), key=lambda x: (x[0][0], -len(x[1])))
         (chain, chain_alerts), path = best
-        if _from_below(g, svc, cone, alerts, c["at"]):
+        below_first = _from_below(g, svc, cone, alerts, c["at"])
+        if below_first:
             chain *= 0.5  # the failure was already climbing from deeper down: this change is not where it started
         lag_min = (start - c["at"]) / 60
         recency = _recency(lag_min)
@@ -520,7 +521,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
             "type": "change", "service": svc, "change": c, "hops": hops[svc], "path": path,
             "minutes_before": round(lag_min, 1), "factors": factors,
             "score": round(sum(WEIGHTS[k] * v for k, v in factors.items()), 3),
-            "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp,
+            "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp, "from_below": below_first,
         })
 
     alerting = {a["service"] for a in alerts}
@@ -585,7 +586,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
     return {
         "incident": inc, "dependency_count": len(deps), "suspects": suspects, "alert_cone": sorted(cone),
         "ruled_out": ruled_out, "confidence": confidence, "confidence_p": p_conf, "margin": margin,
-        "other_faults": other_faults,
+        "other_faults": other_faults, "alerts": alerts,
         "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS},
     }
 
