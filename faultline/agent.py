@@ -82,6 +82,12 @@ TOOL_SPECS: list[dict] = [
      "input_schema": _obj({"limit": {"type": "integer", "minimum": 1, "maximum": 30}}, [])},
     {"name": "failure_domains", "description": "Label propagation over CALLS: groups of services that mostly talk to each other, with their teams.",
      "input_schema": _obj({}, [])},
+    {"name": "experts", "description": "Who actually knows a service: fixes they approved for incidents caused there, changes they made to it, owning team. With evidence.",
+     "input_schema": _obj({"service": S}, ["service"])},
+    {"name": "search_memory", "description": "Full-text search over past lessons, changes, alerts and incident titles. Any word may match.",
+     "input_schema": _obj({"query": S}, ["query"])},
+    {"name": "shape_matches", "description": "Resolved incidents shaped like this incident's leading suspect (vector similarity over incident signatures), whatever the service names.",
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
     {"name": "runbooks", "description": "The team's runbooks for a service: when each applies and its steps.",
      "input_schema": _obj({"service": S}, ["service"])},
     {"name": "read_handoff", "description": "Read the previous agent's handoff for this incident from the graph. role: triage, investigator or skeptic.",
@@ -115,6 +121,9 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
     return {
         "simulate_failure": lambda service: tools.simulate_failure(g, service),
         "challenge_leader": lambda incident_id: tools.challenge_leader(g, incident_id),
+        "experts": lambda service: tools.experts(g, service),
+        "search_memory": lambda query: tools.search_memory(g, query),
+        "shape_matches": lambda incident_id: tools.shape_matches(g, incident_id),
         "alert_clusters": lambda incident_id: tools.alert_clusters(g, incident_id),
         "failure_paths": lambda source, target, k=3: tools.failure_paths(g, source, target, k),
         "single_points_of_failure": lambda limit=8: tools.single_points_of_failure(g, limit),
@@ -187,6 +196,18 @@ def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
         who = (o["change"] or {}).get("id") or f"{o['service']} (no change)"
         inc_ids = ", ".join(i["id"] for i in o["incidents"])
         ev.append(f"Independent fault: {who} explains {', '.join(o['explains'])}" + (f", already {inc_ids}" if inc_ids else ""))
+    for m in (top.get("shape_matches") or [])[:1]:
+        ev.append(f"Shaped like {m['incident']} ({m['cause_kind']} on {m['cause_service']}, similarity {m['similarity']:.2f})"
+                  + (f": {m['lesson']}" if m.get("lesson") else ""))
+    hits = [h for h in ranking.get("memory_hits") or [] if h["kind"] == "lesson"]
+    if hits:
+        ev.append(f"Memory search finds the {hits[0]['ref']} lesson: {hits[0]['text']}")
+    ex = [e for e in ranking.get("experts") or [] if e["fixed"] or e["changed"]]
+    if ex:
+        ev.append("Who knows " + top["service"] + ": " + "; ".join(
+            f"{e['name']} (" + ", ".join(filter(None, [f"approved the {', '.join(e['fixed'])} fix" if e["fixed"] else "",
+                                                     f"made {', '.join(e['changed'])}" if e["changed"] else ""])) + ")"
+            for e in ex[:2]))
     groups = ranking.get("alert_groups") or []
     if groups:
         if len(groups) == 1:
@@ -273,6 +294,10 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
         run("investigator", "failure_paths", f"Shortest call paths from {inc['symptom']} down to {top['service']} (SPpaths).",
             source=inc["symptom"], target=top["service"])
         run("investigator", "similar_incidents", f"Look for resolved incidents caused on {top['service']}.", service=top["service"])
+        words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
+        ranking["memory_hits"] = run("investigator", "search_memory",
+                                     "Full-text search of past lessons, changes and alerts for the same symptoms.",
+                                     query=words.split(":", 1)[-1])
         run("investigator", "simulate_failure", f"Predict how a failure of {top['service']} spreads.", service=top["service"])
     run("investigator", "write_handoff", "Hand off to the responder through the graph.", incident_id=incident_id,
         summary=(f"Leading suspect {(top['change'] or {}).get('id') or top['service']} on {top['service']} "
@@ -304,6 +329,8 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     act = (handoff or {}).get("data", {}).get("action")
     if act:
         run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
+        ranking["experts"] = run("responder", "experts", f"Who actually knows {act['target']}, from what they did.",
+                                 service=act["target"])
         ranking["chokepoints"] = run("responder", "single_points_of_failure",
                                      "Which services on the failure path carry the most traffic (betweenness)?", limit=24)
         ranking["domains"] = run("responder", "failure_domains",
@@ -323,7 +350,9 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
 
 _ASK_ROUTES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\b(INC-\d+)\b", re.I), "investigate"),
-    (re.compile(r"who (owns|is on.?call for|runs|knows)\s+([\w-]+)", re.I), "who_owns"),
+    (re.compile(r"who (knows|has fixed|is the expert on)\s+([\w-]+)", re.I), "experts"),
+    (re.compile(r"(search|find|lessons? about|anything about)\s+(.+)", re.I), "search_memory"),
+    (re.compile(r"who (owns|is on.?call for|runs)\s+([\w-]+)", re.I), "who_owns"),
     (re.compile(r"(what breaks|what if|simulate|before (i|we) ship)\b.*?\b([\w-]+)\s*(goes down|fails|\?|$)", re.I), "simulate_failure"),
     (re.compile(r"(blast radius|who depends on|impact of)\b.*?\b([\w-]+)\s*(goes down|fails|\?|$)", re.I), "blast_radius"),
     (re.compile(r"(runbook|how do (i|we) fix)\b.*?([\w-]+)?", re.I), "runbooks"),
@@ -352,12 +381,16 @@ def ask_offline(tenant: str, question: str) -> dict:
             res, q, err = call_tool(tenant, route, args)
             answer = "Most call paths run through (betweenness): " + ", ".join(
                 f"{r['service']} ({r['betweenness']})" for r in res or [] if r["betweenness"] > 0)
+        elif route == "search_memory":
+            args = {"query": m.group(2)}
+            res, q, err = call_tool(tenant, route, args)
+            answer = " ".join(f"[{h['kind']} {h['ref']}] {h['text']}." for h in res or []) or "Nothing in memory matches."
         elif route == "failure_domains":
             args = {}
             res, q, err = call_tool(tenant, route, args)
             answer = " ".join(f"Domain {d['domain']} ({', '.join(d['teams'])}): {', '.join(d['services'])}." for d in res or [])
         else:
-            svc = mentioned[-1] if mentioned else (None if route in ("similar_incidents", "runbooks", "simulate_failure") else m.group(2))
+            svc = mentioned[-1] if mentioned else (None if route in ("similar_incidents", "runbooks", "simulate_failure", "experts") else m.group(2))
             if not svc:
                 continue
             args = {"service": svc}
@@ -381,6 +414,13 @@ def _summarize(route: str, svc: str, res: Any, err: str | None) -> str:
         return (f"If {svc} fails, {len(res['callers'])} services are affected: "
                 + ", ".join(f"{c['service']} ({c['hops']} hop{'s' if c['hops'] != 1 else ''})" for c in res["callers"])
                 + f". Internet-facing: {', '.join(res['exposed_entry_points']) or 'none'}. PageRank rank #{res['criticality_rank']}.")
+    if route == "experts":
+        if not res:
+            return f"No one has a track record on {svc} yet."
+        return f"Who knows {svc}: " + "; ".join(
+            f"{e['name']} (score {e['score']}" + (f", approved the {', '.join(e['fixed'])} fix" if e["fixed"] else "")
+            + (f", made {', '.join(e['changed'])}" if e["changed"] else "") + (", owning team" if e["owner_team"] else "") + ")"
+            for e in res[:4]) + "."
     if route == "simulate_failure":
         waves = "; then ".join(", ".join(w["services"]) for w in res["waves"])
         teams = ", ".join(f"{t['team']} ({', '.join(t['on_call']) or 'no on-call'})" for t in res["teams_paged"])
@@ -428,10 +468,11 @@ people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; tim
 ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
     "investigator": ["read_handoff", "rank_suspects", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
-                     "similar_incidents", "simulate_failure", "run_cypher", "write_handoff"],
+                     "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
+                     "write_handoff"],
     "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "write_handoff"],
-    "responder": ["read_handoff", "who_owns", "runbooks", "blast_radius", "single_points_of_failure", "failure_domains",
-                  "propose_action", "submit_findings"],
+    "responder": ["read_handoff", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
+                  "failure_domains", "propose_action", "submit_findings"],
 }
 ROLE_BRIEF = {
     "triage": "You are the TRIAGE agent. Establish what is failing, everything it depends on, what changed on that "
@@ -452,7 +493,8 @@ ROLE_BRIEF = {
 }
 ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "failure_paths", "similar_incidents",
              "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
-             "failure_domains", "alert_clusters", "runbooks", "run_cypher"]
+             "failure_domains", "alert_clusters", "runbooks", "experts", "search_memory", "shape_matches",
+             "run_cypher"]
 
 
 def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,

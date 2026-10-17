@@ -303,6 +303,22 @@ def simulate_failure(g: Graph, service: str) -> dict:
             "runbooks": runbooks(g, service)}
 
 
+SHAPE_MIN = 0.9      # cosine similarity a past incident needs before its shape counts as precedent
+
+
+def _shape_precedent(g: Graph, inc: dict, suspects: list[dict], incident_id: str) -> None:
+    """Precedent by shape: resolved incidents on other services that told the same story (same kind of cause,
+    same kind of thing broken, same depth below a similar symptom) are attached to each suspect as evidence.
+    They do not change the score: in the planted-fault eval, crediting them helped look-alike decoys as much as
+    real causes (learning round 98.2% -> 97.5% on seed 3), so only same-service precedent is scored."""
+    for s in suspects:
+        try:
+            matches = similar_by_shape(g, suspect_signature(g, inc, s), k=3, exclude=incident_id)
+        except Exception:      # graphs built before the vector index existed
+            matches = []
+        s["shape_matches"] = [m for m in matches if m["similarity"] >= SHAPE_MIN and m["cause_service"] != s["service"]]
+
+
 def _precedent(g: Graph, service: str, kind: str | None) -> tuple[float, list[dict]]:
     same = similar_incidents(g, service)
     if not same:
@@ -483,6 +499,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
             "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp,
         })
 
+    _shape_precedent(g, inc, suspects, incident_id)
     suspects.sort(key=lambda s: (s["score"], s["footprint"]["coverage"]), reverse=True)
     suspects = suspects[:limit]
     for i, s in enumerate(suspects):
@@ -577,7 +594,10 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
         return {"id": action_id, "status": "rejected"}
     g.write("""
         MATCH (a:Action {id: $id})
-        SET a.status = 'executed', a.decided_by = $who, a.decided_at = $at""",
+        SET a.status = 'executed', a.decided_by = $who, a.decided_at = $at
+        WITH a
+        OPTIONAL MATCH (p:Person {handle: $who})
+        FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | MERGE (p)-[:APPROVED]->(a))""",
             {"id": action_id, "who": who, "at": now()})
     covered = [r["id"] for r in g.read(
         "MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id", {"id": action_id})]
@@ -614,6 +634,7 @@ def resolve_incident(g: Graph, incident_id: str, root_cause_change_id: str | Non
         WITH i
         MATCH (a:Action {status: 'executed'})-[:FOR]->(i)
         MERGE (i)-[:RESOLVED_BY]->(a)""", {"inc": incident_id, "lesson": lesson, "at": now()})
+    store_signature(g, incident_id)
     return {"incident": incident_id, "status": "resolved"}
 
 
@@ -840,8 +861,66 @@ def challenge_leader(g: Graph, incident_id: str) -> dict:
 
 # --- checking claims against the graph -----------------------------------------------------------
 
-_ID = re.compile(r"\b(?:INC|ACT|RB|[CDFAH])-[0-9A-Z]{1,8}\b")
+_ID = re.compile(r"\b(?:H-INC|INC|ACT|RB|[CDFAH])-[0-9A-Z]{1,8}\b")
 _TIME = re.compile(r"\b(\d{2}):(\d{2}) UTC\b")
+
+
+_SVC = r"([a-z][a-z0-9]*(?:-[a-z0-9]+)*)"
+
+
+def _claim_context(g: Graph, ranking: dict, ids: list[str], services: set[str], start: int) -> dict:
+    """What the graph says about the things a verdict might claim: which service each change touched, which
+    suspects may be called a cause, which were ruled out, and when each service first alerted."""
+    changed = {r["id"]: r["s"] for r in g.read(
+        "MATCH (c:Change)-[:CHANGED]->(s:Service) WHERE c.id IN $ids RETURN c.id AS id, s.name AS s", {"ids": ids})}
+    sus = ranking.get("suspects") or []
+    lead = sus[0] if sus else None
+    causes = {_label(lead)} if lead else set()
+    if lead and not lead["change"]:
+        causes.add(lead["service"])
+    for o in ranking.get("other_faults") or []:
+        causes.add((o["change"] or {}).get("id") or o["service"])
+    scores = {_label(x): x["score"] for x in sus}
+    ruled = {c["id"]: c["reason"] for c in ranking.get("ruled_out") or []}
+    first = {}
+    for a in alerts_near(g, sorted(services), start):
+        first[a["service"]] = min(first.get(a["service"], a["at"]), a["at"])
+    return {"changed": changed, "causes": causes, "lead": _label(lead) if lead else None, "scores": scores,
+            "ruled": ruled, "first": first, "services": services}
+
+
+def _meaning_problems(text: str, sem: dict) -> list[str]:
+    """Claims must also be right, not just refer to real things: a change must have touched the service the
+    claim pairs it with, only the leader or an independent fault may be called a cause, and "A alerted
+    before B" must match the alert times."""
+    out = []
+    for cid, svc in re.findall(rf"\b([CDF]-\d+)\)?\s+(?:changed|on|to|touched|deployed to)\s+{_SVC}", text):
+        real = sem["changed"].get(cid)
+        if real and svc in sem["services"] and svc != real:
+            out.append(f"{cid} changed {real}, not {svc}")
+    causal = re.findall(r"\b([CDF]-\d+)\)?\s+(?:caused|is the (?:most likely |likely |root )?cause|is behind)\b", text) + \
+        re.findall(r"\bcaused by ([CDF]-\d+)\b", text)
+    for cid in causal:
+        if cid in sem["causes"]:
+            continue
+        if cid in sem["ruled"]:
+            out.append(f"{cid} cannot be the cause: {sem['ruled'][cid]}")
+        elif cid in sem["scores"]:
+            out.append(f"{cid} is not the cause: it scored {sem['scores'][cid]}, the leader is {sem['lead']}")
+        elif cid in sem["changed"]:
+            out.append(f"{cid} is not among the suspects")
+    for a, rel, b in re.findall(rf"\b{_SVC} alerted (before|after) {_SVC}\b", text):
+        ta, tb = sem["first"].get(a), sem["first"].get(b)
+        if ta is None or tb is None:
+            out.append(f"no alert on {a if ta is None else b} to compare")
+        elif (rel == "before" and not ta < tb) or (rel == "after" and not ta > tb):
+            clock = lambda x: time.strftime("%H:%M UTC", time.gmtime(x))  # noqa: E731
+            out.append(f"{a} first alerted at {clock(ta)}, {b} at {clock(tb)}: {a} did not alert {rel} {b}")
+    for a in re.findall(rf"\b{_SVC} alerted first\b", text):
+        if sem["first"] and a in sem["first"] and sem["first"][a] > min(sem["first"].values()):
+            earliest = min(sem["first"], key=sem["first"].get)
+            out.append(f"{earliest} alerted before {a}")
+    return out
 
 
 def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> dict:
@@ -859,6 +938,7 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
         MATCH (n) WHERE (n:Alert OR n:Change) AND n.at >= $a AND n.at <= $b RETURN n.at AS at""",
                                      {"a": start - 3 * HOUR_S, "b": start + HOUR_S})}
     clock = {(t // 60) % 1440 for t in times}
+    sem = _claim_context(g, ranking, ids, services, start)
 
     claims = []
     for kind, text in items:
@@ -867,6 +947,7 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
             minute = int(hh) * 60 + int(mm)
             if not any(abs(minute - c) <= 1 for c in clock):
                 problems.append(f"nothing in the graph happened at {hh}:{mm} UTC")
+        problems += _meaning_problems(text, sem)
         named = {w for w in re.findall(r"[a-z][a-z0-9-]+", text) if w in services}
         claims.append({"kind": kind, "text": text, "ok": not problems, "problems": problems, "services": sorted(named)})
 
@@ -1015,3 +1096,142 @@ def verify_fix(g: Graph, action_id: str) -> dict:
         elif r["verdict"] == "not verified":
             g.write("MATCH (i:Incident {id: $id}) WHERE i.status = 'mitigated' SET i.status = 'open'", {"id": r["incident"]})
     return {"action": action_id, "verified": ok, "summary": summary, "incidents": results}
+
+
+# --- who knows a service ---------------------------------------------------------------------------
+
+def experts(g: Graph, service: str, limit: int = 5) -> list[dict]:
+    """Who actually knows this service, from what they did rather than the org chart: fixes they approved for
+    incidents whose root cause was on it (3 points each), changes they made to it (1 each), plus a point for
+    being in the owning team. Each person comes with the evidence behind their score."""
+    if not g.read("MATCH (s:Service {name: $svc}) RETURN s.name AS s", {"svc": service}):
+        raise KeyError(f"no service {service}")
+    fixes = g.read("""
+        MATCH (p:Person)-[:APPROVED]->(a:Action)<-[:RESOLVED_BY]-(i:Incident)-[:ROOT_CAUSE]->(:Change)-[:CHANGED]->(:Service {name: $svc})
+        RETURN p.handle AS handle, collect(DISTINCT i.id) AS incidents""", {"svc": service})
+    made = g.read("""
+        MATCH (p:Person)-[:MADE]->(c:Change)-[:CHANGED]->(:Service {name: $svc})
+        RETURN p.handle AS handle, collect(DISTINCT c.id) AS changes""", {"svc": service})
+    team = g.read("""
+        MATCH (:Service {name: $svc})-[:OWNED_BY]->(:Team)<-[:MEMBER_OF]-(p:Person)
+        RETURN p.handle AS handle, p.on_call AS on_call""", {"svc": service})
+    names = {r["h"]: r["n"] for r in g.read("MATCH (p:Person) RETURN p.handle AS h, p.name AS n")}
+    people: dict[str, dict] = {}
+
+    def person(h):
+        return people.setdefault(h, {"handle": h, "name": names.get(h, h), "score": 0, "fixed": [], "changed": [],
+                                     "owner_team": False, "on_call": False})
+    for r in fixes:
+        p = person(r["handle"]); p["fixed"] = sorted(r["incidents"]); p["score"] += 3 * len(r["incidents"])
+    for r in made:
+        p = person(r["handle"]); p["changed"] = sorted(r["changes"]); p["score"] += len(r["changes"])
+    for r in team:
+        p = person(r["handle"]); p["owner_team"] = True; p["on_call"] = bool(r["on_call"]); p["score"] += 1
+    return sorted(people.values(), key=lambda p: (-p["score"], p["handle"]))[:limit]
+
+
+# --- full-text memory search -------------------------------------------------------------------------
+
+def search_memory(g: Graph, query: str, limit: int = 8) -> list[dict]:
+    """Full-text search (FalkorDB's full-text indexes) over past lessons, changes, alerts and incident titles.
+    Any of the words may match; results come with what they belong to."""
+    words = [w for w in re.findall(r"[A-Za-z0-9_]+", query) if len(w) > 2][:12]
+    if not words:
+        return []
+    q = "|".join(words)
+    rows = []
+    for label, prop, back in [
+        ("Lesson", "text", "MATCH (i:Incident)-[:TAUGHT]->(node) RETURN 'lesson' AS kind, i.id AS ref, node.text AS text, score"),
+        ("Change", "summary", "OPTIONAL MATCH (node)-[:CHANGED]->(s:Service) RETURN 'change' AS kind, node.id AS ref, node.summary AS text, score, s.name AS service"),
+        ("Alert", "signal", "OPTIONAL MATCH (node)-[:FIRED_ON]->(s:Service) RETURN 'alert' AS kind, node.id AS ref, node.signal AS text, score, s.name AS service"),
+        ("Incident", "title", "RETURN 'incident' AS kind, node.id AS ref, node.title AS text, score"),
+    ]:
+        rows += g.read(f"""
+            CALL db.idx.fulltext.queryNodes('{label}', $q) YIELD node, score
+            WITH node, score
+            {back}""", {"q": q})
+    rows.sort(key=lambda r: -r["score"])
+    return [{**r, "score": round(r["score"], 3)} for r in rows[:limit]]
+
+
+# --- matching past incidents by shape ----------------------------------------------------------------
+
+_KINDS = ["deploy", "config", "flag", "infra", "external"]
+_SVC_KINDS = ["service", "datastore", "external"]
+
+
+def _signature(kind: str, svc_kind: str, hops: int, sym_tier: int, sym_exposed: bool, cause_tier: int,
+               risk: str | None) -> list[float]:
+    """A fixed 18-number description of what an incident looked like: the kind of cause, what kind of thing
+    broke, how far below the symptom, how important the symptom and the broken service are, how risky the
+    change was. Two incidents with the same story have nearly the same vector, whatever the service names."""
+    v = [0.0] * 18
+    v[_KINDS.index(kind) if kind in _KINDS else 3] = 1.0
+    v[5 + (_SVC_KINDS.index(svc_kind) if svc_kind in _SVC_KINDS else 0)] = 1.0
+    v[8 + min(max(hops, 0), 3)] = 1.0
+    v[12 + min(max(sym_tier, 1), 3) - 1] = 1.0
+    v[15] = 1.0 if sym_exposed else 0.0
+    v[16] = 1.0 if cause_tier == 1 else 0.0
+    v[17] = {"high": 1.0, "medium": 0.5, "low": 0.2}.get(risk or "", 1.0 if kind in ("infra", "external") else 0.5)
+    return v
+
+
+def _service_info(g: Graph, names: list[str]) -> dict[str, dict]:
+    return {r["name"]: r for r in g.read("""
+        MATCH (s:Service) WHERE s.name IN $n
+        RETURN s.name AS name, s.kind AS kind, s.tier AS tier, s.internet_exposed AS exposed""", {"n": names})}
+
+
+def incident_signature(g: Graph, incident_id: str) -> list[float] | None:
+    """The signature of a resolved incident, from its symptom and its recorded root cause."""
+    rows = g.read("""
+        MATCH (i:Incident {id: $id})-[:SYMPTOM_ON]->(sym:Service), (i)-[:ROOT_CAUSE]->(c:Change)-[:CHANGED]->(cs:Service)
+        RETURN sym.name AS sym, cs.name AS cause, c.kind AS kind, c.risk AS risk LIMIT 1""", {"id": incident_id})
+    if not rows:
+        return None
+    r = rows[0]
+    info = _service_info(g, [r["sym"], r["cause"]])
+    path = paths_between(g, r["sym"], r["cause"])
+    hops = len(path[0]) - 1 if path else 3
+    s, c = info.get(r["sym"], {}), info.get(r["cause"], {})
+    return _signature(r["kind"], c.get("kind"), hops, s.get("tier") or 2, bool(s.get("exposed")), c.get("tier") or 2, r["risk"])
+
+
+def store_signature(g: Graph, incident_id: str) -> bool:
+    sig = incident_signature(g, incident_id)
+    if sig is None:
+        return False
+    g.write("MATCH (i:Incident {id: $id}) SET i.signature = vecf32($v)", {"id": incident_id, "v": sig})
+    return True
+
+
+def similar_by_shape(g: Graph, signature: list[float], k: int = 4, exclude: str | None = None) -> list[dict]:
+    """Resolved incidents whose story looks like this one (FalkorDB vector index, cosine), most similar first."""
+    rows = g.read("""
+        CALL db.idx.vector.queryNodes('Incident', 'signature', $k, vecf32($v)) YIELD node, score
+        WHERE node.status = 'resolved' AND ($ex IS NULL OR node.id <> $ex)
+        OPTIONAL MATCH (node)-[:ROOT_CAUSE]->(c:Change)-[:CHANGED]->(s:Service)
+        OPTIONAL MATCH (node)-[:TAUGHT]->(l:Lesson)
+        RETURN node.id AS incident, node.title AS title, 1 - score AS similarity, c.kind AS cause_kind,
+               s.name AS cause_service, collect(l.text)[0] AS lesson
+        ORDER BY similarity DESC""", {"k": k + 1, "v": signature, "ex": exclude})
+    return [{**r, "similarity": round(r["similarity"], 3)} for r in rows[:k]]
+
+
+def suspect_signature(g: Graph, incident: dict, suspect: dict) -> list[float]:
+    info = _service_info(g, [incident["symptom"], suspect["service"]])
+    s, c = info.get(incident["symptom"], {}), info.get(suspect["service"], {})
+    kind = suspect["change"]["kind"] if suspect["change"] else "infra"
+    risk = suspect["change"]["risk"] if suspect["change"] else None
+    return _signature(kind, c.get("kind"), suspect["hops"], s.get("tier") or 2, bool(s.get("exposed")),
+                      c.get("tier") or 2, risk)
+
+
+def shape_matches(g: Graph, incident_id: str, k: int = 4) -> dict:
+    """Past incidents shaped like this one's leading suspect (vector index over incident signatures)."""
+    r = rank_suspects(g, incident_id)
+    if not r["suspects"]:
+        return {"incident": incident_id, "leader": None, "matches": []}
+    lead = r["suspects"][0]
+    return {"incident": incident_id, "leader": _label(lead),
+            "matches": similar_by_shape(g, suspect_signature(g, r["incident"], lead), k=k, exclude=incident_id)}

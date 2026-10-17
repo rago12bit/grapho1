@@ -459,3 +459,69 @@ def test_the_agent_never_sees_the_ground_truth():
                 imported |= {a.name for a in node.names}
         assert not {"world", "faultline.world"} & imported, mod.__name__
         assert "TRUE_CAUSES" not in src, mod.__name__
+
+
+def test_claims_must_be_right_not_just_real(fresh):
+    r = tools.apply_review(*(lambda x: (x, tools.skeptic_review(x)))(tools.rank_suspects(fresh, "INC-301")))
+    f = {"summary": "C-5101 changed auth.", "change_id": "C-5101", "root_cause_service": "payments-db",
+         "evidence": ["D-5102 caused the checkout latency", "payments alerted before payments-db",
+                      "payments-db alerted before payments", "C-5101 on payments-db", "C-5101 is the most likely cause"]}
+    v = tools.verify_claims(fresh, "INC-301", f, r)
+    assert [c["ok"] for c in v["claims"]] == [False, False, False, True, True, True]
+    assert v["claims"][0]["problems"] == ["C-5101 changed payments-db, not auth"]
+    assert "the leader is C-5101" in v["claims"][1]["problems"][0]
+    assert "did not alert before" in v["claims"][2]["problems"][0]
+
+
+def test_experts_come_from_what_people_did(fresh):
+    ex = tools.experts(fresh, "payments-db")
+    assert ex[0]["handle"] == "marta" and ex[0]["fixed"] == ["INC-212"]
+    assert next(e for e in ex if e["handle"] == "lin")["changed"] == ["C-5101"]
+    # approving a fix makes you an expert on that service
+    a = tools.propose_action(fresh, "INC-303", "page_owner", "catalog-es", "Page Discovery")
+    tools.decide_action(fresh, a["id"], True, "elena")
+    tools.resolve_incident(fresh, "INC-303", None, "ES again", cause_service="catalog-es")
+    assert "INC-303" in next(e for e in tools.experts(fresh, "catalog-es") if e["handle"] == "elena")["fixed"]
+
+
+def test_full_text_memory_search(fresh):
+    hits = tools.search_memory(fresh, "pgbouncer pool connections")
+    refs = {(h["kind"], h["ref"]) for h in hits}
+    assert {("lesson", "INC-212"), ("change", "C-5101"), ("alert", "A-9003")} <= refs
+    assert tools.search_memory(fresh, "a of") == []
+
+
+def test_shape_matching_finds_same_story_on_another_service(fresh):
+    sig = tools.incident_signature(fresh, "INC-212")          # config change on a datastore under payments
+    assert len(sig) == seed.SIGNATURE_DIM
+    m = tools.similar_by_shape(fresh, sig, k=3)
+    assert m[0]["incident"] == "INC-212" and m[0]["similarity"] > 0.99
+    assert m[1]["incident"] == "INC-230" and 0.9 < m[1]["similarity"] < 0.99   # config on another datastore, 1 hop
+    # resolving INC-304 (pool change one hop under payments) stores its shape: the same story as INC-212
+    tools.resolve_incident(fresh, "INC-304", "C-5101", "pool limits again")
+    assert any(x["incident"] == "INC-304" and x["similarity"] > 0.99 for x in tools.similar_by_shape(fresh, sig, k=4))
+    # shape is evidence, not score: the judge's precedent factor is unchanged by it
+    r = tools.rank_suspects(fresh, "INC-302")
+    assert all(s["factors"]["precedent"] in (0.0, 0.5, 1.0) for s in r["suspects"])
+
+
+def test_concurrent_investigations_stay_isolated():
+    from faultline import bench
+    seed.build("kestrel", force=True)
+    r = bench.run(runs=16, workers=8)
+    assert r["cross_run_reads"] == 0 and r["incomplete_runs"] == 0 and r["verdict_mismatches"] == 0
+
+
+def test_retry_only_on_transient_errors():
+    from redis import exceptions as rx
+    from faultline import db as dbm
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise rx.ResponseError("Max pending queries exceeded")
+        return "ok"
+    assert dbm._with_retry(flaky) == "ok" and calls["n"] == 3
+    with pytest.raises(rx.ResponseError):
+        dbm._with_retry(lambda: (_ for _ in ()).throw(rx.ResponseError("errMsg: Invalid input")))

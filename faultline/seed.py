@@ -307,12 +307,17 @@ def _write_incidents(g: Graph, incidents: list[dict]) -> None:
                            severity: i.severity})-[:SYMPTOM_ON]->(s)""", {"incs": incidents})
 
 
+# Who approved each past fix: the on-call or senior engineer of the team that owned the broken service.
+APPROVERS = {"INC-212": "marta", "INC-188": "sam", "INC-240": "kenji", "INC-197": "ravi", "INC-221": "ade",
+             "INC-230": "lin", "INC-251": "jo", "INC-260": "priya"}
+
+
 def _write_history(g: Graph, history: list[dict]) -> None:
     rows = []
     for h in history:
         started = NOW - h["days_ago"] * DAY
         rows.append({**h, "started": started, "cause_id": f"H-{h['id']}", "cause_at": started - 20 * MIN,
-                     "resolved": started + 50 * MIN})
+                     "resolved": started + 50 * MIN, "approver": APPROVERS.get(h["id"])})
     g.write("""
         UNWIND $rows AS h
         MATCH (sym:Service {name: h.symptom}), (cs:Service {name: h.cause_service})
@@ -321,15 +326,26 @@ def _write_history(g: Graph, history: list[dict]) -> None:
         CREATE (c:Change {id: h.cause_id, kind: h.cause_kind, at: h.cause_at, summary: h.cause_summary,
                           risk: 'high'})-[:CHANGED]->(cs)
         CREATE (i)-[:ROOT_CAUSE]->(c)
-        CREATE (i)-[:RESOLVED_BY]->(:Action {id: 'ACT-' + h.id, kind: h.fix, summary: h.fix_summary,
-                                             status: 'executed', at: h.resolved})
+        CREATE (i)-[:RESOLVED_BY]->(a:Action {id: 'ACT-' + h.id, kind: h.fix, summary: h.fix_summary,
+                                              status: 'executed', at: h.resolved, decided_by: h.approver})
         CREATE (i)-[:TAUGHT]->(:Lesson {text: h.lesson, at: h.resolved})
-        WITH h, c
+        WITH h, c, a
         OPTIONAL MATCH (p:Person {handle: h.cause_author})
-        FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | CREATE (p)-[:MADE]->(c))""", {"rows": rows})
+        FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | CREATE (p)-[:MADE]->(c))
+        WITH h, a
+        OPTIONAL MATCH (ap:Person {handle: h.approver})
+        FOREACH (_ IN CASE WHEN ap IS NULL THEN [] ELSE [1] END | CREATE (ap)-[:APPROVED]->(a))""", {"rows": rows})
+
+
+FULLTEXT = [("Lesson", "text"), ("Change", "summary"), ("Alert", "signal"), ("Incident", "title")]
+SIGNATURE_DIM = 18
 
 
 def _write_indexes(g: Graph) -> None:
+    for label, prop in FULLTEXT:
+        g.write(f"CALL db.idx.fulltext.createNodeIndex('{label}', '{prop}')")
+    g.write(f"CREATE VECTOR INDEX FOR (i:Incident) ON (i.signature) "
+            f"OPTIONS {{dimension: {SIGNATURE_DIM}, similarityFunction: 'cosine'}}")
     for label, prop in [("Service", "name"), ("Change", "id"), ("Incident", "id"), ("Person", "handle"),
                         ("Team", "id"), ("Alert", "id"), ("Action", "id"), ("Episode", "id")]:
         g.write(f"CREATE INDEX FOR (n:{label}) ON (n.{prop})")
@@ -351,6 +367,9 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _write_incidents(g, incidents)
         _write_history(g, _history_kestrel())
         _write_runbooks(g, RUNBOOKS_KESTREL)
+        from .tools import store_signature
+        for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
+            store_signature(g, row["id"])
     elif tenant == "harbor":
         _write_org(g, HARBOR)
         _write_changes(g, [{"id": "D-1", "kind": "deploy", "service": "shipments", "at": NOW - 30 * MIN,

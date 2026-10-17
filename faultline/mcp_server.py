@@ -109,6 +109,21 @@ def failure_domains() -> str:
     return _call("failure_domains")
 
 
+@server.tool(description="Who actually knows a service: fixes they approved there, changes they made, owning team.")
+def experts(service: str) -> str:
+    return _call("experts", service=service)
+
+
+@server.tool(description="Full-text search over past lessons, changes, alerts and incident titles.")
+def search_memory(query: str) -> str:
+    return _call("search_memory", query=query)
+
+
+@server.tool(description="Resolved incidents shaped like this incident's leading suspect (vector index).")
+def shape_matches(incident_id: str) -> str:
+    return _call("shape_matches", incident_id=incident_id)
+
+
 @server.tool(description="Services ranked by PageRank over the call graph.")
 def critical_services(limit: int = 10) -> str:
     return _call("critical_services", limit=limit)

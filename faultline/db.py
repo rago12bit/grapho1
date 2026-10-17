@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import os
+import random
 import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from falkordb import FalkorDB
+from redis import exceptions as rx
 
 GRAPH_PREFIX = os.environ.get("FAULTLINE_GRAPH_PREFIX", "faultline_")
 ROW_CAP = 200
@@ -16,6 +18,30 @@ QUERY_TIMEOUT_MS = 3000
 _WRITE_WORDS = re.compile(r"\b(CREATE|MERGE|SET|DELETE|DETACH|REMOVE|DROP|LOAD\s+CSV|CALL\s+db\.)", re.I)
 
 _client: FalkorDB | None = None
+
+RETRIES = 4
+_TRANSIENT = ("max pending queries", "busy", "loading", "try again")
+retry_count = 0   # how many retries happened in this process (the benchmark reports it)
+
+
+def _transient(e: Exception) -> bool:
+    if isinstance(e, (rx.BusyLoadingError, rx.ConnectionError, rx.TimeoutError)):
+        return True
+    return isinstance(e, rx.ResponseError) and any(t in str(e).lower() for t in _TRANSIENT)
+
+
+def _with_retry(fn):
+    """Retry a query when FalkorDB is busy or the connection drops, with jittered exponential backoff.
+    Errors in the query itself are never retried."""
+    global retry_count
+    for attempt in range(RETRIES + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == RETRIES or not _transient(e):
+                raise
+            retry_count += 1
+            time.sleep(0.05 * 2 ** attempt + random.random() * 0.05)
 
 
 def client() -> FalkorDB:
@@ -69,14 +95,14 @@ class Graph:
 
     def read(self, cypher: str, params: dict | None = None) -> list[dict[str, Any]]:
         t = time.perf_counter()
-        res = self.g.ro_query(cypher, params or {}, timeout=QUERY_TIMEOUT_MS)
+        res = _with_retry(lambda: self.g.ro_query(cypher, params or {}, timeout=QUERY_TIMEOUT_MS))
         rows = _rows(res)
         self.trace.add(cypher, params, len(rows), (time.perf_counter() - t) * 1000)
         return rows
 
     def write(self, cypher: str, params: dict | None = None) -> list[dict[str, Any]]:
         t = time.perf_counter()
-        res = self.g.query(cypher, params or {}, timeout=QUERY_TIMEOUT_MS)
+        res = _with_retry(lambda: self.g.query(cypher, params or {}, timeout=QUERY_TIMEOUT_MS))
         rows = _rows(res) if res.header else []
         self.trace.add(cypher, params, len(rows), (time.perf_counter() - t) * 1000)
         return rows
