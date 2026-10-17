@@ -6,15 +6,16 @@
   <title>Faultline</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/styles.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff7a45' stroke-width='3'/></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css?v=3">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ef6a55' stroke-width='3'/></svg>">
 </head>
 <body>
   <header class="top">
     <div class="brand">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>
       <span>Faultline</span>
+      <span class="tagline">outage root cause on a graph</span>
     </div>
     <nav id="tenants" class="tenants" aria-label="Company"></nav>
     <div class="status">
@@ -31,6 +32,8 @@
         <button role="tab" class="tab" data-tab="memory">Memory</button>
       </div>
       <section id="tab-incidents" class="tabpane">
+        <div id="tiles" class="tiles"></div>
+        <div class="listhead">Open first, by severity</div>
         <ul id="incident-list" class="incidents"></ul>
       </section>
       <section id="tab-memory" class="tabpane" hidden>
@@ -77,6 +80,6 @@
   </main>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

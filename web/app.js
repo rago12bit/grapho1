@@ -61,7 +61,7 @@ async function loadGraph() {
   const g = await api(`/api/${state.tenant}/graph`);
   const max = Math.max(...g.nodes.map((n) => n.pagerank), 0.0001);
   const elements = [
-    ...g.nodes.map((n) => ({ data: { id: n.id, kind: n.kind, team: n.team, exposed: n.exposed, size: 22 + 30 * (n.pagerank / max) } })),
+    ...g.nodes.map((n) => ({ data: { id: n.id, kind: n.kind, team: n.team, exposed: n.exposed, pad: `${Math.round(8 + 10 * (n.pagerank / max))}px` } })),
     ...g.edges.map((e) => ({ data: { id: `${e.source}->${e.target}`, source: e.source, target: e.target } })),
   ];
   if (state.cy) state.cy.destroy();
@@ -71,28 +71,30 @@ async function loadGraph() {
     wheelSensitivity: 0.2,
     style: [
       { selector: "node", style: {
-        width: "data(size)", height: "data(size)", "background-color": "#232933", "border-width": 2, "border-color": "#3a4350",
-        label: "data(id)", color: "#aab2bd", "font-family": "JetBrains Mono, monospace", "font-size": 10,
-        "text-valign": "bottom", "text-margin-y": 5, "text-outline-color": "#0d0f12", "text-outline-width": 3,
-        "transition-property": "background-color, border-color, opacity", "transition-duration": "250ms",
+        shape: "rectangle", width: "label", height: 30, padding: "data(pad)",
+        "background-color": "#15140f", "border-width": 1, "border-color": "#3a372c",
+        label: "data(id)", color: "#a9a391", "font-family": "IBM Plex Mono, monospace", "font-size": 11, "font-weight": 600,
+        "text-valign": "center", "text-halign": "center",
+        "transition-property": "background-color, border-color, opacity, color", "transition-duration": "250ms",
       } },
-      { selector: "node[kind = 'datastore']", style: { shape: "barrel" } },
-      { selector: "node[kind = 'external']", style: { shape: "diamond", "border-style": "dashed" } },
-      { selector: "node[?exposed]", style: { "border-color": "#6aa8ff" } },
+      { selector: "node[kind = 'datastore']", style: { "border-style": "double", "border-width": 3 } },
+      { selector: "node[kind = 'external']", style: { "border-style": "dashed" } },
+      { selector: "node[?exposed]", style: { "border-color": "#a9a391", color: "#ece7d9" } },
       { selector: "edge", style: {
-        width: 1.4, "line-color": "#2c333d", "target-arrow-color": "#2c333d", "target-arrow-shape": "triangle",
-        "arrow-scale": 0.8, "curve-style": "bezier", "transition-property": "line-color, width, opacity", "transition-duration": "250ms",
+        width: 1.2, "line-color": "#3a372c", "target-arrow-color": "#3a372c", "target-arrow-shape": "triangle",
+        "arrow-scale": 0.7, "curve-style": "taxi", "taxi-direction": "downward", "taxi-turn": "45%",
+        "transition-property": "line-color, width, opacity", "transition-duration": "250ms",
       } },
-      { selector: ".dim", style: { opacity: 0.25 } },
-      { selector: "node.alerting", style: { "border-color": "#f5b942", "border-width": 3 } },
-      { selector: "node.symptom", style: { "border-color": "#ff5d5d", "border-width": 4, color: "#e6e8eb" } },
-      { selector: "node.suspect", style: { "background-color": "#ff7a45", "border-color": "#ff7a45", color: "#ffb08f" } },
-      { selector: "node.lit", style: { color: "#e6e8eb" } },
-      { selector: "edge.path", style: { "line-color": "#ff7a45", "target-arrow-color": "#ff7a45", width: 3.2, opacity: 1 } },
-      { selector: "edge.hit", style: { "line-color": "#6aa8ff", "target-arrow-color": "#6aa8ff", width: 2.4, opacity: 1 } },
+      { selector: ".dim", style: { opacity: 0.22 } },
+      { selector: "node.alerting", style: { "border-color": "#e2b04a", "border-width": 2 } },
+      { selector: "node.symptom", style: { "border-color": "#ef6a55", "border-width": 2, color: "#ece7d9", "background-color": "#211510" } },
+      { selector: "node.suspect", style: { "background-color": "#ef6a55", "border-color": "#ef6a55", color: "#1a0f0c" } },
+      { selector: "node.lit", style: { color: "#ece7d9" } },
+      { selector: "edge.path", style: { "line-color": "#ef6a55", "target-arrow-color": "#ef6a55", width: 2.4, opacity: 1 } },
+      { selector: "edge.hit", style: { "line-color": "#ece7d9", "target-arrow-color": "#ece7d9", width: 1.8, opacity: 1 } },
     ],
     layout: {
-      name: "breadthfirst", directed: true, spacingFactor: 1.05, padding: 30,
+      name: "breadthfirst", directed: true, spacingFactor: 1.05, padding: 24, nodeDimensionsIncludeLabels: true,
       roots: g.nodes.filter((n) => n.exposed).map((n) => n.id),
     },
   });
@@ -149,6 +151,10 @@ function highlightServices(names, edges = []) {
 /* ---------- left column ---------- */
 async function loadIncidents() {
   state.incidents = await api(`/api/${state.tenant}/incidents`);
+  const count = (st) => state.incidents.filter((i) => i.status === st).length;
+  $("#tiles").innerHTML = [["open", "Open", "no fix yet"], ["mitigated", "Mitigated", "fix verified or pending"],
+    ["resolved", "Resolved", "in the agent's memory"]].map(([st, l, d]) =>
+    `<div class="tile ${st}"><div class="n">${count(st)}</div><div class="l">${l}</div><div class="d">${d}</div></div>`).join("");
   const sev = (i) => Number(String(i.severity).replace(/\D/g, "")) || 9;
   const open = state.incidents.filter((i) => i.status !== "resolved").sort((a, b) => sev(a) - sev(b) || b.started - a.started);
   const done = state.incidents.filter((i) => i.status === "resolved").slice(0, 3);
@@ -282,14 +288,15 @@ async function renderResult(out, v = state.view) {
   const verdict = document.createElement("div");
   verdict.className = "section";
   verdict.innerHTML = `
-    <h3>Verdict</h3>
     <div class="verdict ${f.change_id ? "" : "none"}">
-      <div class="head"><span class="big">${esc(f.change_id || (f.root_cause_service ? f.root_cause_service : "no cause found"))}</span>
+      <div class="kicker">Case file · ${esc(r?.incident?.id || "")} · ${f.change_id ? "root cause found" : f.root_cause_service ? "nothing changed" : "no cause found"}</div>
+      <span class="big">${esc(f.change_id || (f.root_cause_service ? `${f.root_cause_service}` : "No cause found"))}</span>
+      <div class="head">
         <span class="conf ${esc(r?.confidence || f.confidence)}">${esc(r?.confidence || f.confidence || "")} confidence${r?.confidence_p != null ? ` · ${Math.round(100 * r.confidence_p)}%` : ""}</span>
         ${out.claim_check ? `<span class="claims ${out.claim_check.supported === out.claim_check.total && out.claim_check.verdict_consistent ? "ok" : "bad"}" title="Every id, service and time in the verdict was looked up in the graph">${out.claim_check.supported}/${out.claim_check.total} claims checked against the graph</span>` : ""}</div>
       ${shared.length ? `<div class="shared"><b>Shared root cause.</b> ${esc(top.change.id)} also explains ${shared.map((o) => `<button class="linkbtn" data-inc="${esc(o.id)}">${esc(o.id)}</button> ${esc(o.title)}`).join(", ")}. One fix covers ${shared.length === 1 ? "both" : "all of them"}.</div>` : ""}
       <p>${esc(f.summary || out.answer || "")}</p>
-      ${top?.footprint ? `<div class="seq"><span class="muted">How it spread:</span> ${top.footprint.sequence.map((x) => `<span class="mono">${esc(x.service)} ${hhmm(x.at).slice(0, 5)}</span>`).join(" → ")}${top.footprint.in_order ? ` <span class="ok">in the predicted order</span>` : ""}</div>` : ""}
+      ${top ? factsHtml(r, top, f) : ""}
       ${r?.alert_groups?.length ? `<div class="groups"><b>Alert groups (WCC)</b> ${r.alert_groups.length === 1 ? "one connected group" : `${r.alert_groups.length} separate groups, so ${r.alert_groups.length} separate problems`}${r.alert_groups.map((g) => `<div class="mono">${g.services.map(esc).join(", ")} <span class="muted">· first: ${esc(g.first_to_alert)}</span></div>`).join("")}</div>` : ""}
       ${r?.skeptic ? skepticHtml(r.skeptic) : ""}
       ${out.claim_check && (out.claim_check.supported < out.claim_check.total || !out.claim_check.verdict_consistent) ? `<div class="dropped"><b>Not backed by the graph${out.mode === "claude" ? " (dropped from the evidence)" : ""}</b>${out.claim_check.claims.filter((c) => !c.ok).map((c) => `<div>“${esc(c.text)}”: ${esc(c.problems.join("; "))}</div>`).join("")}${out.claim_check.verdict_problems.map((p) => `<div>${esc(p)}</div>`).join("")}</div>` : ""}
@@ -308,6 +315,23 @@ const ROLE_NOTE = {
   skeptic: "tries to knock the leader over before anyone acts",
   responder: "owner, runbook, and the fix to approve",
 };
+
+function factsHtml(r, top, f) {
+  const path = top.path.map((s, i) => i === top.path.length - 1 ? `<span class="hot">${esc(s)}</span>` : esc(s)).join(" ⟶ ");
+  const c = top.change;
+  const owner = top.owner || {};
+  const act = top.recommended_action || {};
+  const rows = [
+    ["Reached via", path],
+    [c ? "Change" : "Failed first", c ? `${esc(c.id)} · ${esc(c.kind)} · ${esc(c.summary)}${c.author ? ` <span class="muted">by ${esc(c.author)}, ${top.minutes_before} min before</span>` : ""}` : `${esc(top.service)} <span class="muted">alerted ${top.minutes_before} min before the incident, no change on or under it</span>`],
+    ["Spread", top.footprint.sequence.map((x) => `${esc(x.service)} ${hhmm(x.at).slice(0, 5)}`).join(" ⟶ ") + (top.footprint.in_order ? ` <span class="ok">in order</span>` : "")],
+    ["Explains", `${top.footprint.explained.length} of ${top.footprint.observed} alerting services`],
+    ["Fix", esc(act.summary || "")],
+    ["Owners", `${esc(owner.team || "")}${owner.on_call ? ` · on call ${esc(owner.on_call.name)}` : ""}`],
+    ["Score", `${top.score.toFixed(2)} · ${esc(r.confidence)} confidence${r.confidence_p != null ? ` (${Math.round(100 * r.confidence_p)}%)` : ""}`],
+  ];
+  return `<dl class="facts">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
+}
 
 function skepticHtml(sk) {
   const last = sk.rounds[sk.rounds.length - 1];
