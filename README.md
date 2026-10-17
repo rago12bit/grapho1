@@ -1,7 +1,5 @@
 # Faultline
 
-[![tests](https://github.com/rago12bit/grapho1/actions/workflows/ci.yml/badge.svg)](https://github.com/rago12bit/grapho1/actions/workflows/ci.yml)
-
 **An on-call agent that blames a change only when alerts trace an unbroken path from it up to the symptom, and says so when nothing changed at all.**
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB), entering **Tracks 01, 02 and 03**. Run all of it with one command (`docker compose up -d --build`, then http://localhost:8090), or put it on a public URL with [deploy/DEPLOY.md](deploy/DEPLOY.md).
@@ -297,7 +295,6 @@ faultline/compare.py     Faultline against RCAEval's baselines on the same cases
 baselines/               RCAEval's own baseline code in its own image, and the runner that mirrors its main.py
 faultline/bench.py       concurrency benchmark: many investigations at once on a graph copy, isolation checked
 faultline/world.py       the simulated system: true causes, and which alerts a fix clears (agents never read it)
-.github/workflows/ci.yml tests + a 60-scenario eval against a real FalkorDB on every push
 faultline/mcp_server.py  MCP server over the same tools
 faultline/api.py         FastAPI: case file, board, company, service cards, memory search + the static UI
 faultline/fixtures/      boutique.json / sockshop.json / trainticket.json: RCAEval cases boiled down (MIT, see rcaeval.py);
