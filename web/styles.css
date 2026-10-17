@@ -100,7 +100,7 @@ p { margin: 0; }
 .brand { display: flex; align-items: baseline; gap: 9px; white-space: nowrap; }
 .brand svg { width: 20px; height: 20px; fill: none; stroke: var(--accent); stroke-width: 3; align-self: center; }
 .brand .name { font-size: 22px; font-weight: 500; letter-spacing: -.2px; line-height: 1; }
-.tenants { display: flex; gap: 20px; align-self: stretch; }
+.tenants { display: flex; gap: 16px; align-self: stretch; }
 .tenants button { font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; padding-top: 2px; white-space: nowrap; }
 .tenants button:hover { color: var(--text); }
 .tenants button[aria-current="true"] { color: var(--text); font-weight: 500; border-bottom-color: var(--cream); }
@@ -373,8 +373,11 @@ textarea { width: 100%; min-height: 64px; background: var(--sunk); color: var(--
 @media (max-width: 1640px) {
   .tagline, .agent { display: none; }
 }
-@media (max-width: 1400px) {
+@media (max-width: 1600px) {
   .proof { display: none; }
+}
+@media (max-width: 1380px) and (min-width: 1101px) {
+  .db { display: none; }
 }
 @media (max-width: 1280px) {
   .layout { grid-template-columns: 300px minmax(0, 1fr) 400px; }
@@ -427,3 +430,4 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .eps { list-style: none; margin: 0; padding: 0; }
 .eps li { padding: 5px 0; border-bottom: 1px dashed var(--line); }
 .eps li .mono { word-break: break-all; }
+.tenants sup.real { font-size: 8.5px; letter-spacing: .04em; color: var(--green); margin-left: 3px; text-transform: uppercase; vertical-align: super; }

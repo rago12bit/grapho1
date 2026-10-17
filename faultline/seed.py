@@ -387,6 +387,18 @@ BOUTIQUE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "boutique.json
 BOUTIQUE_OWNERS = Path(__file__).resolve().parent / "fixtures" / "boutique_owners.json"
 BOUTIQUE = {"title": "Online Boutique · RCAEval"}
 
+# Online Boutique's traces miss calls into services that aren't instrumented on that path (adservice, shipping,
+# and cart from frontend and checkout). Its release manifests name every dependency in the callers' *_ADDR
+# environment variables (github.com/GoogleCloudPlatform/microservices-demo, release/kubernetes-manifests.yaml,
+# Apache-2.0); v2 of the eval takes the union of the two.
+BOUTIQUE_MANIFEST_EDGES = [
+    ("frontend", "productcatalogservice"), ("frontend", "currencyservice"), ("frontend", "cartservice"),
+    ("frontend", "recommendationservice"), ("frontend", "shippingservice"), ("frontend", "checkoutservice"),
+    ("frontend", "adservice"), ("checkoutservice", "productcatalogservice"), ("checkoutservice", "shippingservice"),
+    ("checkoutservice", "paymentservice"), ("checkoutservice", "emailservice"), ("checkoutservice", "currencyservice"),
+    ("checkoutservice", "cartservice"), ("recommendationservice", "productcatalogservice"), ("cartservice", "redis"),
+]
+
 
 def boutique_people() -> dict:
     """Teams from CODEOWNERS, people and their commit counts per service from the git history."""
@@ -447,7 +459,7 @@ def _boutique(g: Graph) -> None:
     names = sorted({s for e in data["edges"] for s in e} | {a["service"] for c in data["cases"] for a in c["alerts"]})
     spec = {**BOUTIQUE, "teams": {team: team}, "people": [],
             "services": [(n, team, "datastore" if n == "redis" else "service", 1, n == "frontend") for n in names],
-            "calls": data["edges"]}
+            "calls": sorted({tuple(e) for e in data["edges"]} | {e for e in BOUTIQUE_MANIFEST_EDGES if e[0] in names and e[1] in names})}
     _write_org(g, spec)
     g.write("MATCH (o:Org) SET o.owners_source = $src, o.owners_fetched = $f, o.codeowners = $rule",
             {"src": real["source"], "f": real["fetched"], "rule": " ".join(real["owners_rule"])})

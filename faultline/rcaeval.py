@@ -32,7 +32,7 @@ import pandas as pd
 
 from . import tools
 from .db import Graph
-from .seed import _write_alerts, _write_incidents, _write_indexes
+from .seed import BOUTIQUE_MANIFEST_EDGES, _write_alerts, _write_incidents, _write_indexes
 
 DATA = Path(__file__).resolve().parent.parent / "data" / "rcaeval"
 HF = "https://huggingface.co/datasets/phamquiluan/RCAEval/resolve/main"
@@ -228,17 +228,6 @@ SOCKSHOP_EDGES = [
     ("front-end", "session-db"), ("catalogue", "catalogue-db"), ("carts", "carts-db"), ("orders", "orders-db"),
     ("orders", "payment"), ("orders", "shipping"), ("orders", "carts"), ("orders", "user"), ("user", "user-db"),
     ("shipping", "rabbitmq"), ("queue-master", "rabbitmq"),
-]
-# Online Boutique's traces miss calls into services that aren't instrumented on that path (adservice, shipping,
-# and cart from frontend and checkout). Its release manifests name every dependency in the callers' *_ADDR
-# environment variables (github.com/GoogleCloudPlatform/microservices-demo, release/kubernetes-manifests.yaml,
-# Apache-2.0); v2 of the eval takes the union of the two.
-BOUTIQUE_MANIFEST_EDGES = [
-    ("frontend", "productcatalogservice"), ("frontend", "currencyservice"), ("frontend", "cartservice"),
-    ("frontend", "recommendationservice"), ("frontend", "shippingservice"), ("frontend", "checkoutservice"),
-    ("frontend", "adservice"), ("checkoutservice", "productcatalogservice"), ("checkoutservice", "shippingservice"),
-    ("checkoutservice", "paymentservice"), ("checkoutservice", "emailservice"), ("checkoutservice", "currencyservice"),
-    ("checkoutservice", "cartservice"), ("recommendationservice", "productcatalogservice"), ("cartservice", "redis"),
 ]
 SYSTEMS = {
     "ob": {"title": "Online Boutique", "entry": "frontend", "skip": frozenset(), "datastores": {"redis"}},
@@ -543,6 +532,10 @@ def add_layers(path: Path = FIXTURE) -> dict:
     data["ops"], data["op_edges"] = lay["ops"], lay["op_edges"]
     for c in data["cases"]:
         c.update(lay["per_case"][c["case"]])
+        inject = int((DATA / c["case"] / "inject_time.txt").read_text().strip().split(".")[0])
+        power = strengths(pd.read_parquet(DATA / c["case"] / "metrics.parquet"), inject)
+        for a in c["alerts"]:
+            a["strength"] = round(power[a["service"]], 2) if a["service"] in power else None
     path.write_text(json.dumps(data, separators=(",", ":")))
     return data
 
@@ -560,9 +553,11 @@ def export_system(system: str, signals: str = "metrics") -> dict:
         sig = extract(case)
         edges |= {tuple(e) for e in sig["edges"]}
         metrics = pd.read_parquet(DATA / case / "metrics.parquet")
+        power = strengths(metrics, sig["inject"], norm_for(system), SYSTEMS[system]["skip"])
         alerts = []
         for a in alerts_for(sig, signals):
             alerts.append({"service": a["service"], "offset": a["at"] - sig["inject"], "signal": a["signal"],
+                           "strength": round(power[a["service"]], 2) if a["service"] in power else None,
                            "z": round(min(a["z"], 1e6), 1), "series": _series(metrics, sig["inject"], a["metric"]),
                            "sources": a.get("sources") or [f"metrics: {a['signal']}"]})
         cases.append({"case": case, "suite": suite_of(case), "rep": int(case.rsplit("_", 1)[1]),

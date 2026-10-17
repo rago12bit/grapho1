@@ -55,7 +55,7 @@ async function loadTenants() {
   state.tenants = await api("/api/tenants");
   const demo = state.tenants.filter((t) => t.kind !== "uploaded"), mine = state.tenants.filter((t) => t.kind === "uploaded");
   $("#tenants").innerHTML = demo.map((t) =>
-    `<button data-t="${esc(t.id)}" aria-current="${t.id === state.tenant}" title="${esc(t.data)}">${esc(t.title)}</button>`).join("")
+    `<button data-t="${esc(t.id)}" aria-current="${t.id === state.tenant}" title="${esc(t.title)}: ${esc(t.data)}">${esc(t.title.replace(" · RCAEval", ""))}${/RCAEval/.test(t.title) ? `<sup class="real">real</sup>` : ""}</button>`).join("")
     + (mine.length ? `<select id="mine" aria-label="Your uploads" class="${mine.some((t) => t.id === state.tenant) ? "on" : ""}">
         <option value="">Your uploads (${mine.length})</option>${mine.map((t) => `<option value="${esc(t.id)}" ${t.id === state.tenant ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select>` : "");
   $("#mine")?.addEventListener("change", (e) => e.target.value && switchTenant(e.target.value));

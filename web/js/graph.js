@@ -95,9 +95,14 @@ export function caption(html) {
 export function caseSpec(r, timeline) {
   const names = new Set([r.incident.symptom]);
   (r.suspects || []).slice(0, 3).forEach((s) => s.path.forEach((n) => names.add(n)));
-  (timeline?.alerts || []).forEach((a) => names.add(a.service));
-  (r.impact?.blocks || []).forEach((b) => b.path.forEach((n) => names.add(n)));
   const top = r.suspects?.[0];
+  const alerting = [...new Set((timeline?.alerts || []).map((a) => a.service))];
+  // A big incident (Train Ticket's reach 30+ services) would shrink every node to nothing: then keep the alerts
+  // the leader explains and the roots of the independent faults, and leave the rest to the timeline.
+  const keep = alerting.length <= 14 ? alerting
+    : [...(top?.footprint?.explained || []).slice(0, 12), ...(r.other_faults || []).map((o) => o.service)];
+  keep.forEach((s) => names.add(s));
+  (r.impact?.blocks || []).slice(0, alerting.length <= 14 ? 99 : 4).forEach((b) => b.path.forEach((n) => names.add(n)));
   (top?.also_explains || []).forEach((o) => { o.path.forEach((n) => names.add(n)); names.add(o.symptom); });
   return { names };
 }
@@ -125,8 +130,24 @@ function draw(spec, animate = true) {
     keep.connectedEdges().filter((e) => keep.has(e.source()) && keep.has(e.target())).removeClass("gone");
     const vis = cy.elements().not(".gone");
     const roots = keep.filter((n) => n.data("exposed") || !n.incomers("node").some((m) => keep.has(m)));
-    const lay = vis.layout({ name: "breadthfirst", directed: true, roots, spacingFactor: 1.1, padding: 30, nodeDimensionsIncludeLabels: true,
-      animate, animationDuration: 350, fit: false });
+    // A wide fan-out (Train Ticket's gateway calls a dozen services) reads better as rings: the entry point in the
+    // middle, one ring per hop below it.
+    const depth = {};
+    if (keep.length > 10) {
+      let ring = roots.map((n) => n.id()), d = 0;
+      ring.forEach((id) => { depth[id] = 0; });
+      while (ring.length) {
+        d += 1;
+        ring = ring.flatMap((id) => cy.$id(id).outgoers("node").filter((m) => keep.has(m) && depth[m.id()] == null).map((m) => m.id()));
+        ring = [...new Set(ring)];
+        ring.forEach((id) => { depth[id] = d; });
+      }
+    }
+    const lay = keep.length > 10
+      ? vis.layout({ name: "concentric", concentric: (n) => 100 - (depth[n.id()] ?? 9), levelWidth: () => 1, minNodeSpacing: 18,
+          padding: 30, nodeDimensionsIncludeLabels: true, animate, animationDuration: 350, fit: false })
+      : vis.layout({ name: "breadthfirst", directed: true, roots, spacingFactor: 1.1, padding: 30, nodeDimensionsIncludeLabels: true,
+          animate, animationDuration: 350, fit: false });
     lay.one("layoutstop", () => fit());
     lay.run();
   } else {

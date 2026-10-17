@@ -44,18 +44,20 @@ def test_open_titles_do_not_leak_the_answer(boutique):
 
 
 def test_boutique_judge_score_is_what_we_publish(boutique):
-    """README and the header quote 15/18 first and 17/18 in the top three on the open Boutique cases."""
+    """README quotes 15/18 first and 16/18 in the top three on the open Boutique cases (eval v2: manifest edges
+    and anomaly strength; v1 scored 15 and 17 on traced edges alone)."""
     hit = hit3 = 0
     for c in seed.boutique_cases()["open"]:
         names = [s["service"] for s in agent.judged(boutique, c["id"])["suspects"]]
         hit += names[:1] == [c["root_cause"]]
         hit3 += c["root_cause"] in names[:3]
-    assert (hit, hit3) == (15, 17)
+    assert (hit, hit3) == (15, 16)
 
 
-def test_score_ties_go_to_whatever_started_first(boutique):
-    """INC-405 (RCAEval recommendationservice loss): two suspects score exactly the same. The one whose alert
-    came first leads, every time, instead of whichever row the database happened to return first."""
+def test_score_ties_go_to_whatever_started_first(boutique, monkeypatch):
+    """INC-405 (RCAEval recommendationservice loss): without anomaly strength, three suspects score exactly the
+    same. The one whose alert came first leads, every time, instead of whichever row the database returned first."""
+    monkeypatch.setattr(tools, "STRENGTH_W", 0.0)
     r = tools.rank_suspects(boutique, "INC-405")
     a, b = r["suspects"][:2]
     assert a["score"] == b["score"] and a["first_alert"] < b["first_alert"]
@@ -112,16 +114,17 @@ def test_impact_blocks_name_path_exposure_owner_and_alerting(fresh):
 
 def test_board_shows_the_same_verdict_as_the_case_file(boutique):
     """The board must show the skeptic-reviewed verdict the case file opens with, not the raw judge. On real
-    data they differ: INC-406's raw judge is highly confident in the wrong service and the skeptic lowers that
-    to medium; on INC-403 the skeptic overturns the leader (wrongly, as it happens)."""
+    data they differ: on INC-416 the skeptic overturns the judge's leader (rightly), on INC-418 it overturns it
+    wrongly, and INC-406 stays wrong at medium confidence."""
     with _client() as c:
         rows = {r["id"]: r for r in c.get("/api/boutique/board").json()}
-        for inc in ("INC-403", "INC-406"):
+        for inc in ("INC-416", "INC-418", "INC-406"):
             case = c.get(f"/api/boutique/incidents/{inc}/case").json()["ranking"]
             assert rows[inc]["leader_service"] == case["suspects"][0]["service"]
             assert rows[inc]["confidence"] == case["confidence"]
     assert rows["INC-406"]["confidence"] == "medium"
-    assert rows["INC-403"]["leader_service"] == "productcatalogservice"
+    assert rows["INC-416"]["leader_service"] == "currencyservice"       # the right answer, after the skeptic
+    assert rows["INC-418"]["leader_service"] == "cartservice"           # the wrong one, after the skeptic
     assert "leader" not in rows["INC-101"]
 
 

@@ -18,9 +18,12 @@ import json
 from pathlib import Path
 
 DATA = Path(__file__).resolve().parent.parent / "data" / "rcaeval"
-BASELINES = {"baro": "BARO", "nsigma": "NSigma", "circa": "CIRCA", "pc_randomwalk": "PC-RandomWalk",
-             "microrank": "MicroRank", "tracerca": "TraceRCA"}
-TRACE_ONLY = {"microrank", "tracerca"}
+# Run here with RCAEval's own code. Trace methods (MicroRank, TraceRCA) are not: RCAEval's main.py feeds every
+# method metrics only, so how their authors prepared spans for them isn't published, and our attempt did not
+# reproduce their Table 6 numbers; those are quoted as published instead. CIRCA and PC-RandomWalk take 5-10 minutes
+# per Train Ticket case here and were run on Online Boutique and Sock Shop only.
+BASELINES = {"baro": "BARO", "nsigma": "NSigma", "circa": "CIRCA", "pc_randomwalk": "PC-RandomWalk"}
+SKIP_TT = {"circa", "pc_randomwalk"}
 # RCAEval paper, Table 6: RE2 Train Ticket, AVERAGE over the six fault types (AC@1, AC@3, Avg@5), as published.
 PUBLISHED_RE2_TT = {
     "BARO": (0.67, 0.82, 0.80), "CIRCA": (0.32, 0.47, 0.46), "MicroRank": (0.16, 0.37, 0.31), "TraceRCA": (0.66, 0.79, 0.77),
@@ -68,8 +71,8 @@ def load(signals: tuple[str, ...] = ("metrics", "all")) -> tuple[dict, dict[str,
             continue
         res = json.loads(path.read_text())
         for case, m in meta.items():
-            if key in TRACE_ONLY and m["system"] == "ss":
-                continue                       # Sock Shop has no traces: a trace method can't run there
+            if key in SKIP_TT and m["system"] == "tt":
+                continue
             r = res.get(case)
             hits.setdefault(label, {})[case] = _ac(_dedupe(r.get("ranks") or []), m["truth"]) if r else None
     return meta, hits
@@ -103,7 +106,8 @@ def table(meta: dict, hits: dict) -> str:
         cells = []
         for g, cs in gs.items():
             s = scores(cs, hits[h])
-            cells.append("–" if s is None else f"{s['ac1']:.2f} / {s['avg5']:.2f}" + (f" ({s['missing']} n/a)" if s["missing"] else ""))
+            cells.append("–" if s is None else f"{s['ac1']:.2f} / {s['avg5']:.2f}" + (f" ({s['missing']} n/a)" if s["missing"] else "")
+                         + (f" (on {s['n']})" if s["n"] != len(cs) else ""))
         lines.append(f"| {'**' + h + '**' if h.startswith('Faultline') else h} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
