@@ -1,0 +1,11 @@
+[
+  {"id": "s1_title", "text": "This is Faultline. When production breaks, it answers two questions: which change caused it, and how did the failure get there?"},
+  {"id": "s2_graph", "text": "Faultline keeps a FalkorDB graph of the company: every service and who calls whom, the owners, every deploy, config change and feature flag, the alerts, and the incidents it has already solved. Node size is PageRank."},
+  {"id": "s3_inc301", "text": "Checkout is slow. Four agents take the incident, and they only talk through the graph. Triage finds what changed and what is alerting. The investigator scores every suspect. A cart deploy is closer and newer, but nothing below it alerted. Two hops down, a connection pool limit on payments-db was cut, and the alerts climb in order: payments-db, then payments, then checkout."},
+  {"id": "s4_verdict", "text": "Then a skeptic tries to knock the verdict over: what does it not explain, did the alerts arrive in the right order, is it clearly ahead? It holds, with high confidence, and every id and time in the answer is checked against the graph. And the same change also explains a second incident, refunds timing out, opened by another team. One root cause, one fix."},
+  {"id": "s5_approve", "text": "The agent can only propose. A person approves, and one approval mitigates both incidents."},
+  {"id": "s6_inc302", "text": "Mobile logins are failing, and seven services are alerting below it. Faultline runs weakly connected components on the alerting part of the graph: three separate groups, so three separate problems. The auth deploy explains its own group. The other two belong to incidents that are already open."},
+  {"id": "s7_inc303", "text": "And when nothing changed, it says so. The search cluster went red first. That is infrastructure, so it pages the team that owns it, instead of blaming whatever deployed last."},
+  {"id": "s8_eval", "text": "We measured it. On hundreds of planted faults it names the right cause first ninety six to ninety seven percent of the time. On thirty six real failures from the public RCAEval benchmark it is right eighty six percent of the time, and in its top three ninety four percent, level with the best simple baseline. We publish both."},
+  {"id": "s9_close", "text": "Faultline. One docker command, with or without Claude. Built on FalkorDB for Graph Hacks."}
+]

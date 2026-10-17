@@ -42,6 +42,8 @@ docker compose up -d
 
 Without a key, a fixed playbook calls the same graph tools in the same order, so the demo always works. The header shows which mode is running.
 
+**Demo video:** `demo/` regenerates it from the running app. Put one voiceover MP3 per scene of `demo/narration.json` in `data/demo/audio/` (with a `durations.txt` of `<scene> <seconds>` lines), then run `node demo/record.mjs data/demo/audio data/demo/rec` (needs `playwright-core@1.64.1`) to record the real UI in time with the voice, and `demo/mix.py` in any container with ffmpeg to lay in the audio, burn in captions and write `data/demo/faultline-demo.mp4`.
+
 ## Four incidents, four kinds of answer
 
 | Incident | What the graph shows | Verdict |
