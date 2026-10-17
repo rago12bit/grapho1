@@ -443,6 +443,97 @@ def export_fixture(reps=(1, 2, 3)) -> dict:
     return out
 
 
+def _series(metrics: pd.DataFrame, inject: int, col: str) -> list[float] | None:
+    """The z-score trace of one metric around the injection, the way the detector saw it."""
+    if col not in metrics:
+        return None
+    normal = metrics[metrics.time < inject]
+    base = normal[col].astype(float).to_numpy()
+    med = np.nanmedian(base)
+    scale = max(np.nanmedian(np.abs(base - med)) * 1.4826, 1e-6, abs(med) * 0.01)
+    lo, hi, step = SERIES
+    pts = metrics.set_index("time")[col].astype(float).reindex(range(inject + lo, inject + hi + 1), method="nearest").to_numpy()[::step]
+    return [round(float(x), 1) for x in np.clip(np.nan_to_num((pts - med) / scale), -50, 999)]
+
+
+def _median_rows(rows: list[dict], key: tuple[str, ...]) -> list[dict]:
+    """One row per key across cases: the median of each number."""
+    by: dict[tuple, list[dict]] = {}
+    for r in rows:
+        by.setdefault(tuple(r[k] for k in key), []).append(r)
+    out = []
+    for k, rs in sorted(by.items()):
+        row = dict(zip(key, k))
+        for f in ("calls", "rps", "p50_ms", "p99_ms", "err"):
+            row[f] = round(float(np.median([r[f] for r in rs])), 2)
+        row["cases"] = len(rs)
+        out.append(row)
+    return out
+
+
+def layers(cases: list[str]) -> dict:
+    """What the traces and logs add to a tenant: the operation graph (median over every case's normal period),
+    and per case the endpoint that slowed most on each service and the new error log patterns."""
+    ops, op_edges, per_case = [], [], {}
+    for case in cases:
+        sig = extract(case)
+        ops += sig["ops"]["ops"]
+        op_edges += sig["ops"]["edges"]
+        per_case[case] = {"hot_ops": {s: h for s, h in sig["hot_ops"].items() if h["ratio"] >= 2},
+                          "patterns": [{**{k: v for k, v in pt.items() if k != "first_at"},
+                                        "offset": pt["first_at"] - sig["inject"]} for pt in sig["patterns"]]}
+    return {"ops": _median_rows(ops, ("service", "op")),
+            "op_edges": _median_rows(op_edges, ("from_service", "from_op", "to_service", "to_op")), "per_case": per_case}
+
+
+def add_layers(path: Path = FIXTURE) -> dict:
+    """Add the operation graph, hot endpoints and log patterns to an existing fixture, alerts untouched."""
+    data = json.loads(path.read_text())
+    lay = layers([c["case"] for c in data["cases"]])
+    data["ops"], data["op_edges"] = lay["ops"], lay["op_edges"]
+    for c in data["cases"]:
+        c.update(lay["per_case"][c["case"]])
+    path.write_text(json.dumps(data, separators=(",", ":")))
+    return data
+
+
+SYSTEM_FIXTURE = {"ss": "sockshop.json", "tt": "trainticket.json"}
+
+
+def export_system(system: str, signals: str = "metrics") -> dict:
+    """A whole system (every RE2 and RE3 case) as a fixture for its tenant, built from the cached signals."""
+    idx = pd.read_parquet(DATA / "cases.parquet").set_index("case")
+    names = all_cases(("re2", "re3"), (system,))
+    edges: set[tuple[str, str]] = set()
+    cases = []
+    for case in names:
+        sig = extract(case)
+        edges |= {tuple(e) for e in sig["edges"]}
+        metrics = pd.read_parquet(DATA / case / "metrics.parquet")
+        alerts = []
+        for a in alerts_for(sig, signals):
+            alerts.append({"service": a["service"], "offset": a["at"] - sig["inject"], "signal": a["signal"],
+                           "z": round(min(a["z"], 1e6), 1), "series": _series(metrics, sig["inject"], a["metric"]),
+                           "sources": a.get("sources") or [f"metrics: {a['signal']}"]})
+        cases.append({"case": case, "suite": suite_of(case), "rep": int(case.rsplit("_", 1)[1]),
+                      "fault": str(idx.loc[case, "fault"]), "fault_description": str(idx.loc[case, "fault_description"]),
+                      "root_cause": str(idx.loc[case, "root_cause_service"]), "alerts": alerts})
+        print("exported", case, len(alerts), "alerts", flush=True)
+    lay = layers(names)
+    for c in cases:
+        c.update(lay["per_case"][c["case"]])
+    cfg = SYSTEMS[system]
+    out = {"source": f"RCAEval RE2/RE3-{system.upper()} ({cfg['title']}), https://huggingface.co/datasets/phamquiluan/RCAEval, MIT",
+           "system": system, "title": cfg["title"], "entry": cfg["entry"], "signals": signals,
+           "datastores": sorted(cfg["datastores"] | {s for e in edges for s in e if s.endswith(("-mongo", "-mysql"))}),
+           "detector": {"Z_ALERT": Z_ALERT, "SUSTAIN_S": SUSTAIN_S, "METRICS": list(METRICS), "MIN_CALLS": MIN_CALLS},
+           "series": {"from_s": SERIES[0], "to_s": SERIES[1], "step_s": SERIES[2]},
+           "edges": sorted(list(e) for e in edges), "ops": lay["ops"], "op_edges": lay["op_edges"], "cases": cases}
+    path = FIXTURE.parent / SYSTEM_FIXTURE[system]
+    path.write_text(json.dumps(out, separators=(",", ":")))
+    return out
+
+
 def table(res: dict) -> str:
     n = res["n"]
     lines = ["| method | top-1 | top-3 |", "|---|---|---|"]
@@ -468,9 +559,11 @@ def main() -> None:
     ap.add_argument("--systems", default="ob,ss,tt")
     ap.add_argument("--signals", choices=SIGNALS, default="metrics")
     ap.add_argument("--extract", action="store_true", help="only extract and cache signals.json per case")
+    ap.add_argument("--shard", default="0/1", help="i/n: this process takes every n-th case starting at i")
     a = ap.parse_args()
     if a.suites:
-        cases = all_cases(tuple(a.suites.split(",")), tuple(a.systems.split(",")))
+        i, n = (int(x) for x in a.shard.split("/"))
+        cases = all_cases(tuple(a.suites.split(",")), tuple(a.systems.split(",")))[i::n]
         if a.extract:
             for c in cases:
                 t = time.time()

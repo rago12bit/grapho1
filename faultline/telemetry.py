@@ -38,8 +38,8 @@ _MASKS = [
     (re.compile(r"(?<![\w<])-?\d+(?:\.\d+)?(?:ms|s|µs|us|ns|%|b|kb|mb)?\b", re.I), "<n>"),
     (re.compile(r"\s+"), " "),
 ]
-ERROR = re.compile(r"\b(?:error|err=(?!null)|exception|fail(?:ed|ure|s)?|refused|timeout|timed out|unavailable|unreachable|"
-                   r"panic|fatal|severe|denied|reset by peer|broken pipe|deadline)|"
+ERROR = re.compile(r"(?:\w*(?:error|exception)\b|\berr=(?!null)|\b(?:fail(?:ed|ure|s)?|refused|timeout|timed out|unavailable|unreachable|"
+                   r"panic|fatal|severe|denied|reset by peer|broken pipe|deadline))|"
                    r"^(?:GET|POST|PUT|DELETE|PATCH) \S+ 5\d\d\b|\bstatus(?:Code)?[=: ]+5\d\d\b", re.I)
 _HTTP = re.compile(r"^((?:GET|POST|PUT|DELETE|PATCH) \S+ )([1-5]\d\d)\b")
 NOISE_OP = re.compile(r"opentelemetry|TraceService/Export|grpc\.health|/health|healthz|/metrics$", re.I)
