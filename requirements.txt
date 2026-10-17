@@ -1,0 +1,6 @@
+falkordb==1.8.0
+anthropic==1.15.0
+mcp==2.3.0
+fastapi==0.143.3
+uvicorn==0.54.0
+pytest==9.1.1

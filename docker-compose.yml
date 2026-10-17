@@ -1,0 +1,25 @@
+# Faultline: FalkorDB + the agent API/UI.
+#   docker compose up -d --build        -> UI on http://localhost:8090, FalkorDB browser on :3003
+#   docker compose run --rm app pytest  -> tests against the same FalkorDB
+services:
+  falkordb:
+    image: falkordb/falkordb:v4.14.10
+    ports:
+      - "127.0.0.1:6381:6379"
+      - "127.0.0.1:3003:3000"   # FalkorDB browser: inspect the graph yourself
+    volumes:
+      - falkor_data:/var/lib/falkordb/data
+
+  app:
+    build: .
+    environment:
+      FALKOR_HOST: falkordb
+      FALKOR_PORT: "6379"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}   # optional: without it the offline investigator answers
+    depends_on:
+      - falkordb
+    ports:
+      - "127.0.0.1:8090:8090"
+
+volumes:
+  falkor_data:

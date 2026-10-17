@@ -1,0 +1,340 @@
+"""Synthetic companies. Everything here is invented; the same seed always builds the same graph.
+
+Kestrel Pay is the main demo: 24 services, 6 teams, two weeks of deploys/config/flag changes,
+alerts, eight resolved incidents (the agent's memory) and three open ones to investigate.
+Harbor Freight Co is a small second tenant that exists to show isolation between graphs.
+"""
+from __future__ import annotations
+
+import random
+from datetime import datetime, timezone
+
+from .db import Graph
+
+# Fixed "now" so demos and tests are reproducible.
+NOW = int(datetime(2026, 10, 17, 14, 0, tzinfo=timezone.utc).timestamp())
+MIN = 60
+HOUR = 3600
+DAY = 86400
+
+KESTREL = {
+    "title": "Kestrel Pay",
+    "teams": {
+        "checkout": "Checkout",
+        "payments": "Payments",
+        "identity": "Identity",
+        "discovery": "Discovery",
+        "platform": "Platform",
+        "data": "Data",
+    },
+    # handle, name, team, on_call
+    "people": [
+        ("priya", "Priya Raman", "checkout", True),
+        ("tomas", "Tomás Ferreira", "checkout", False),
+        ("ade", "Adebayo Okafor", "payments", True),
+        ("lin", "Lin Zhao", "payments", False),
+        ("marta", "Marta Kowalska", "payments", False),
+        ("sam", "Sam Whitfield", "identity", True),
+        ("noor", "Noor Haddad", "identity", False),
+        ("kenji", "Kenji Sato", "discovery", True),
+        ("elena", "Elena Rossi", "discovery", False),
+        ("ravi", "Ravi Menon", "platform", True),
+        ("jo", "Jo Ellison", "platform", False),
+        ("fatima", "Fatima Zahra", "data", True),
+        ("oscar", "Oscar Lund", "data", False),
+    ],
+    # name, team, kind, tier, internet_exposed
+    "services": [
+        ("web-frontend", "checkout", "service", 1, True),
+        ("mobile-bff", "identity", "service", 1, True),
+        ("api-gateway", "platform", "service", 1, True),
+        ("checkout", "checkout", "service", 1, False),
+        ("cart", "checkout", "service", 2, False),
+        ("pricing", "checkout", "service", 2, False),
+        ("payments", "payments", "service", 1, False),
+        ("ledger", "payments", "service", 1, False),
+        ("fraud-scoring", "payments", "service", 2, False),
+        ("auth", "identity", "service", 1, False),
+        ("users", "identity", "service", 1, False),
+        ("notifications", "platform", "service", 3, False),
+        ("search", "discovery", "service", 2, False),
+        ("catalog", "discovery", "service", 2, False),
+        ("inventory", "discovery", "service", 2, False),
+        ("payments-db", "payments", "datastore", 1, False),
+        ("ledger-db", "payments", "datastore", 1, False),
+        ("users-db", "identity", "datastore", 1, False),
+        ("session-redis", "identity", "datastore", 1, False),
+        ("feature-store", "data", "datastore", 2, False),
+        ("catalog-es", "discovery", "datastore", 2, False),
+        ("events-kafka", "platform", "datastore", 2, False),
+        ("stripe-api", "payments", "external", 1, False),
+        ("sendgrid", "platform", "external", 3, False),
+    ],
+    "calls": [
+        ("web-frontend", "api-gateway"), ("mobile-bff", "api-gateway"), ("mobile-bff", "auth"),
+        ("api-gateway", "auth"), ("api-gateway", "checkout"), ("api-gateway", "cart"),
+        ("api-gateway", "search"), ("api-gateway", "catalog"), ("api-gateway", "users"),
+        ("checkout", "cart"), ("checkout", "payments"), ("checkout", "pricing"),
+        ("checkout", "inventory"), ("checkout", "notifications"),
+        ("cart", "pricing"), ("cart", "session-redis"),
+        ("payments", "fraud-scoring"), ("payments", "ledger"), ("payments", "payments-db"),
+        ("payments", "stripe-api"),
+        ("fraud-scoring", "feature-store"),
+        ("ledger", "ledger-db"), ("ledger", "events-kafka"),
+        ("auth", "users"), ("auth", "session-redis"),
+        ("users", "users-db"),
+        ("search", "catalog-es"), ("catalog", "catalog-es"), ("catalog", "pricing"),
+        ("inventory", "events-kafka"),
+        ("notifications", "sendgrid"), ("notifications", "events-kafka"),
+    ],
+}
+
+HARBOR = {
+    "title": "Harbor Freight Co",
+    "teams": {"ops": "Ops"},
+    "people": [("dana", "Dana Brooks", "ops", True), ("li", "Li Wei", "ops", False)],
+    "services": [
+        ("tracking-web", "ops", "service", 1, True),
+        ("shipments", "ops", "service", 1, False),
+        ("shipments-db", "ops", "datastore", 1, False),
+    ],
+    "calls": [("tracking-web", "shipments"), ("shipments", "shipments-db")],
+}
+
+
+def _changes_kestrel(rng: random.Random) -> list[dict]:
+    """Background noise: routine deploys on every service over two weeks, plus the planted causes."""
+    people_by_team: dict[str, list[str]] = {}
+    for handle, _, team, _ in KESTREL["people"]:
+        people_by_team.setdefault(team, []).append(handle)
+    team_of = {s[0]: s[1] for s in KESTREL["services"]}
+    deployable = [s[0] for s in KESTREL["services"] if s[2] == "service"]
+    out: list[dict] = []
+    versions: dict[str, list[int]] = {s: [1, rng.randint(0, 9), 0] for s in deployable}
+    # Keep the background release line below the planted releases so rollbacks name a real prior version.
+    versions.update({"auth": [4, 1, 0], "cart": [3, 7, 0], "catalog": [5, 1, 0], "notifications": [2, 3, 0]})
+    for i in range(70):
+        svc = rng.choice(deployable)
+        at = NOW - rng.randint(3 * HOUR, 14 * DAY)
+        v = versions[svc]
+        v[2] += 1
+        out.append({
+            "id": f"D-{1000 + i}", "kind": "deploy", "service": svc, "at": at,
+            "author": rng.choice(people_by_team[team_of[svc]]),
+            "summary": rng.choice([
+                "dependency bumps", "logging tweaks", "refactor handlers", "add metrics",
+                "copy changes", "retry tuning", "small bug fixes", "upgrade base image",
+            ]),
+            "version": f"{v[0]}.{v[1]}.{v[2]}", "risk": "low",
+        })
+    return out
+
+
+def _planted_kestrel() -> tuple[list[dict], list[dict], list[dict]]:
+    """Changes, alerts and incidents with known answers. Times are relative to NOW."""
+    changes = [
+        # INC-301 truth: a pool size change two hops below checkout.
+        {"id": "C-5101", "kind": "config", "service": "payments-db", "at": NOW - 47 * MIN, "author": "lin",
+         "summary": "payments-db: pgbouncer max_client_conn 400 -> 60 (cost cleanup)",
+         "key": "pgbouncer.max_client_conn", "old": "400", "new": "60", "risk": "high"},
+        # INC-301 red herrings: a deploy one hop away with no alerts, and one off the dependency path.
+        {"id": "D-5102", "kind": "deploy", "service": "cart", "at": NOW - 52 * MIN, "author": "tomas",
+         "summary": "cart: move promo banner copy to CMS", "version": "3.8.1", "risk": "low"},
+        {"id": "D-5103", "kind": "deploy", "service": "catalog", "at": NOW - 41 * MIN, "author": "elena",
+         "summary": "catalog: ranking feature export v7", "version": "5.2.0", "risk": "medium"},
+        # INC-302 truth: auth deploy that changed token validation.
+        {"id": "D-5201", "kind": "deploy", "service": "auth", "at": NOW - 26 * MIN, "author": "noor",
+         "summary": "auth: switch JWT validation to rotating JWKS cache", "version": "4.2.0", "risk": "high"},
+        # INC-302 weaker suspect on the path: a flag flip in users 50 minutes before.
+        {"id": "F-5202", "kind": "flag", "service": "users", "at": NOW - 63 * MIN, "author": "sam",
+         "summary": "users: enable profile-v2 read path for 10%", "key": "profile_v2_reads", "old": "off",
+         "new": "10%", "risk": "medium"},
+        # INC-303: nothing changed on search's dependency path; a deploy elsewhere is the only change.
+        {"id": "D-5301", "kind": "deploy", "service": "notifications", "at": NOW - 18 * MIN, "author": "jo",
+         "summary": "notifications: template cleanup", "version": "2.4.3", "risk": "low"},
+    ]
+    alerts = [
+        {"id": "A-9001", "service": "checkout", "at": NOW - 38 * MIN, "severity": "page", "signal": "p99 latency 8.2s (SLO 1.5s)"},
+        {"id": "A-9002", "service": "payments", "at": NOW - 41 * MIN, "severity": "page", "signal": "p99 latency 7.9s, 9% 5xx"},
+        {"id": "A-9003", "service": "payments-db", "at": NOW - 44 * MIN, "severity": "warn", "signal": "client connections at limit (60/60), wait queue 340"},
+        {"id": "A-9004", "service": "web-frontend", "at": NOW - 36 * MIN, "severity": "warn", "signal": "checkout conversion -31%"},
+        {"id": "A-9101", "service": "auth", "at": NOW - 22 * MIN, "severity": "page", "signal": "401 rate 31% (baseline 2%)"},
+        {"id": "A-9102", "service": "mobile-bff", "at": NOW - 20 * MIN, "severity": "page", "signal": "login failures 30%"},
+        {"id": "A-9201", "service": "catalog-es", "at": NOW - 15 * MIN, "severity": "page", "signal": "cluster status RED, 2 of 6 shards unassigned"},
+        {"id": "A-9202", "service": "search", "at": NOW - 13 * MIN, "severity": "page", "signal": "zero-result rate 64%"},
+    ]
+    incidents = [
+        {"id": "INC-301", "title": "Checkout p99 latency 8s and 12% errors", "symptom": "checkout",
+         "started": NOW - 38 * MIN, "status": "open", "severity": "SEV1"},
+        {"id": "INC-302", "title": "30% of mobile logins failing", "symptom": "mobile-bff",
+         "started": NOW - 20 * MIN, "status": "open", "severity": "SEV1"},
+        {"id": "INC-303", "title": "Search returns empty results", "symptom": "search",
+         "started": NOW - 13 * MIN, "status": "open", "severity": "SEV2"},
+    ]
+    return changes, alerts, incidents
+
+
+def _history_kestrel() -> list[dict]:
+    """Resolved incidents: the agent's long-term memory. Each names its root-cause change and the fix."""
+    return [
+        {"id": "INC-212", "title": "Payments timeouts during evening peak", "symptom": "payments",
+         "days_ago": 61, "severity": "SEV1", "cause_service": "payments-db", "cause_kind": "config",
+         "cause_summary": "payments-db: pgbouncer pool_size 120 -> 40", "cause_author": "marta",
+         "fix": "revert_config", "fix_summary": "Reverted pool_size to 120; latency recovered in 4 min",
+         "lesson": "Pool/connection limits on payments-db must be load-tested against peak; checkout feels it first."},
+        {"id": "INC-188", "title": "Login 401 spike after auth release", "symptom": "auth",
+         "days_ago": 94, "severity": "SEV1", "cause_service": "auth", "cause_kind": "deploy",
+         "cause_summary": "auth 3.9.0: new token audience check", "cause_author": "noor",
+         "fix": "rollback", "fix_summary": "Rolled back auth to 3.8.4",
+         "lesson": "Token validation changes need a canary on mobile-bff traffic; mobile clients cache old tokens."},
+        {"id": "INC-240", "title": "Search degraded, catalog-es yellow", "symptom": "search",
+         "days_ago": 33, "severity": "SEV2", "cause_service": "catalog-es", "cause_kind": "infra",
+         "cause_summary": "catalog-es: node lost to host failure, shards unassigned", "cause_author": None,
+         "fix": "page_owner", "fix_summary": "Platform replaced the node; shards rebalanced",
+         "lesson": "catalog-es has no automatic shard reallocation; page Discovery on-call and Platform."},
+        {"id": "INC-197", "title": "Cart empty for some users", "symptom": "cart",
+         "days_ago": 80, "severity": "SEV2", "cause_service": "session-redis", "cause_kind": "config",
+         "cause_summary": "session-redis: maxmemory-policy changed to allkeys-lru", "cause_author": "ravi",
+         "fix": "revert_config", "fix_summary": "Restored volatile-lru",
+         "lesson": "session-redis eviction policy is load-bearing for cart and auth."},
+        {"id": "INC-221", "title": "Fraud checks timing out", "symptom": "payments",
+         "days_ago": 47, "severity": "SEV2", "cause_service": "fraud-scoring", "cause_kind": "deploy",
+         "cause_summary": "fraud-scoring 2.7.0: new model loaded synchronously", "cause_author": "ade",
+         "fix": "rollback", "fix_summary": "Rolled back to 2.6.3",
+         "lesson": "Model loads must be async; payments has a 2s budget for fraud-scoring."},
+        {"id": "INC-230", "title": "Ledger lag, payouts delayed", "symptom": "ledger",
+         "days_ago": 40, "severity": "SEV2", "cause_service": "events-kafka", "cause_kind": "config",
+         "cause_summary": "events-kafka: retention cut to 2h", "cause_author": "jo",
+         "fix": "revert_config", "fix_summary": "Retention restored to 72h",
+         "lesson": "Kafka retention changes need a consumer-lag review from Payments."},
+        {"id": "INC-251", "title": "Order emails delayed", "symptom": "notifications",
+         "days_ago": 22, "severity": "SEV3", "cause_service": "sendgrid", "cause_kind": "external",
+         "cause_summary": "SendGrid regional outage", "cause_author": None,
+         "fix": "page_owner", "fix_summary": "Waited out the provider outage; queued emails flushed",
+         "lesson": "Provider outages show up as no internal change on the path."},
+        {"id": "INC-260", "title": "Checkout errors after pricing release", "symptom": "checkout",
+         "days_ago": 15, "severity": "SEV2", "cause_service": "pricing", "cause_kind": "deploy",
+         "cause_summary": "pricing 2.3.0: currency rounding change", "cause_author": "tomas",
+         "fix": "rollback", "fix_summary": "Rolled back pricing to 2.2.9",
+         "lesson": "Pricing changes reach checkout through two paths (direct and via cart)."},
+    ]
+
+
+def _write_org(g: Graph, spec: dict) -> None:
+    g.write("CREATE (:Org {title: $title})", {"title": spec["title"]})
+    g.write("UNWIND $teams AS t CREATE (:Team {id: t.id, name: t.name})",
+            {"teams": [{"id": k, "name": v} for k, v in spec["teams"].items()]})
+    g.write("""
+        UNWIND $people AS p
+        MATCH (t:Team {id: p.team})
+        CREATE (:Person {handle: p.handle, name: p.name, on_call: p.on_call})-[:MEMBER_OF]->(t)""",
+            {"people": [{"handle": h, "name": n, "team": t, "on_call": oc} for h, n, t, oc in spec["people"]]})
+    g.write("""
+        UNWIND $svcs AS s
+        MATCH (t:Team {id: s.team})
+        CREATE (:Service {name: s.name, kind: s.kind, tier: s.tier, internet_exposed: s.exposed})-[:OWNED_BY]->(t)""",
+            {"svcs": [{"name": n, "team": t, "kind": k, "tier": tier, "exposed": e}
+                      for n, t, k, tier, e in spec["services"]]})
+    g.write("""
+        UNWIND $calls AS c
+        MATCH (a:Service {name: c[0]}), (b:Service {name: c[1]})
+        CREATE (a)-[:CALLS]->(b)""", {"calls": [list(c) for c in spec["calls"]]})
+
+
+def _write_changes(g: Graph, changes: list[dict]) -> None:
+    g.write("""
+        UNWIND $changes AS c
+        MATCH (s:Service {name: c.service})
+        OPTIONAL MATCH (p:Person {handle: c.author})
+        CREATE (ch:Change {id: c.id, kind: c.kind, at: c.at, summary: c.summary, risk: c.risk,
+                           version: c.version, key: c.key, old: c.old, new: c.new})-[:CHANGED]->(s)
+        FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | CREATE (p)-[:MADE]->(ch))""",
+            {"changes": [{**{"version": None, "key": None, "old": None, "new": None}, **c} for c in changes]})
+
+
+def _write_alerts(g: Graph, alerts: list[dict]) -> None:
+    g.write("""
+        UNWIND $alerts AS a
+        MATCH (s:Service {name: a.service})
+        CREATE (:Alert {id: a.id, at: a.at, severity: a.severity, signal: a.signal})-[:FIRED_ON]->(s)""",
+            {"alerts": alerts})
+
+
+def _write_incidents(g: Graph, incidents: list[dict]) -> None:
+    g.write("""
+        UNWIND $incs AS i
+        MATCH (s:Service {name: i.symptom})
+        CREATE (:Incident {id: i.id, title: i.title, started: i.started, status: i.status,
+                           severity: i.severity})-[:SYMPTOM_ON]->(s)""", {"incs": incidents})
+
+
+def _write_history(g: Graph, history: list[dict]) -> None:
+    rows = []
+    for h in history:
+        started = NOW - h["days_ago"] * DAY
+        rows.append({**h, "started": started, "cause_id": f"H-{h['id']}", "cause_at": started - 20 * MIN,
+                     "resolved": started + 50 * MIN})
+    g.write("""
+        UNWIND $rows AS h
+        MATCH (sym:Service {name: h.symptom}), (cs:Service {name: h.cause_service})
+        CREATE (i:Incident {id: h.id, title: h.title, started: h.started, resolved: h.resolved,
+                            status: 'resolved', severity: h.severity})-[:SYMPTOM_ON]->(sym)
+        CREATE (c:Change {id: h.cause_id, kind: h.cause_kind, at: h.cause_at, summary: h.cause_summary,
+                          risk: 'high'})-[:CHANGED]->(cs)
+        CREATE (i)-[:ROOT_CAUSE]->(c)
+        CREATE (i)-[:RESOLVED_BY]->(:Action {id: 'ACT-' + h.id, kind: h.fix, summary: h.fix_summary,
+                                             status: 'executed', at: h.resolved})
+        CREATE (i)-[:TAUGHT]->(:Lesson {text: h.lesson, at: h.resolved})
+        WITH h, c
+        OPTIONAL MATCH (p:Person {handle: h.cause_author})
+        FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | CREATE (p)-[:MADE]->(c))""", {"rows": rows})
+
+
+def _write_indexes(g: Graph) -> None:
+    for label, prop in [("Service", "name"), ("Change", "id"), ("Incident", "id"), ("Person", "handle"),
+                        ("Team", "id"), ("Alert", "id"), ("Action", "id")]:
+        g.write(f"CREATE INDEX FOR (n:{label}) ON (n.{prop})")
+
+
+def build(tenant: str, *, force: bool = False) -> dict:
+    g = Graph(tenant)
+    if g.exists():
+        if not force:
+            return {"tenant": tenant, "built": False}
+        g.drop()
+    _write_indexes(g)
+    if tenant == "kestrel":
+        rng = random.Random(7)
+        _write_org(g, KESTREL)
+        changes, alerts, incidents = _planted_kestrel()
+        _write_changes(g, _changes_kestrel(rng) + changes)
+        _write_alerts(g, alerts)
+        _write_incidents(g, incidents)
+        _write_history(g, _history_kestrel())
+    elif tenant == "harbor":
+        _write_org(g, HARBOR)
+        _write_changes(g, [{"id": "D-1", "kind": "deploy", "service": "shipments", "at": NOW - 30 * MIN,
+                            "author": "li", "summary": "shipments: new carrier adapter", "version": "1.4.0",
+                            "risk": "medium"}])
+        _write_alerts(g, [{"id": "A-1", "service": "shipments", "at": NOW - 25 * MIN, "severity": "page",
+                           "signal": "5xx 18%"}])
+        _write_incidents(g, [{"id": "INC-7", "title": "Tracking page errors", "symptom": "tracking-web",
+                              "started": NOW - 24 * MIN, "status": "open", "severity": "SEV2"}])
+    else:
+        raise ValueError(f"unknown tenant {tenant}")
+    counts = g.read("MATCH (n) RETURN count(n) AS nodes")[0]["nodes"]
+    edges = g.read("MATCH ()-[r]->() RETURN count(r) AS edges")[0]["edges"]
+    return {"tenant": tenant, "built": True, "nodes": counts, "edges": edges}
+
+
+TENANTS = {"kestrel": KESTREL["title"], "harbor": HARBOR["title"]}
+
+
+def build_all(force: bool = False) -> list[dict]:
+    return [build(t, force=force) for t in TENANTS]
+
+
+if __name__ == "__main__":
+    import sys
+    for r in build_all(force="--force" in sys.argv):
+        print(r)

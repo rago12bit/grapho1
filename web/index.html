@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Faultline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff7a45' stroke-width='3'/></svg>">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>
+      <span>Faultline</span>
+    </div>
+    <nav id="tenants" class="tenants" aria-label="Company"></nav>
+    <div class="status">
+      <span id="db-pill" class="pill"><i></i><b>FalkorDB</b> <span id="db-stats">connecting…</span></span>
+      <span id="mode-pill" class="pill mode"></span>
+      <button id="reset" class="ghost" title="Rebuild the demo graphs">Reset demo</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="left">
+      <div class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-tab="incidents">Incidents</button>
+        <button role="tab" class="tab" data-tab="memory">Memory</button>
+      </div>
+      <section id="tab-incidents" class="tabpane">
+        <ul id="incident-list" class="incidents"></ul>
+      </section>
+      <section id="tab-memory" class="tabpane" hidden>
+        <p class="hint">Resolved incidents the agent learns from. Every new investigation checks these for precedent.</p>
+        <ul id="memory-list" class="memory"></ul>
+      </section>
+      <form id="ask" class="ask">
+        <label for="q">Ask the graph</label>
+        <div class="askrow">
+          <input id="q" placeholder="what breaks if ledger-db goes down?" autocomplete="off">
+          <button type="submit">Ask</button>
+        </div>
+        <div class="chips">
+          <button type="button" data-q="who owns payments-db?">who owns payments-db?</button>
+          <button type="button" data-q="what breaks if ledger-db goes down?">what breaks if ledger-db goes down?</button>
+          <button type="button" data-q="has catalog-es failed before?">has catalog-es failed before?</button>
+          <button type="button" data-q="most critical services">most critical services</button>
+        </div>
+      </form>
+    </aside>
+
+    <section class="center">
+      <div id="cy" aria-label="Service call graph"></div>
+      <div class="legend">
+        <span><i class="dot symptom"></i>symptom</span>
+        <span><i class="dot suspect"></i>root cause</span>
+        <span><i class="dot alerting"></i>alerting</span>
+        <span><i class="line"></i>failure path</span>
+        <span class="muted">node size = PageRank</span>
+      </div>
+      <div id="caption" class="caption" hidden></div>
+    </section>
+
+    <aside class="right" id="case">
+      <div class="empty">
+        <h1>Which change broke production, and how did it get there?</h1>
+        <p>Faultline walks a FalkorDB graph of services, owners, deploys, config changes, alerts and past incidents. It follows the failure from the symptom down the call graph to the change that caused it, shows every hop and every query, and proposes a fix that waits for your approval.</p>
+        <p class="muted">Pick an incident on the left to start.</p>
+      </div>
+    </aside>
+  </main>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
