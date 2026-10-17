@@ -369,7 +369,8 @@ function renderActions(inc) {
         <div class="k">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}${(a.covers || []).length > 1 ? ` · covers ${a.covers.map(esc).join(", ")}` : ""}</div>
         <div class="s">${esc(a.summary)}</div>
         ${a.status === "proposed" ? `<div class="btns"><button class="primary" data-a="${esc(a.id)}" data-ok="1">Approve</button><button class="ghost" data-a="${esc(a.id)}" data-ok="0">Reject</button></div>`
-          : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · written to the graph (simulated, no real systems touched)" : ""}</div>`}
+          : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · applied to the simulated system, no real systems touched" : ""}</div>
+            ${a.verified === true ? `<div class="verify ok">✓ Verified: ${esc(a.verification)}</div>` : a.verified === false ? `<div class="verify no">✗ Did not work: ${esc(a.verification)}. The incident is open again.</div>` : ""}`}
       </div>`).join("")}</div>` : ""}
     ${inc.status !== "resolved" && (executed || f) ? `<div class="section resolve"><h3>Close it and teach the graph</h3>
       <textarea id="lesson">${esc(f ? (f.change_id ? `${f.change_id} on ${f.root_cause_service} caused this. ` : `Infrastructure failure on ${f.root_cause_service}. `) : "")}</textarea>

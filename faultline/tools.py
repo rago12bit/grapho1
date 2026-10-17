@@ -86,7 +86,8 @@ def alerts_near(g: Graph, services: list[str], start: int, window_min: int = WIN
     return g.read("""
         MATCH (a:Alert)-[:FIRED_ON]->(s:Service)
         WHERE s.name IN $svcs AND a.at >= $from AND a.at <= $to
-        RETURN a.id AS id, s.name AS service, a.at AS at, a.severity AS severity, a.signal AS signal
+        RETURN a.id AS id, s.name AS service, a.at AS at, a.severity AS severity, a.signal AS signal,
+               a.cleared_at AS cleared_at
         ORDER BY a.at""", {"svcs": services, "from": start - window_min * 60, "to": start + 30 * 60})
 
 
@@ -552,7 +553,8 @@ def list_actions(g: Graph, incident_id: str) -> list[dict]:
         OPTIONAL MATCH (a)-[:FOR]->(all:Incident)
         WITH a, s, collect(DISTINCT all.id) AS covers
         RETURN a.id AS id, a.kind AS kind, a.summary AS summary, a.reason AS reason, a.status AS status,
-               a.at AS at, a.decided_by AS decided_by, s.name AS target, a.change_id AS change_id, covers
+               a.at AS at, a.decided_by AS decided_by, s.name AS target, a.change_id AS change_id, covers,
+               a.verified AS verified, a.verification AS verification
         ORDER BY a.at""", {"inc": incident_id})
 
 
@@ -967,3 +969,49 @@ def alert_clusters(g: Graph, incident_id: str) -> dict:
                        "has_symptom": sym in svcs})
     groups.sort(key=lambda x: (not x["has_symptom"], x["first_alert"]))
     return {"incident": incident_id, "symptom": sym, "groups": groups, "count": len(groups)}
+
+
+# --- verifying a fix --------------------------------------------------------------------------------
+
+def verify_fix(g: Graph, action_id: str) -> dict:
+    """Did the approved fix work? Read only what monitoring reports: for every incident the fix covers, take the
+    alerts in that incident's alert cone (the alerting services joined to its symptom through other alerting
+    services) and check each one cleared after the fix. All cleared: verified. Any still firing: the fix did
+    not work, so the incident goes back to open and the action is marked as not verified."""
+    act = g.read("""
+        MATCH (a:Action {id: $id})
+        RETURN a.status AS status, a.decided_at AS decided_at, a.kind AS kind""", {"id": action_id})
+    if not act:
+        raise KeyError(f"no action {action_id}")
+    if act[0]["status"] != "executed":
+        raise ValueError(f"{action_id} is {act[0]['status']}, not executed")
+    fixed_at = act[0]["decided_at"]
+    covers = [r["id"] for r in g.read("MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id ORDER BY id",
+                                      {"id": action_id})]
+    results = []
+    for inc_id in covers:
+        inc = get_incident(g, inc_id)
+        sym, start = inc["symptom"], inc["started"]
+        area = [sym] + [d["service"] for d in dependencies(g, sym)]
+        alerts = [a for a in alerts_near(g, area, start) if a["at"] <= fixed_at]
+        cone = _alert_cone(g, sym, set(area), alerts)
+        watched = [a for a in alerts if a["service"] in cone]
+        cleared = sorted({a["service"] for a in watched if a["cleared_at"] is not None and a["cleared_at"] >= fixed_at})
+        firing = sorted({a["service"] for a in watched if a["cleared_at"] is None})
+        verdict = "verified" if watched and not firing else "not verified" if firing else "nothing to check"
+        results.append({"incident": inc_id, "verdict": verdict, "cleared": cleared, "still_firing": firing})
+    ok = bool(results) and all(r["verdict"] == "verified" for r in results)
+    summary = "; ".join(
+        f"{r['incident']}: " + ("all alerts cleared (" + ", ".join(r["cleared"]) + ")" if r["verdict"] == "verified"
+                                else "still firing: " + ", ".join(r["still_firing"]) if r["still_firing"]
+                                else "no alerts to check")
+        for r in results)
+    g.write("MATCH (a:Action {id: $id}) SET a.verified = $ok, a.verification = $summary",
+            {"id": action_id, "ok": ok, "summary": summary})
+    for r in results:
+        if r["verdict"] == "verified":
+            g.write("MATCH (i:Incident {id: $id}) WHERE i.status IN ['open', 'mitigated'] SET i.status = 'mitigated'",
+                    {"id": r["incident"]})
+        elif r["verdict"] == "not verified":
+            g.write("MATCH (i:Incident {id: $id}) WHERE i.status = 'mitigated' SET i.status = 'open'", {"id": r["incident"]})
+    return {"action": action_id, "verified": ok, "summary": summary, "incidents": results}

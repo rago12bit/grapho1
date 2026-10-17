@@ -1,5 +1,7 @@
 # Faultline
 
+[![tests](https://github.com/rago12bit/grapho1/actions/workflows/ci.yml/badge.svg)](https://github.com/rago12bit/grapho1/actions/workflows/ci.yml)
+
 **An on-call agent that blames a change only when alerts trace an unbroken path from it up to the symptom, and says so when nothing changed at all.**
 
 Most "what broke?" tools blame the most recent deploy near the failing service. Faultline walks a FalkorDB graph of services, owners, deploys, config changes, feature flags, alerts and past incidents, and asks a stricter question: *is there a path in the call graph from this change to the symptom where every service along the way started alerting after the change landed?* Only those changes are real suspects. It shows the path hop by hop with every Cypher query it ran, proposes a fix that waits for a human, and writes what it learned back into the graph for the next incident.
@@ -167,6 +169,7 @@ The 18 cases per repetition are every fault type (CPU, memory, disk, delay, pack
 - **Claude** (`claude-opus-5-5`, adaptive thinking) plays each role with only that role's tools. The **offline playbook** runs the same roles and tools in a fixed order, so the demo works without a key. Both return the same steps, labelled by agent, with the Cypher behind each.
 - **Memory**: every investigation is stored as an `Investigation` node. The next run on the same incident starts by reading it. Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson`, which feed the precedent factor of the next investigation. The Memory tab shows what the agent has learned.
 - **Actions**: the agent can only propose (`rollback`, `revert_config`, `disable_flag`, `page_owner`). A person approves in the UI. Approval writes a remediation change to the graph and marks the incident mitigated. It is a simulation: no real system is touched. Re-running an investigation never stacks duplicate proposals.
+- **Verification**: approving a fix is not the end. The fix is applied to a simulated system (`faultline/world.py`, which stands in for production and is the only place the true cause of each alert is written down), and monitoring reports which alerts recover. Faultline then verifies from the graph alone: every alert in each covered incident's alert cone must have cleared after the fix. If any is still firing, the fix is marked as not working and the incident reopens. Approving the pool revert clears INC-301 and INC-304 and nothing else; approving a rollback of the unrelated `cart` deploy leaves checkout, payments and payments-db firing and reopens INC-301. A test checks that no agent tool or MCP tool imports the simulator's answer key.
 - **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_harbor`). Isolation comes from separate graphs, not a property filter, and a test proves it.
 
 ## MCP
@@ -190,6 +193,8 @@ faultline/tools.py       graph tools, the judge, actions, memory
 faultline/agent.py       the three agents (Claude or offline playbook) + question router
 faultline/eval.py        planted-fault accuracy eval with ablations, baselines and a learning run
 faultline/rcaeval.py     RCAEval public-benchmark runner: graph from traces, alerts from metrics, score
+faultline/world.py       the simulated system: true causes, and which alerts a fix clears (agents never read it)
+.github/workflows/ci.yml tests + a 60-scenario eval against a real FalkorDB on every push
 faultline/mcp_server.py  MCP server over the same tools
 faultline/api.py         FastAPI + static UI
 web/                     UI (Cytoscape.js)

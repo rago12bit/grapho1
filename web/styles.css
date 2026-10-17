@@ -223,6 +223,9 @@ pre.cypher .kw { color: var(--accent); }
 .action .done { font-family: var(--mono); font-size: 12px; }
 .action.executed { border-color: rgba(76,195,138,.4); }
 .action.executed .done { color: var(--green); }
+.verify { margin-top: 6px; font-size: 12px; padding: 6px 8px; border-radius: 6px; }
+.verify.ok { color: var(--green); background: rgba(76,195,138,.08); border: 1px solid rgba(76,195,138,.3); }
+.verify.no { color: var(--red); background: rgba(255,93,93,.08); border: 1px solid rgba(255,93,93,.35); }
 .action.rejected .done { color: var(--muted); }
 .resolve textarea {
   width: 100%; min-height: 64px; background: var(--bg); color: var(--text); border: 1px solid var(--line-2);

@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, seed, tools
+from . import agent, seed, tools, world
 from .db import Graph, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -96,7 +96,17 @@ def resolve(tenant: str, incident_id: str, body: Resolution):
 
 @app.post("/api/{tenant}/actions/{action_id}")
 def decide(tenant: str, action_id: str, body: Decision):
-    return _guard(tools.decide_action, _g(tenant), action_id, body.approve, body.who)
+    """A person approves or rejects. On approval the fix is applied to the simulated system (world.py, which
+    stands in for production), then verified from the alerts in the graph alone."""
+    g = _g(tenant)
+    out = _guard(tools.decide_action, g, action_id, body.approve, body.who)
+    if out["status"] == "executed":
+        a = g.read("""MATCH (a:Action {id: $id})-[:TARGETS]->(s:Service)
+                      RETURN a.kind AS kind, s.name AS target, a.change_id AS change_id, a.decided_at AS at""",
+                   {"id": action_id})[0]
+        world.apply_fix(g, tenant, a["kind"], a["target"], a["change_id"], a["at"])
+        out["verification"] = tools.verify_fix(g, action_id)
+    return out
 
 
 @app.post("/api/{tenant}/ask")

@@ -405,3 +405,57 @@ def test_investigation_uses_the_algorithms(fresh):
     ev = " ".join(out["findings"]["evidence"])
     assert "3 separate connected groups (WCC)" in ev
     assert out["claim_check"]["supported"] == out["claim_check"]["total"]
+
+
+def _client():
+    return TestClient(__import__("faultline.api", fromlist=["app"]).app)
+
+
+def test_right_fix_is_verified_from_the_alerts(fresh):
+    with _client() as c:
+        c.post("/api/kestrel/incidents/INC-301/investigate")
+        act = c.get("/api/kestrel/incidents/INC-301").json()["actions"][0]
+        out = c.post(f"/api/kestrel/actions/{act['id']}", json={"approve": True, "who": "t"}).json()
+    v = out["verification"]
+    assert v["verified"] and [r["incident"] for r in v["incidents"]] == ["INC-301", "INC-304"]
+    assert v["incidents"][0]["cleared"] == ["checkout", "payments", "payments-db"]
+    assert {tools.get_incident(fresh, i)["status"] for i in ("INC-301", "INC-304")} == {"mitigated"}
+    # only the alerts that change caused recovered; INC-302's auth alerts still fire
+    firing = {r["id"] for r in fresh.read("MATCH (a:Alert) WHERE a.cleared_at IS NULL RETURN a.id AS id")}
+    assert {"A-9101", "A-9102", "A-9201"} <= firing and "A-9003" not in firing
+
+
+def test_wrong_fix_is_caught_and_the_incident_reopens(fresh):
+    wrong = tools.propose_action(fresh, "INC-301", "rollback", "cart", "Roll back cart", change_id="D-5102")
+    with _client() as c:
+        out = c.post(f"/api/kestrel/actions/{wrong['id']}", json={"approve": True, "who": "t"}).json()
+    v = out["verification"]
+    assert not v["verified"] and set(v["incidents"][0]["still_firing"]) == {"checkout", "payments", "payments-db"}
+    assert tools.get_incident(fresh, "INC-301")["status"] == "open"
+    shown = next(a for a in tools.list_actions(fresh, "INC-301") if a["id"] == wrong["id"])
+    assert shown["verified"] is False and "still firing" in shown["verification"]
+
+
+def test_paging_the_owner_fixes_an_infra_failure(fresh):
+    page = tools.propose_action(fresh, "INC-303", "page_owner", "catalog-es", "Page Discovery")
+    with _client() as c:
+        out = c.post(f"/api/kestrel/actions/{page['id']}", json={"approve": True, "who": "t"}).json()
+    assert out["verification"]["verified"]
+    assert tools.get_incident(fresh, "INC-303")["status"] == "mitigated"
+
+
+def test_the_agent_never_sees_the_ground_truth():
+    """The verifier and every agent tool must judge from the graph alone, never from world.py's answer key."""
+    import ast
+    import inspect
+    from faultline import mcp_server
+    for mod in (tools, agent, mcp_server):
+        src = inspect.getsource(mod)
+        imported = set()
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, ast.ImportFrom):
+                imported |= {node.module or ""} | {a.name for a in node.names}
+            elif isinstance(node, ast.Import):
+                imported |= {a.name for a in node.names}
+        assert not {"world", "faultline.world"} & imported, mod.__name__
+        assert "TRUE_CAUSES" not in src, mod.__name__
