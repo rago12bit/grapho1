@@ -154,9 +154,11 @@ await scene("s4_verdict", async () => {
 });
 
 await scene("s5_approve", async () => {
+  await page.waitForSelector("button[data-a][data-ok='1']", { timeout: 30000 });
   await scrollRight(".action", "center");
   await pause(1200);
   await click("button[data-a][data-ok='1']");
+  await page.waitForSelector(".verify", { timeout: 30000 });   // approved and verified before moving on
   await pause(1000);
   await page.mouse.move(200, 300, { steps: 20 });
 });
