@@ -22,6 +22,15 @@ TRUE_CAUSES: dict[str, dict[str, str]] = {
     },
     "harbor": {"A-1": "D-1"},
 }
+
+
+def _boutique_truth() -> dict[str, str]:
+    # RCAEval's answer key: every alert in a case was caused by the fault injected on its root-cause service.
+    from .seed import boutique_cases
+    return {a["id"]: f"infra:{c['root_cause']}" for c in boutique_cases()["open"] for a in c["alerts"]}
+
+
+TRUE_CAUSES["boutique"] = _boutique_truth()
 RECOVERY_S = 4 * MIN   # monitoring reports recovery a few minutes after a correct fix
 
 

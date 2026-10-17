@@ -112,7 +112,7 @@ def detect(metrics: pd.DataFrame, inject: int) -> list[dict]:
             continue
         peak = float(np.nanmax(z))
         if svc not in best or onset < best[svc]["at"]:
-            best[svc] = {"service": svc, "at": onset, "signal": f"{kind} z={peak:.0f}", "z": peak}
+            best[svc] = {"service": svc, "at": onset, "signal": f"{kind} z={peak:.0f}", "z": peak, "metric": col}
     return sorted(best.values(), key=lambda a: a["at"])
 
 
@@ -179,6 +179,48 @@ def run(cases: list[str]) -> dict:
             "settings": {"Z_ALERT": Z_ALERT, "SUSTAIN_S": SUSTAIN_S, "METRICS": METRICS, "MIN_CALLS": MIN_CALLS}}
 
 
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "boutique.json"
+SERIES = (-60, 240, 5)   # seconds around the injection, step: the z-score trace kept for each alert
+
+
+def export_fixture(reps=(1, 2, 3)) -> dict:
+    """Everything the Boutique tenant needs from RCAEval, small enough to ship in the repo: the union of the
+    traced call graph over every case, and per case the detector's alerts (time relative to the injection, plus
+    a z-score trace of the metric that fired) and RCAEval's answer key. No raw metrics or traces are kept."""
+    idx = pd.read_parquet(DATA / "cases.parquet").set_index("case")
+    edges: set[tuple[str, str]] = set()
+    cases = []
+    for rep in reps:
+        for case in selection(rep):
+            d = DATA / case
+            inject = int((d / "inject_time.txt").read_text().strip())
+            metrics = pd.read_parquet(d / "metrics.parquet")
+            traces = pd.read_parquet(d / "traces.parquet", columns=["spanID", "parentSpanID", "serviceName"])
+            edges |= set(call_edges(traces))
+            normal = metrics[metrics.time < inject]
+            alerts = []
+            for a in detect(metrics, inject):
+                base = normal[a["metric"]].astype(float).to_numpy()
+                med = np.nanmedian(base)
+                scale = max(np.nanmedian(np.abs(base - med)) * 1.4826, 1e-6, abs(med) * 0.01)
+                col = metrics.set_index("time")[a["metric"]].astype(float)
+                lo, hi, step = SERIES
+                pts = col.reindex(range(inject + lo, inject + hi + 1), method="nearest").to_numpy()[::step]
+                z = np.clip(np.nan_to_num((pts - med) / scale), -50, 999)
+                alerts.append({"service": a["service"], "offset": a["at"] - inject, "signal": a["signal"],
+                               "z": round(a["z"], 1), "series": [round(float(x), 1) for x in z]})
+            cases.append({"case": case, "rep": rep, "fault": str(idx.loc[case, "fault"]),
+                          "root_cause": str(idx.loc[case, "root_cause_service"]), "alerts": alerts})
+            print("exported", case, len(alerts), "alerts")
+    out = {"source": "RCAEval RE2-OB (Online Boutique), https://huggingface.co/datasets/phamquiluan/RCAEval, MIT",
+           "detector": {"Z_ALERT": Z_ALERT, "SUSTAIN_S": SUSTAIN_S, "METRICS": list(METRICS), "MIN_CALLS": MIN_CALLS},
+           "series": {"from_s": SERIES[0], "to_s": SERIES[1], "step_s": SERIES[2]},
+           "edges": sorted(list(e) for e in edges), "cases": cases}
+    FIXTURE.parent.mkdir(exist_ok=True)
+    FIXTURE.write_text(json.dumps(out, separators=(",", ":")))
+    return out
+
+
 def table(res: dict) -> str:
     n = res["n"]
     lines = ["| method | top-1 | top-3 |", "|---|---|---|"]
@@ -199,7 +241,12 @@ def main() -> None:
     ap.add_argument("--download", action="store_true")
     ap.add_argument("--rep", type=int, default=1, help="which repetition of each fault/service pair (1-3)")
     ap.add_argument("--json", type=Path, default=None)
+    ap.add_argument("--fixture", action="store_true", help="write faultline/fixtures/boutique.json from all 54 cases")
     a = ap.parse_args()
+    if a.fixture:
+        out = export_fixture()
+        print(len(out["cases"]), "cases,", len(out["edges"]), "edges ->", FIXTURE)
+        return
     cases = selection(a.rep)
     if a.download:
         download(cases)

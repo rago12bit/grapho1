@@ -54,10 +54,15 @@ class Resolution(BaseModel):
     lesson: str = Field(min_length=3, max_length=1000)
 
 
+# Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
+# "Public data"); update them when those numbers change.
+PROOF = {"tests": 52, "planted": "96–97.5%", "real": "31/36"}
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "graphs": list_tenants(), "claude": agent.claude_available(), "model": agent.MODEL,
-            "now": tools.now()}
+            "now": tools.now(), "proof": PROOF}
 
 
 @app.get("/api/tenants")
@@ -81,6 +86,36 @@ def incident(tenant: str, incident_id: str):
     inc = _guard(tools.get_incident, g, incident_id)
     return {**inc, "actions": tools.list_actions(g, incident_id),
             "investigations": tools.past_investigations(g, incident_id)}
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/case")
+def case(tenant: str, incident_id: str):
+    """Read-only case file for an incident, ready the moment it is opened."""
+    _guard(tools.get_incident, _g(tenant), incident_id)
+    return agent.preview(tenant, incident_id)
+
+
+@app.get("/api/{tenant}/board")
+def board(tenant: str):
+    """The risk board: every unresolved incident with its leading suspect and how far it reaches."""
+    g = _g(tenant)
+    out = []
+    for inc in tools.list_incidents(g, None):
+        row = dict(inc)
+        if inc["status"] != "resolved":
+            r = tools.rank_suspects(g, inc["id"], limit=2)
+            top = r["suspects"][0] if r["suspects"] else None
+            row["leader"] = tools._label(top) if top else None
+            row["leader_service"] = top["service"] if top else None
+            row["confidence"] = r["confidence"]
+            row["explains"] = top["footprint"]["explained"] if top else []
+        out.append(row)
+    return out
+
+
+@app.get("/api/{tenant}/company")
+def company(tenant: str):
+    return tools.company(_g(tenant))
 
 
 @app.post("/api/{tenant}/incidents/{incident_id}/investigate")

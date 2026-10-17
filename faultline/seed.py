@@ -3,11 +3,14 @@
 Kestrel Pay is the main demo: 24 services, 6 teams, two weeks of deploys/config/flag changes,
 alerts, eight resolved incidents (the agent's memory) and three open ones to investigate.
 Harbor Freight Co is a small second tenant that exists to show isolation between graphs.
+Online Boutique is real: 54 failures from the public RCAEval benchmark (see BOUTIQUE below).
 """
 from __future__ import annotations
 
+import json
 import random
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .db import Graph
 
@@ -315,9 +318,10 @@ APPROVERS = {"INC-212": "marta", "INC-188": "sam", "INC-240": "kenji", "INC-197"
 def _write_history(g: Graph, history: list[dict]) -> None:
     rows = []
     for h in history:
-        started = NOW - h["days_ago"] * DAY
-        rows.append({**h, "started": started, "cause_id": f"H-{h['id']}", "cause_at": started - 20 * MIN,
-                     "resolved": started + 50 * MIN, "approver": APPROVERS.get(h["id"])})
+        started = h.get("started") or NOW - h["days_ago"] * DAY
+        rows.append({**h, "started": started, "cause_id": f"H-{h['id']}",
+                     "cause_at": h.get("cause_at") or started - 20 * MIN, "resolved": started + 50 * MIN,
+                     "approver": h.get("approver") or APPROVERS.get(h["id"])})
     g.write("""
         UNWIND $rows AS h
         MATCH (sym:Service {name: h.symptom}), (cs:Service {name: h.cause_service})
@@ -351,6 +355,86 @@ def _write_indexes(g: Graph) -> None:
         g.write(f"CREATE INDEX FOR (n:{label}) ON (n.{prop})")
 
 
+# --- Online Boutique: real failures from the RCAEval benchmark -----------------------------------------
+
+BOUTIQUE_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "boutique.json"
+
+# The call graph, the alerts and every root cause come from RCAEval RE2-OB (see faultline/rcaeval.py,
+# --fixture). The benchmark has no org chart, so the teams and people below are invented.
+BOUTIQUE = {
+    "title": "Online Boutique · RCAEval",
+    "teams": {"storefront": "Storefront", "orders": "Orders", "catalog": "Catalog", "cart": "Cart"},
+    "people": [
+        ("ines", "Inés Duarte", "storefront", True), ("kai", "Kai Brenner", "storefront", False),
+        ("mo", "Mo Adeyemi", "orders", True), ("hana", "Hana Kim", "orders", False),
+        ("luca", "Luca Bianchi", "catalog", True), ("zoe", "Zoë Laurent", "catalog", False),
+        ("arjun", "Arjun Nair", "cart", True),
+    ],
+    "owner": {"frontend": "storefront", "checkoutservice": "orders", "paymentservice": "orders",
+              "emailservice": "orders", "currencyservice": "orders", "shippingservice": "orders",
+              "productcatalogservice": "catalog", "recommendationservice": "catalog", "adservice": "catalog",
+              "cartservice": "cart", "redis": "cart"},
+}
+OPEN_REP = 3   # repetition 3 of every case is open for the agents; repetitions 1 and 2 are solved history
+
+
+def boutique_cases() -> dict:
+    """The fixture with every case placed on the timeline: open cases 4 h apart over the last three days, solved
+    ones 10 h apart before that, so no two cases' alerts overlap. Each case gets its incident and alert ids."""
+    data = json.loads(BOUTIQUE_FIXTURE.read_text())
+    rng = random.Random(11)
+    open_, done = [c for c in data["cases"] if c["rep"] == OPEN_REP], [c for c in data["cases"] if c["rep"] != OPEN_REP]
+    rng.shuffle(open_)
+    rng.shuffle(done)
+    for k, c in enumerate(open_):
+        c.update(id=f"INC-{401 + k}", inject=NOW - 30 * MIN - k * 4 * HOUR, status="open")
+    for k, c in enumerate(done):
+        c.update(id=f"INC-{101 + k}", inject=NOW - 4 * DAY - k * 10 * HOUR, status="resolved")
+    for c in open_ + done:
+        n = c["id"].split("-")[1]
+        for i, a in enumerate(c["alerts"]):
+            a.update(id=f"A-{n}{i:02d}", at=c["inject"] + a["offset"])
+        front = [a["at"] for a in c["alerts"] if a["service"] == "frontend"]
+        c["started"] = front[0] if front else (c["alerts"][0]["at"] if c["alerts"] else c["inject"])
+    return {**data, "open": open_, "done": done}
+
+
+def _boutique(g: Graph) -> None:
+    data = boutique_cases()
+    names = sorted({s for e in data["edges"] for s in e} | set(BOUTIQUE["owner"]))
+    spec = {**BOUTIQUE, "services": [(n, BOUTIQUE["owner"][n], "datastore" if n == "redis" else "service", 1,
+                                      n == "frontend") for n in names], "calls": data["edges"]}
+    _write_org(g, spec)
+    on_call = {t: h for h, _, t, oc in BOUTIQUE["people"] if oc}
+    cases = data["open"] + data["done"]
+    g.write("""
+        UNWIND $alerts AS a
+        MATCH (s:Service {name: a.service})
+        CREATE (:Alert {id: a.id, at: a.at, severity: 'page', signal: a.signal, z: a.z, series: a.series})-[:FIRED_ON]->(s)""",
+            {"alerts": [a for c in cases for a in c["alerts"]]})
+
+    def title(c):
+        front = next((a for a in c["alerts"] if a["service"] == "frontend"), None)
+        return f"Storefront degraded · frontend {front['signal'].split(' ')[0]}" if front else \
+            f"Storefront degraded · {len(c['alerts'])} services alerting"
+    _write_incidents(g, [{"id": c["id"], "title": title(c), "symptom": "frontend", "started": c["started"],
+                          "status": "open", "severity": "SEV2"} for c in data["open"]])
+    history = []
+    for c in data["done"]:
+        rc, mine = c["root_cause"], [a for a in c["alerts"] if a["service"] == c["root_cause"]]
+        after = sorted({a["service"] for a in c["alerts"] if a["service"] != rc})
+        history.append({
+            "id": c["id"], "title": f"{title(c)} ({c['fault']} fault)", "symptom": "frontend", "started": c["started"],
+            "severity": "SEV2", "cause_service": rc, "cause_kind": "infra", "cause_at": c["inject"],
+            "cause_summary": f"{rc}: {c['fault']} fault injected (RCAEval {c['case']})", "cause_author": None,
+            "fix": "page_owner", "fix_summary": f"Fault removed from {rc}; metrics back to baseline",
+            "approver": on_call[BOUTIQUE["owner"][rc]],
+            "lesson": (f"A {c['fault']} fault on {rc} showed first as {mine[0]['signal']}" if mine else
+                       f"A {c['fault']} fault on {rc} raised no alert on {rc} itself") +
+                      (f"; then {', '.join(after)} alerted." if after else ".")})
+    _write_history(g, history)
+
+
 def build(tenant: str, *, force: bool = False) -> dict:
     g = Graph(tenant)
     if g.exists():
@@ -379,6 +463,11 @@ def build(tenant: str, *, force: bool = False) -> dict:
                            "signal": "5xx 18%"}])
         _write_incidents(g, [{"id": "INC-7", "title": "Tracking page errors", "symptom": "tracking-web",
                               "started": NOW - 24 * MIN, "status": "open", "severity": "SEV2"}])
+    elif tenant == "boutique":
+        _boutique(g)
+        from .tools import store_signature
+        for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
+            store_signature(g, row["id"])
     else:
         raise ValueError(f"unknown tenant {tenant}")
     counts = g.read("MATCH (n) RETURN count(n) AS nodes")[0]["nodes"]
@@ -386,7 +475,7 @@ def build(tenant: str, *, force: bool = False) -> dict:
     return {"tenant": tenant, "built": True, "nodes": counts, "edges": edges}
 
 
-TENANTS = {"kestrel": KESTREL["title"], "harbor": HARBOR["title"]}
+TENANTS = {"kestrel": KESTREL["title"], "boutique": BOUTIQUE["title"], "harbor": HARBOR["title"]}
 
 
 def build_all(force: bool = False) -> list[dict]:

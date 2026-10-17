@@ -1235,3 +1235,44 @@ def shape_matches(g: Graph, incident_id: str, k: int = 4) -> dict:
     lead = r["suspects"][0]
     return {"incident": incident_id, "leader": _label(lead),
             "matches": similar_by_shape(g, suspect_signature(g, r["incident"], lead), k=k, exclude=incident_id)}
+
+
+# --- blast radius, per affected service ----------------------------------------------------------------
+
+def impact(g: Graph, service: str, incident_id: str | None = None, limit: int = 6) -> dict:
+    """Who a failure of `service` reaches, one block per affected caller: the call path that carries the failure
+    up to it, whether it faces the internet, who owns it and who is on call, and whether it is alerting now."""
+    rows = g.read(f"""
+        MATCH p = (u:Service)-[:CALLS*1..{MAX_HOPS}]->(s:Service {{name: $svc}})
+        WITH u, p ORDER BY length(p)
+        WITH u, collect(p)[0] AS p
+        MATCH (u)-[:OWNED_BY]->(t:Team)
+        OPTIONAL MATCH (oc:Person {{on_call: true}})-[:MEMBER_OF]->(t)
+        RETURN u.name AS service, length(p) AS hops, [n IN nodes(p) | n.name] AS path,
+               u.internet_exposed AS exposed, u.tier AS tier, t.name AS team, collect(DISTINCT oc.name)[0] AS on_call,
+               size([(x:Service)-[:CALLS]->(u) | x]) AS callers
+        ORDER BY exposed DESC, hops""", {"svc": service})
+    alerting = set()
+    if incident_id:
+        inc = get_incident(g, incident_id)
+        alerting = {a["service"] for a in alerts_near(g, [r["service"] for r in rows], inc["started"])}
+    blocks = [{**r, "path": list(reversed(r["path"])), "alerting": r["service"] in alerting} for r in rows]
+    return {"service": service, "affected": len(rows), "exposed": sum(1 for r in rows if r["exposed"]),
+            "blocks": blocks[:limit]}
+
+
+def company(g: Graph) -> dict:
+    """The organisation as the graph sees it: teams, what they own, who is on call, who knows what, and the
+    services everything depends on."""
+    teams = g.read("""
+        MATCH (t:Team)
+        OPTIONAL MATCH (s:Service)-[:OWNED_BY]->(t)
+        OPTIONAL MATCH (p:Person)-[:MEMBER_OF]->(t)
+        RETURN t.name AS team, collect(DISTINCT s.name) AS services,
+               collect(DISTINCT CASE WHEN p.on_call THEN p.name END) AS on_call, count(DISTINCT p) AS people
+        ORDER BY size(services) DESC""")
+    for t in teams:
+        t["services"] = sorted(t["services"])
+        t["on_call"] = [x for x in t["on_call"] if x]
+    return {"teams": teams, "chokepoints": single_points_of_failure(g, 6), "domains": failure_domains(g),
+            "critical": critical_services(g, 6)}

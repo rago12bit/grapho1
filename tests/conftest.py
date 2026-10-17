@@ -13,6 +13,7 @@ from faultline.db import Graph  # noqa: E402
 
 @pytest.fixture()
 def fresh():
-    """Rebuild both tenant graphs from the seed before the test."""
-    seed.build_all(force=True)
+    """Rebuild the two synthetic tenant graphs from the seed before the test (Boutique tests build their own)."""
+    seed.build("kestrel", force=True)
+    seed.build("harbor", force=True)
     return Graph("kestrel")

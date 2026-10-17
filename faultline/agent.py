@@ -576,6 +576,27 @@ def investigate_claude(tenant: str, incident_id: str, run_id: str) -> dict:
 
 # --- entry points -------------------------------------------------------------------------------
 
+def preview(tenant: str, incident_id: str) -> dict:
+    """The case file without running the agents: the judge, the skeptic, the alert groups and the narrative,
+    read-only, so the answer is on screen the moment an incident is opened. Running the four agents adds the
+    step-by-step trace and the fix proposal."""
+    g = Graph(tenant)
+    ranking = tools.rank_suspects(g, incident_id)
+    groups = tools.alert_clusters(g, incident_id)["groups"]
+    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking, groups))
+    ranking["alert_groups"] = groups
+    top = ranking["suspects"][0] if ranking["suspects"] else None
+    if top:
+        ranking["impact"] = tools.impact(g, top["service"], incident_id)
+        ranking["experts"] = tools.experts(g, top["service"])
+        words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
+        ranking["memory_hits"] = tools.search_memory(g, words.split(":", 1)[-1])
+    findings = _narrate(ranking, tools.runbooks(g, top["service"]) if top else [])
+    return {"mode": "preview", "incident_id": incident_id, "steps": [], "findings": findings, "ranking": ranking,
+            "answer": findings["summary"], "claim_check": tools.verify_claims(g, incident_id, findings, ranking)}
+
+
+
 def investigate(tenant: str, incident_id: str) -> dict:
     run_id = tools.new_run_id()
     if claude_available():
@@ -587,6 +608,9 @@ def investigate(tenant: str, incident_id: str) -> dict:
     else:
         out = investigate_offline(tenant, incident_id, run_id=run_id)
     g = Graph(tenant)
+    top = out["ranking"]["suspects"][0] if out["ranking"]["suspects"] else None
+    if top and "impact" not in out["ranking"]:
+        out["ranking"]["impact"] = tools.impact(g, top["service"], incident_id)
     out["claim_check"] = check = tools.verify_claims(g, incident_id, out["findings"], out["ranking"])
     if out["mode"] == "claude":
         # Claims the graph can't back are dropped from the evidence, not shown as fact.
