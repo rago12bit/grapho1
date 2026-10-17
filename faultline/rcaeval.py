@@ -106,8 +106,9 @@ def call_edges(traces: pd.DataFrame) -> list[tuple[str, str]]:
     return sorted(set(edges) | {("cartservice", "redis")})
 
 
-def detect(metrics: pd.DataFrame, inject: int) -> list[dict]:
+def detect(metrics: pd.DataFrame, inject: int, norm=None, skip: frozenset = frozenset()) -> list[dict]:
     """Earliest sustained anomaly per service. Returns alerts sorted by onset."""
+    norm = norm or _norm
     normal = metrics[metrics.time < inject]
     after = metrics[metrics.time >= inject]
     best: dict[str, dict] = {}
@@ -117,7 +118,9 @@ def detect(metrics: pd.DataFrame, inject: int) -> list[dict]:
         svc, kind = col.rsplit("_", 1)
         if kind not in METRICS:
             continue
-        svc = _norm(svc)
+        svc = norm(svc)
+        if svc in skip:
+            continue
         base = normal[col].astype(float).to_numpy()
         med = np.nanmedian(base)
         mad = np.nanmedian(np.abs(base - med)) * 1.4826
@@ -213,6 +216,191 @@ def run(cases: list[str]) -> dict:
             "settings": {"Z_ALERT": Z_ALERT, "SUSTAIN_S": SUSTAIN_S, "METRICS": METRICS, "MIN_CALLS": MIN_CALLS}}
 
 
+# --- every RCAEval system: Online Boutique, Sock Shop, Train Ticket; RE2 (multi-source) and RE3 (code-level) ---
+
+# Sock Shop's RE2/RE3 cases have no traces, so its call graph comes from the project's own code: front-end's
+# api/endpoints.js (catalogue, carts, orders, user) and its session store (session-db), orders' service URIs
+# (payment, shipping) and the carts/user links it follows to build an order, shipping and queue-master's
+# spring.rabbitmq.host, and each service's own database from deploy/kubernetes/complete-demo.yaml.
+# github.com/microservices-demo (Apache-2.0).
+SOCKSHOP_EDGES = [
+    ("front-end", "catalogue"), ("front-end", "carts"), ("front-end", "orders"), ("front-end", "user"),
+    ("front-end", "session-db"), ("catalogue", "catalogue-db"), ("carts", "carts-db"), ("orders", "orders-db"),
+    ("orders", "payment"), ("orders", "shipping"), ("orders", "carts"), ("orders", "user"), ("user", "user-db"),
+    ("shipping", "rabbitmq"), ("queue-master", "rabbitmq"),
+]
+SYSTEMS = {
+    "ob": {"title": "Online Boutique", "entry": "frontend", "skip": frozenset(), "datastores": {"redis"}},
+    "ss": {"title": "Sock Shop", "entry": "front-end", "skip": frozenset({"rabbitmq-exporter"}),
+           "datastores": {"carts-db", "catalogue-db", "orders-db", "user-db", "session-db", "rabbitmq"}},
+    # Train Ticket's gateway (ts-ui-dashboard, nginx) is not traced: it calls every service whose spans start a trace.
+    # Every ts-X-service keeps its own ts-X-mongo / ts-X-mysql, as in its deployment.
+    "tt": {"title": "Train Ticket", "entry": "ts-ui-dashboard", "skip": frozenset(), "datastores": set()},
+}
+SIGNALS = ("metrics", "all")      # metrics only (the detector above, unchanged), or metrics + logs + traces
+
+
+def system_of(case: str) -> str:
+    return case.split("_", 1)[0][3:5]
+
+
+def suite_of(case: str) -> str:
+    return case.split("_", 1)[0][:3].upper()
+
+
+def norm_for(system: str):
+    return _norm if system == "ob" else (lambda s: s)
+
+
+def topology(system: str, spans: pd.DataFrame | None, services: set[str]) -> list[tuple[str, str]]:
+    """Service CALLS edges for one case."""
+    if system == "ob":
+        return call_edges(spans)
+    if system == "ss":
+        return sorted(e for e in SOCKSHOP_EDGES if e[0] in services | {"front-end"} and e[1] in services)
+    edges: set[tuple[str, str]] = set()
+    if spans is not None:
+        sp = spans[["spanID", "parentSpanID", "serviceName"]]
+        j = sp.merge(sp, left_on="parentSpanID", right_on="spanID", suffixes=("_c", "_p"), how="left")
+        cross = j[j.serviceName_p.notna() & (j.serviceName_c != j.serviceName_p)]
+        n = cross.groupby(["serviceName_p", "serviceName_c"]).size()
+        edges |= {(a, b) for (a, b), k in n.items() if k >= MIN_CALLS}
+        roots = j[j.serviceName_p.isna()].serviceName_c.value_counts()
+        edges |= {(SYSTEMS["tt"]["entry"], svc) for svc, k in roots.items() if k >= MIN_CALLS}
+    for svc in services:
+        if svc.endswith("-service"):
+            stem = svc[: -len("-service")]
+            for db in (f"{stem}-mongo", f"{stem}-mysql"):
+                if db in services:
+                    edges.add((svc, db))
+    return sorted(edges)
+
+
+def extract(case: str, refresh: bool = False) -> dict:
+    """Everything the judge needs from one case directory, cached next to it as signals.json: the topology,
+    alerts from each source, the endpoint that slowed most per service, new error log patterns, operations."""
+    from . import telemetry as T
+    d = DATA / case
+    cache = d / "signals.json"
+    if cache.exists() and not refresh:
+        return json.loads(cache.read_text())
+    system = system_of(case)
+    cfg, norm = SYSTEMS[system], norm_for(system)
+    inject = int((d / "inject_time.txt").read_text().strip().split(".")[0])
+    metrics = _table(d, "metrics")
+    m_alerts = detect(metrics, inject, norm, cfg["skip"])
+    services = {norm(c.rsplit("_", 1)[0]) for c in metrics.columns if c != "time" and "_" in c} - cfg["skip"]
+    spans = None
+    t_alerts, hot, ops = [], {}, {"ops": [], "edges": []}
+    if (d / "traces.parquet").exists():
+        raw = pd.read_parquet(d / "traces.parquet")
+        spans = raw[["spanID", "parentSpanID", "serviceName"]].assign(serviceName=raw.serviceName.map(norm))
+        tr = T.prepare_traces(raw, norm, cfg["skip"])
+        t_alerts, hot = T.trace_alerts(tr, inject)
+        ops = T.operations(tr, inject)
+        services |= set(tr.service.unique())
+    l_alerts, patterns = [], []
+    if (d / "logs.parquet").exists():
+        lg = T.prepare_logs(pd.read_parquet(d / "logs.parquet"), norm, cfg["skip"])
+        l_alerts, patterns = T.log_alerts(lg, inject), T.log_patterns(lg, inject)
+    out = {"case": case, "system": system, "inject": inject, "services": sorted(services),
+           "edges": [list(e) for e in topology(system, spans, services)],
+           "alerts": {"metrics": m_alerts, "logs": l_alerts, "traces": t_alerts},
+           "hot_ops": hot, "patterns": patterns, "ops": ops}
+    cache.write_text(json.dumps(out, default=float))
+    return out
+
+
+def alerts_for(sig: dict, signals: str) -> list[dict]:
+    from .telemetry import merge_alerts
+    if signals == "metrics":
+        return sorted(sig["alerts"]["metrics"], key=lambda a: a["at"])
+    return merge_alerts(sig["alerts"]["metrics"], sig["alerts"]["logs"], sig["alerts"]["traces"])
+
+
+def build_case(case: str, signals: str = "metrics") -> dict:
+    """One case of any system as its own graph, ready for the unchanged judge."""
+    sig = extract(case)
+    cfg = SYSTEMS[sig["system"]]
+    entry = cfg["entry"]
+    alerts = alerts_for(sig, signals)
+    edges = [tuple(e) for e in sig["edges"]]
+    services = sorted({s for e in edges for s in e} | {a["service"] for a in alerts} | {entry})
+    g = Graph(f"rca_{abs(hash(case + signals)) % 10**8}")
+    g.drop()
+    _write_indexes(g)
+    g.write("CREATE (:Org {title: $t}), (:Team {id: 'sys', name: $n})", {"t": case, "n": cfg["title"]})
+    stores = cfg["datastores"]
+    g.write("""
+        UNWIND $svcs AS s MATCH (t:Team {id: 'sys'})
+        CREATE (:Service {name: s, kind: CASE WHEN s IN $stores OR s ENDS WITH '-mongo' OR s ENDS WITH '-mysql'
+                                            THEN 'datastore' ELSE 'service' END, tier: 1, internet_exposed: s = $entry})-[:OWNED_BY]->(t)""",
+            {"svcs": services, "stores": sorted(stores), "entry": entry})
+    g.write("""
+        UNWIND $edges AS e MATCH (a:Service {name: e[0]}), (b:Service {name: e[1]})
+        CREATE (a)-[:CALLS]->(b)""", {"edges": [list(e) for e in edges]})
+    _write_alerts(g, [{"id": f"A-{i}", "service": a["service"], "at": a["at"], "severity": "page", "signal": a["signal"]}
+                      for i, a in enumerate(alerts)])
+    front = next((a["at"] for a in alerts if a["service"] == entry), None)
+    started = front if front is not None else (alerts[0]["at"] if alerts else sig["inject"])
+    _write_incidents(g, [{"id": "INC-1", "title": case, "symptom": entry, "started": started, "status": "open", "severity": "SEV2"}])
+    return {"graph": g, "alerts": alerts, "signals": sig, "entry": entry}
+
+
+def all_cases(suites=("re2", "re3"), systems=("ob", "ss", "tt")) -> list[str]:
+    idx = pd.read_parquet(DATA / "cases.parquet")
+    return sorted(c for c in idx.case if c[:3] in suites and system_of(c) in systems and (DATA / c / "metrics.parquet").exists())
+
+
+METHODS = ["judge+skeptic", "judge", "earliest alert", "biggest anomaly"]
+
+
+def _ac(order: list[str], truth: str, k: int) -> bool:
+    return truth in order[:k]
+
+
+def run_cases(cases: list[str], signals: str = "metrics", verbose: bool = True) -> dict:
+    """Every case through the judge, scored like RCAEval scores its baselines: AC@1, AC@3 and Avg@5 (the mean of
+    AC@1..AC@5)."""
+    idx = pd.read_parquet(DATA / "cases.parquet").set_index("case")
+    rows = []
+    for case in cases:
+        truth = str(idx.loc[case, "root_cause_service"])
+        b = build_case(case, signals)
+        g, entry = b["graph"], b["entry"]
+        r = tools.rank_suspects(g, "INC-1", limit=50)
+        review = tools.skeptic_review(r)
+        names = lambda order: list(dict.fromkeys(s["service"] for s in order))  # noqa: E731
+        orders = {
+            "judge+skeptic": names(review["suspects"]), "judge": names(r["suspects"]),
+            "earliest alert": [a["service"] for a in b["alerts"] if a["service"] != entry],
+            "biggest anomaly": [a["service"] for a in sorted(b["alerts"], key=lambda a: -a["z"]) if a["service"] != entry],
+        }
+        g.drop()
+        rows.append({"case": case, "suite": suite_of(case), "system": system_of(case), "fault": str(idx.loc[case, "fault"]),
+                     "truth": truth, "top": {m: o[:5] for m, o in orders.items()},
+                     "alerted": truth in {a["service"] for a in b["alerts"]},
+                     "ac": {m: [_ac(o, truth, k) for k in range(1, 6)] for m, o in orders.items()}})
+        if verbose:
+            print(f"{case:48} truth={truth:24} judge={','.join(orders['judge+skeptic'][:3]) or '-':60} "
+                  f"{'OK' if rows[-1]['ac']['judge+skeptic'][0] else '--'}", flush=True)
+    return {"signals": signals, "rows": rows, "summary": summarize(rows)}
+
+
+def summarize(rows: list[dict]) -> dict:
+    out: dict = {}
+    groups: dict[str, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(f"{r['suite']}-{r['system'].upper()}", []).append(r)
+    groups["all"] = rows
+    for name, rs in groups.items():
+        n = len(rs)
+        out[name] = {"n": n, "alerted": sum(r["alerted"] for r in rs), **{m: {
+            "ac1": sum(r["ac"][m][0] for r in rs), "ac3": sum(r["ac"][m][2] for r in rs),
+            "avg5": round(sum(sum(r["ac"][m]) / 5 for r in rs) / n, 3) if n else 0.0} for m in METHODS}}
+    return out
+
+
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "boutique.json"
 SERIES = (-60, 240, 5)   # seconds around the injection, step: the z-score trace kept for each alert
 
@@ -276,7 +464,25 @@ def main() -> None:
     ap.add_argument("--rep", type=int, default=1, help="which repetition of each fault/service pair (1-3)")
     ap.add_argument("--json", type=Path, default=None)
     ap.add_argument("--fixture", action="store_true", help="write faultline/fixtures/boutique.json from all 54 cases")
+    ap.add_argument("--suites", default=None, help="run every downloaded case of these suites, e.g. re2,re3")
+    ap.add_argument("--systems", default="ob,ss,tt")
+    ap.add_argument("--signals", choices=SIGNALS, default="metrics")
+    ap.add_argument("--extract", action="store_true", help="only extract and cache signals.json per case")
     a = ap.parse_args()
+    if a.suites:
+        cases = all_cases(tuple(a.suites.split(",")), tuple(a.systems.split(",")))
+        if a.extract:
+            for c in cases:
+                t = time.time()
+                sig = extract(c, refresh=True)
+                print(f"{c:48} {len(sig['edges']):4} edges  alerts m/l/t {len(sig['alerts']['metrics'])}/"
+                      f"{len(sig['alerts']['logs'])}/{len(sig['alerts']['traces'])}  {time.time() - t:.1f}s", flush=True)
+            return
+        res = run_cases(cases, a.signals)
+        print(json.dumps(res["summary"], indent=1))
+        if a.json:
+            a.json.write_text(json.dumps(res, indent=1, default=str))
+        return
     if a.fixture:
         out = export_fixture()
         print(len(out["cases"]), "cases,", len(out["edges"]), "edges ->", FIXTURE)
