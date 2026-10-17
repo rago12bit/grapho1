@@ -290,6 +290,7 @@ async function renderResult(out, v = state.view) {
       ${shared.length ? `<div class="shared"><b>Shared root cause.</b> ${esc(top.change.id)} also explains ${shared.map((o) => `<button class="linkbtn" data-inc="${esc(o.id)}">${esc(o.id)}</button> ${esc(o.title)}`).join(", ")}. One fix covers ${shared.length === 1 ? "both" : "all of them"}.</div>` : ""}
       <p>${esc(f.summary || out.answer || "")}</p>
       ${top?.footprint ? `<div class="seq"><span class="muted">How it spread:</span> ${top.footprint.sequence.map((x) => `<span class="mono">${esc(x.service)} ${hhmm(x.at).slice(0, 5)}</span>`).join(" → ")}${top.footprint.in_order ? ` <span class="ok">in the predicted order</span>` : ""}</div>` : ""}
+      ${r?.alert_groups?.length ? `<div class="groups"><b>Alert groups (WCC)</b> ${r.alert_groups.length === 1 ? "one connected group" : `${r.alert_groups.length} separate groups, so ${r.alert_groups.length} separate problems`}${r.alert_groups.map((g) => `<div class="mono">${g.services.map(esc).join(", ")} <span class="muted">· first: ${esc(g.first_to_alert)}</span></div>`).join("")}</div>` : ""}
       ${r?.skeptic ? skepticHtml(r.skeptic) : ""}
       ${out.claim_check && (out.claim_check.supported < out.claim_check.total || !out.claim_check.verdict_consistent) ? `<div class="dropped"><b>Not backed by the graph${out.mode === "claude" ? " (dropped from the evidence)" : ""}</b>${out.claim_check.claims.filter((c) => !c.ok).map((c) => `<div>“${esc(c.text)}”: ${esc(c.problems.join("; "))}</div>`).join("")}${out.claim_check.verdict_problems.map((p) => `<div>${esc(p)}</div>`).join("")}</div>` : ""}
       ${r?.other_faults?.length ? `<div class="others"><b>Other faults active below ${esc(r.incident.symptom)}</b>${r.other_faults.map((o) => `<div>${esc((o.change || {}).id || o.service)}${o.change ? "" : " (no change)"} explains ${esc(o.explains.join(", "))}${o.incidents.length ? ` · ${o.incidents.map((i) => `<button class="linkbtn" data-inc="${esc(i.id)}">${esc(i.id)}</button>`).join(" ")}` : ""}</div>`).join("")}</div>` : ""}
@@ -338,20 +339,20 @@ function suspectsTable(r) {
   const el = document.createElement("div");
   el.className = "section";
   el.innerHTML = `<h3>Suspects, scored by the graph</h3>
-    <table class="suspects"><thead><tr><th>score</th><th>suspect</th><th>path</th></tr></thead><tbody>
+    <ol class="suspects">
     ${r.suspects.map((s, i) => {
       const keys = s.type === "change" ? names : sig;
-      return `<tr class="${i === 0 ? "top" : ""}">
-        <td class="score">${s.score.toFixed(2)}</td>
-        <td>${s.change ? `<b>${esc(s.change.id)}</b> ${esc(s.change.kind)} on ${esc(s.service)}<br><span class="muted">${esc(s.change.summary)}</span>`
-          : `<b>${esc(s.service)}</b> alerting, no change`}
-          <div class="factors" style="grid-template-columns:repeat(${keys.length},1fr)">${keys.map((k) => `<span class="factor" title="${k} ${s.factors[k]}"><i style="width:${Math.round(100 * (s.factors[k] || 0))}%"></i></span>`).join("")}</div>
-          <div class="flabels" style="grid-template-columns:repeat(${keys.length},1fr)">${keys.map((k) => `<span>${k.replace("_", " ")}</span>`).join("")}</div>
-          <div class="fp">explains ${s.footprint.explained.length} of ${s.footprint.observed} alerting${s.footprint.in_order ? ", in order" : ", out of order"}</div>
-          ${s.also_explains?.length ? `<div class="linked">also explains ${s.also_explains.map((o) => esc(o.id)).join(", ")}</div>` : ""}</td>
-        <td class="mono">${esc(s.path.join(" → "))}</td></tr>`;
+      return `<li class="sus${i === 0 ? " lead" : ""}">
+        <div class="sus-head"><span class="score">${s.score.toFixed(2)}</span>
+          ${s.change ? `<span><b>${esc(s.change.id)}</b> ${esc(s.change.kind)} on ${esc(s.service)}</span>` : `<span><b>${esc(s.service)}</b> alerting, no change</span>`}</div>
+        ${s.change ? `<div class="muted sus-sum">${esc(s.change.summary)}</div>` : ""}
+        <div class="bars">${keys.map((k) => `<div class="fbar" title="${k} ${s.factors[k]}"><span class="factor"><i style="width:${Math.round(100 * (s.factors[k] || 0))}%"></i></span><span class="blabel">${k.replace("_", " ")}</span></div>`).join("")}</div>
+        <div class="fp">explains ${s.footprint.explained.length} of ${s.footprint.observed} alerting${s.footprint.in_order ? ", in order" : ", out of order"}</div>
+        <div class="sus-path mono">${s.path.map(esc).join(" → ")}</div>
+        ${s.also_explains?.length ? `<div class="linked">also explains ${s.also_explains.map((o) => esc(o.id)).join(", ")}</div>` : ""}
+      </li>`;
     }).join("")}
-    </tbody></table>
+    </ol>
     ${r.ruled_out.length ? `<p class="muted" style="font-size:12px">Off the dependency path, so ruled out: ${r.ruled_out.map((c) => `${esc(c.id)} (${esc(c.service)})`).join(", ")}</p>` : ""}`;
   return el;
 }

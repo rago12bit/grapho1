@@ -74,6 +74,14 @@ TOOL_SPECS: list[dict] = [
                           ["incident_id", "kind", "target", "summary"])},
     {"name": "simulate_failure", "description": "What-if: if this service failed, the waves in which alerts would arrive, internet-facing entry points hit, teams paged, and its runbooks.",
      "input_schema": _obj({"service": S}, ["service"])},
+    {"name": "alert_clusters", "description": "WCC (weakly connected components) over the alerting services under the symptom: each connected group of alerts is a separate problem. Use it to count independent faults.",
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "failure_paths", "description": "algo.SPpaths: the k shortest call paths from one service down to another.",
+     "input_schema": _obj({"source": S, "target": S, "k": {"type": "integer", "minimum": 1, "maximum": 10}}, ["source", "target"])},
+    {"name": "single_points_of_failure", "description": "Betweenness centrality over CALLS: the services the most call paths run through.",
+     "input_schema": _obj({"limit": {"type": "integer", "minimum": 1, "maximum": 30}}, [])},
+    {"name": "failure_domains", "description": "Label propagation over CALLS: groups of services that mostly talk to each other, with their teams.",
+     "input_schema": _obj({}, [])},
     {"name": "runbooks", "description": "The team's runbooks for a service: when each applies and its steps.",
      "input_schema": _obj({"service": S}, ["service"])},
     {"name": "read_handoff", "description": "Read the previous agent's handoff for this incident from the graph. role: triage, investigator or skeptic.",
@@ -107,6 +115,10 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
     return {
         "simulate_failure": lambda service: tools.simulate_failure(g, service),
         "challenge_leader": lambda incident_id: tools.challenge_leader(g, incident_id),
+        "alert_clusters": lambda incident_id: tools.alert_clusters(g, incident_id),
+        "failure_paths": lambda source, target, k=3: tools.failure_paths(g, source, target, k),
+        "single_points_of_failure": lambda limit=8: tools.single_points_of_failure(g, limit),
+        "failure_domains": lambda: tools.failure_domains(g),
         "runbooks": lambda service: tools.runbooks(g, service),
         "read_handoff": lambda incident_id, role: tools.read_handoff(g, incident_id, role, run_id),
         "write_handoff": lambda incident_id, summary, data=None:
@@ -175,6 +187,22 @@ def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
         who = (o["change"] or {}).get("id") or f"{o['service']} (no change)"
         inc_ids = ", ".join(i["id"] for i in o["incidents"])
         ev.append(f"Independent fault: {who} explains {', '.join(o['explains'])}" + (f", already {inc_ids}" if inc_ids else ""))
+    groups = ranking.get("alert_groups") or []
+    if groups:
+        if len(groups) == 1:
+            ev.append("All alerts form one connected group (WCC): " + ", ".join(groups[0]["services"]))
+        else:
+            ev.append(f"Alerts form {len(groups)} separate connected groups (WCC), so {len(groups)} separate problems: "
+                      + "; ".join("{" + ", ".join(g_["services"]) + "}" for g_ in groups))
+    choke = {c["service"]: c for c in ranking.get("chokepoints") or []}
+    on_path = [choke[s_] for s_ in top["path"] if s_ in choke and choke[s_]["betweenness"] > 0]
+    if on_path:
+        ev.append("The failure path runs through " + ", ".join(
+            f"{c['service']} (#{c['rank']} by betweenness)" for c in sorted(on_path, key=lambda c: c["rank"])[:3]))
+    doms = [d for d in ranking.get("domains") or [] if set(d["services"]) & set(fp["explained"])]
+    if doms:
+        ev.append(f"Failure domains reached (label propagation): " + "; ".join(
+            f"{', '.join(d['teams'])} ({len(set(d['services']) & set(fp['explained']))} alerting)" for d in doms))
     for b in (books or [])[:1]:
         ev.append(f"Runbook {b['id']} “{b['title']}”: " + "; ".join(b["steps"][:3]))
     if top["type"] == "change":
@@ -238,7 +266,12 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
                   "Score every suspect and simulate its footprint: what it would break, and in what order.",
                   incident_id=incident_id)
     top = ranking["suspects"][0] if ranking["suspects"] else None
+    groups = run("investigator", "alert_clusters",
+                 "Split the alerts into connected groups (WCC): each separate group is a separate problem.",
+                 incident_id=incident_id)["groups"]
     if top:
+        run("investigator", "failure_paths", f"Shortest call paths from {inc['symptom']} down to {top['service']} (SPpaths).",
+            source=inc["symptom"], target=top["service"])
         run("investigator", "similar_incidents", f"Look for resolved incidents caused on {top['service']}.", service=top["service"])
         run("investigator", "simulate_failure", f"Predict how a failure of {top['service']} spreads.", service=top["service"])
     run("investigator", "write_handoff", "Hand off to the responder through the graph.", incident_id=incident_id,
@@ -255,7 +288,8 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     challenged = run("skeptic", "challenge_leader",
                      "What doesn't the leader explain? Wrong order, too late, too close to the runner-up?",
                      incident_id=incident_id)
-    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking))
+    ranking = tools.apply_review(ranking, tools.skeptic_review(ranking, groups))
+    ranking["alert_groups"] = groups
     top = ranking["suspects"][0] if ranking["suspects"] else None
     sk = challenged["skeptic"]
     run("skeptic", "write_handoff", "Hand the reviewed verdict to the responder through the graph.", incident_id=incident_id,
@@ -270,6 +304,10 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     act = (handoff or {}).get("data", {}).get("action")
     if act:
         run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
+        ranking["chokepoints"] = run("responder", "single_points_of_failure",
+                                     "Which services on the failure path carry the most traffic (betweenness)?", limit=24)
+        ranking["domains"] = run("responder", "failure_domains",
+                                 "Which failure domains and teams the alerts reach (label propagation).")
         run("responder", "runbooks", f"Find the runbook for {act['target']}.", service=act["target"])
         if propose:
             run("responder", "propose_action", "Propose the fix. A human approves it before anything happens.",
@@ -290,7 +328,9 @@ _ASK_ROUTES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(blast radius|who depends on|impact of)\b.*?\b([\w-]+)\s*(goes down|fails|\?|$)", re.I), "blast_radius"),
     (re.compile(r"(runbook|how do (i|we) fix)\b.*?([\w-]+)?", re.I), "runbooks"),
     (re.compile(r"(before|history|similar|past incidents?|again)\b.*?([\w-]+)?", re.I), "similar_incidents"),
-    (re.compile(r"(critical|important|pagerank|single points?)", re.I), "critical_services"),
+    (re.compile(r"(single points? of failure|chokepoints?|bottlenecks?|betweenness)", re.I), "single_points_of_failure"),
+    (re.compile(r"(failure domains?|communit(y|ies)|clusters?|label propagation)", re.I), "failure_domains"),
+    (re.compile(r"(critical|important|pagerank)", re.I), "critical_services"),
 ]
 
 
@@ -307,6 +347,15 @@ def ask_offline(tenant: str, question: str) -> dict:
             args = {"limit": 8}
             res, q, err = call_tool(tenant, route, args)
             answer = "Most critical by PageRank: " + ", ".join(f"{r['service']} ({r['score']})" for r in res or [])
+        elif route == "single_points_of_failure":
+            args = {"limit": 6}
+            res, q, err = call_tool(tenant, route, args)
+            answer = "Most call paths run through (betweenness): " + ", ".join(
+                f"{r['service']} ({r['betweenness']})" for r in res or [] if r["betweenness"] > 0)
+        elif route == "failure_domains":
+            args = {}
+            res, q, err = call_tool(tenant, route, args)
+            answer = " ".join(f"Domain {d['domain']} ({', '.join(d['teams'])}): {', '.join(d['services'])}." for d in res or [])
         else:
             svc = mentioned[-1] if mentioned else (None if route in ("similar_incidents", "runbooks", "simulate_failure") else m.group(2))
             if not svc:
@@ -378,10 +427,11 @@ people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; tim
 
 ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
-    "investigator": ["read_handoff", "rank_suspects", "alerts_near", "paths_between", "similar_incidents",
-                     "simulate_failure", "run_cypher", "write_handoff"],
-    "skeptic": ["read_handoff", "challenge_leader", "alerts_near", "paths_between", "write_handoff"],
-    "responder": ["read_handoff", "who_owns", "runbooks", "blast_radius", "propose_action", "submit_findings"],
+    "investigator": ["read_handoff", "rank_suspects", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
+                     "similar_incidents", "simulate_failure", "run_cypher", "write_handoff"],
+    "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "write_handoff"],
+    "responder": ["read_handoff", "who_owns", "runbooks", "blast_radius", "single_points_of_failure", "failure_domains",
+                  "propose_action", "submit_findings"],
 }
 ROLE_BRIEF = {
     "triage": "You are the TRIAGE agent. Establish what is failing, everything it depends on, what changed on that "
@@ -400,8 +450,9 @@ ROLE_BRIEF = {
                  "read the runbook, then propose_action exactly once (with also_for when the cause also explains other "
                  "open incidents). Finish with submit_findings.",
 }
-ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "similar_incidents", "who_owns",
-             "blast_radius", "simulate_failure", "critical_services", "runbooks", "run_cypher"]
+ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "failure_paths", "similar_incidents",
+             "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
+             "failure_domains", "alert_clusters", "runbooks", "run_cypher"]
 
 
 def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,

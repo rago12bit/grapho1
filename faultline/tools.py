@@ -741,7 +741,7 @@ SKEPTIC_TOLERANCE = 0.15   # a challenger this close to the leader's score may t
 SKEPTIC_ROUNDS = 2
 
 
-def _challenges(lead: dict, ranking: dict, others: list[dict]) -> tuple[list[dict], dict | None]:
+def _challenges(lead: dict, ranking: dict, others: list[dict], groups: list[dict] | None = None) -> tuple[list[dict], dict | None]:
     """Every check the skeptic runs against one leader. Returns the checks and, if one fails in a way another
     suspect answers better, that suspect."""
     cone = set(ranking.get("alert_cone") or [])
@@ -770,6 +770,14 @@ def _challenges(lead: dict, ranking: dict, others: list[dict]) -> tuple[list[dic
     chain = lead["factors"]["alert_chain"]
     checks.append({"check": "alerts trace a full path to the symptom", "passed": chain >= 0.7,
                    "detail": "silent cause under a fully alerting path" if chain == 0.6 else f"alert chain {chain}"})
+    if groups:
+        # Every connected group of alerts (WCC) needs an owner: the leader's own group, or an independent fault.
+        covered = set(explained)
+        for o in ranking.get("other_faults") or []:
+            covered |= set(o["explains"])
+        orphans = [g for g in groups if not g["has_symptom"] and not covered & set(g["services"])]
+        checks.append({"check": "every separate group of alerts (WCC) is accounted for", "passed": not orphans,
+                       "detail": f"{len(groups)} group(s)" + (f"; nothing explains {', '.join(g['first_to_alert'] for g in orphans)}" if orphans else "")})
     runner = next((o for o in others if o is not lead), None)
     gap = round(lead["score"] - runner["score"], 3) if runner else lead["score"]
     checks.append({"check": "clearly ahead of the runner-up", "passed": gap >= 0.1,
@@ -783,7 +791,7 @@ def _label(s: dict | None) -> str:
     return (s["change"] or {}).get("id") or f"{s['service']} (no change)"
 
 
-def skeptic_review(ranking: dict) -> dict:
+def skeptic_review(ranking: dict, groups: list[dict] | None = None) -> dict:
     """Challenge the judge's leader: what doesn't it explain, did its alerts come in the right order, did the
     change land before the incident, is it clearly ahead? If another suspect explains more of the symptom's
     alerts and scores within reach, it takes over, and the new leader faces the same checks (two rounds at
@@ -796,7 +804,7 @@ def skeptic_review(ranking: dict) -> dict:
     for _ in range(SKEPTIC_ROUNDS):
         tried.add(_label(lead))
         others = [o for o in sus if o is not lead]
-        checks, better = _challenges(lead, ranking, others)
+        checks, better = _challenges(lead, ranking, others, groups)
         rounds.append({"leader": _label(lead), "score": lead["score"], "checks": checks,
                        "handed_to": _label(better) if better and _label(better) not in tried else None})
         if not better or _label(better) in tried:
@@ -821,9 +829,9 @@ def apply_review(ranking: dict, review: dict) -> dict:
 
 
 def challenge_leader(g: Graph, incident_id: str) -> dict:
-    """Tool form for agents: rank, then review."""
+    """Tool form for agents: rank, split the alerts into connected groups (WCC), then review."""
     ranking = rank_suspects(g, incident_id)
-    review = skeptic_review(ranking)
+    review = skeptic_review(ranking, alert_clusters(g, incident_id)["groups"])
     return {k: v for k, v in apply_review(ranking, review).items() if k in ("skeptic", "confidence", "confidence_p")} | {
         "leader": review["suspects"][0] if review["suspects"] else None}
 
@@ -876,3 +884,86 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
     ok = [c for c in claims if c["ok"]]
     return {"total": len(claims), "supported": len(ok), "claims": claims, "verdict_problems": verdict,
             "verdict_consistent": not verdict}
+
+
+# --- graph algorithms as agent tools -------------------------------------------------------------
+
+def single_points_of_failure(g: Graph, limit: int = 8) -> list[dict]:
+    """Betweenness over CALLS: the services the most call paths run through. A fault there cuts the most
+    traffic, so it changes severity and who needs to know. FalkorDB samples source nodes by default, so the
+    sample covers every node and the seed is fixed: the same graph always gives the same ranking."""
+    rows = g.read("""
+        CALL algo.betweenness({nodeLabels: ['Service'], relationshipTypes: ['CALLS'],
+                               samplingSize: 10000, samplingSeed: 1}) YIELD node, score
+        RETURN node.name AS service, score ORDER BY score DESC, service""")
+    top = rows[0]["score"] if rows and rows[0]["score"] else 1.0
+    out = []
+    for i, r in enumerate(rows, 1):
+        out.append({"service": r["service"], "rank": i, "betweenness": round(r["score"], 2),
+                    "share": round(r["score"] / top, 3)})
+    return out[:limit]
+
+
+def failure_domains(g: Graph) -> list[dict]:
+    """Label propagation over CALLS: groups of services that talk mostly to each other. A fault tends to stay
+    inside its domain; alerts in two domains at once point to two problems or a fault on the boundary."""
+    rows = g.read("""
+        CALL algo.labelPropagation({nodeLabels: ['Service'], relationshipTypes: ['CALLS']}) YIELD node, communityId
+        MATCH (node)-[:OWNED_BY]->(t:Team)
+        RETURN communityId AS domain, collect(node.name) AS services, collect(DISTINCT t.name) AS teams
+        ORDER BY size(services) DESC""")
+    return [{"domain": i + 1, "services": sorted(r["services"]), "teams": sorted(r["teams"])}
+            for i, r in enumerate(rows)]
+
+
+def failure_paths(g: Graph, source: str, target: str, k: int = 3) -> list[dict]:
+    """algo.SPpaths: the k shortest call paths from `source` down to `target`."""
+    if source == target:
+        return [{"path": [source], "hops": 0}]
+    rows = g.read("""
+        MATCH (a:Service {name: $a}), (b:Service {name: $b})
+        CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: ['CALLS'], maxLen: $max, pathCount: $k})
+        YIELD path, pathWeight
+        RETURN [n IN nodes(path) | n.name] AS path, pathWeight AS hops
+        ORDER BY hops""", {"a": source, "b": target, "k": max(1, min(int(k), 10)), "max": MAX_HOPS})
+    return [{"path": r["path"], "hops": int(r["hops"])} for r in rows]
+
+
+def alert_clusters(g: Graph, incident_id: str) -> dict:
+    """WCC over the alerting part of the incident: the services alerting below the symptom (and the symptom),
+    with the calls between them, are copied into a scratch graph and split into weakly connected components.
+    Each component is a group of alerts joined by calls; separate components are separate problems."""
+    inc = get_incident(g, incident_id)
+    sym, start = inc["symptom"], inc["started"]
+    area = [sym] + [d["service"] for d in dependencies(g, sym)]
+    alerts = alerts_near(g, area, start)
+    alerting = sorted({a["service"] for a in alerts} | {sym})
+    edges = g.read("""
+        MATCH (a:Service)-[:CALLS]->(b:Service) WHERE a.name IN $s AND b.name IN $s
+        RETURN a.name AS a, b.name AS b""", {"s": alerting})
+    scratch = Graph("scratch_" + uuid.uuid4().hex[:10], g.trace)
+    try:
+        scratch.write("UNWIND $s AS name CREATE (:Service {name: name})", {"s": alerting})
+        if edges:
+            scratch.write("""
+                UNWIND $e AS e MATCH (a:Service {name: e.a}), (b:Service {name: e.b}) CREATE (a)-[:CALLS]->(b)""",
+                          {"e": edges})
+        rows = scratch.read("""
+            CALL algo.WCC({nodeLabels: ['Service'], relationshipTypes: ['CALLS']}) YIELD node, componentId
+            RETURN componentId, collect(node.name) AS services""")
+    finally:
+        scratch.drop()
+    first = {}
+    for a in alerts:
+        first[a["service"]] = min(first.get(a["service"], a["at"]), a["at"])
+    groups = []
+    for r in rows:
+        svcs = sorted(r["services"])
+        alerting_svcs = [s for s in svcs if s in first]
+        if not alerting_svcs:
+            continue
+        origin = min(alerting_svcs, key=lambda s: (first[s], s))
+        groups.append({"services": svcs, "first_alert": first[origin], "first_to_alert": origin,
+                       "has_symptom": sym in svcs})
+    groups.sort(key=lambda x: (not x["has_symptom"], x["first_alert"]))
+    return {"incident": incident_id, "symptom": sym, "groups": groups, "count": len(groups)}

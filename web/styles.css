@@ -37,6 +37,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 16px; letter-spacing: .2px; }
 .brand svg { width: 22px; height: 22px; fill: none; stroke: var(--accent); stroke-width: 3; }
 .tenants { display: flex; gap: 4px; }
+.tenants button, button.ghost, .pill { white-space: nowrap; }
 .tenants button {
   background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 10px; color: var(--muted);
 }
@@ -167,8 +168,22 @@ button.ghost:hover { color: var(--text); }
 .chk span:first-child { display: inline-block; width: 14px; font-weight: 600; }
 .chk.ok span:first-child { color: var(--green); }
 .chk.no span:first-child { color: var(--red); }
+.groups { margin-top: 10px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 6px; font-size: 12px; }
+.groups b { font-weight: 500; }
+.groups .mono { margin-top: 3px; overflow-wrap: anywhere; }
 .dropped { margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(255,93,93,.45); border-radius: 6px; font-size: 12px; }
 .dropped b { display: block; color: var(--red); font-weight: 500; margin-bottom: 4px; }
+ol.suspects { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.sus { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.sus.lead { border-color: rgba(255,122,69,.45); background: var(--accent-soft); }
+.sus-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
+.sus-head .score { font: 600 13px var(--mono); color: var(--accent); min-width: 34px; }
+.sus:not(.lead) .sus-head .score { color: var(--muted); }
+.sus-sum { font-size: 12px; margin: 2px 0 0 44px; }
+.bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); gap: 6px 8px; margin-top: 8px; }
+.fbar { display: grid; gap: 3px; min-width: 0; }
+.blabel { font: 10px var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sus-path { margin-top: 6px; font-size: 11.5px; color: #b4bac3; overflow-wrap: break-word; }
 .fp { margin-top: 3px; font: 11px var(--mono); color: var(--dim); }
 .seq { margin-top: 10px; font-size: 12px; line-height: 1.8; }
 .seq .ok { color: var(--green); font-size: 11px; }
@@ -197,18 +212,9 @@ pre.cypher {
 pre.cypher .kw { color: var(--accent); }
 .qmeta { font: 11px var(--mono); color: var(--dim); margin-top: 2px; }
 
-table.suspects { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
-table.suspects th:first-child, table.suspects td:first-child { width: 44px; }
-table.suspects th:last-child, table.suspects td:last-child { width: 30%; overflow-wrap: anywhere; }
-table.suspects th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 4px; border-bottom: 1px solid var(--line); }
-table.suspects td { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
-table.suspects tr.top td { color: var(--text); }
-table.suspects tr:not(.top) td { color: #b4bac3; }
 .score { font-family: var(--mono); }
-.factors { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-top: 4px; }
-.factor { height: 4px; background: var(--line-2); border-radius: 2px; overflow: hidden; }
+.factor { display: block; height: 4px; background: var(--line-2); border-radius: 2px; overflow: hidden; }
 .factor > i { display: block; height: 100%; background: var(--accent); }
-.flabels { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; font: 9.5px var(--mono); color: var(--dim); }
 
 .action { border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; margin-bottom: 8px; }
 .action .k { font-family: var(--mono); font-size: 11px; color: var(--muted); }
@@ -228,6 +234,7 @@ table.suspects tr:not(.top) td { color: #b4bac3; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1100px) {
+  .top { flex-wrap: wrap; height: auto; min-height: 52px; padding: 8px 16px; row-gap: 8px; }
   .layout { grid-template-columns: 260px minmax(0, 1fr); }
   .right { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
   .layout { height: auto; }

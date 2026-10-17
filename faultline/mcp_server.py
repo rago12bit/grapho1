@@ -89,6 +89,26 @@ def runbooks(service: str) -> str:
     return _call("runbooks", service=service)
 
 
+@server.tool(description="WCC over the alerting services under an incident's symptom: each connected group of alerts is a separate problem.")
+def alert_clusters(incident_id: str) -> str:
+    return _call("alert_clusters", incident_id=incident_id)
+
+
+@server.tool(description="algo.SPpaths: the k shortest call paths from one service down to another.")
+def failure_paths(source: str, target: str, k: int = 3) -> str:
+    return _call("failure_paths", source=source, target=target, k=k)
+
+
+@server.tool(description="Betweenness over CALLS: the services the most call paths run through.")
+def single_points_of_failure(limit: int = 8) -> str:
+    return _call("single_points_of_failure", limit=limit)
+
+
+@server.tool(description="Label propagation over CALLS: groups of services that mostly talk to each other, with their teams.")
+def failure_domains() -> str:
+    return _call("failure_domains")
+
+
 @server.tool(description="Services ranked by PageRank over the call graph.")
 def critical_services(limit: int = 10) -> str:
     return _call("critical_services", limit=limit)

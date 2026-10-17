@@ -350,3 +350,58 @@ def test_later_alerts_below_are_knock_on_not_origin():
         assert tools.rank_suspects(g, "INC-1")["suspects"][0]["service"] == "mid"
     finally:
         g.drop()
+
+
+def test_wcc_splits_alerts_into_independent_problems(fresh):
+    groups = tools.alert_clusters(fresh, "INC-302")["groups"]
+    assert [g["services"] for g in groups] == [["auth", "mobile-bff"], ["checkout", "payments", "payments-db"],
+                                               ["catalog-es", "search"]]
+    assert groups[0]["has_symptom"] and groups[1]["first_to_alert"] == "payments-db"
+    assert tools.alert_clusters(fresh, "INC-301")["count"] == 1
+    from faultline.db import client
+    assert not [x for x in client().list_graphs() if "scratch" in x], "scratch graphs must be dropped"
+
+
+def test_skeptic_requires_every_alert_group_to_be_explained(fresh):
+    r = tools.rank_suspects(fresh, "INC-302")
+    groups = tools.alert_clusters(fresh, "INC-302")["groups"]
+    check = lambda rv: next(c for c in rv["rounds"][-1]["checks"] if "WCC" in c["check"])  # noqa: E731
+    assert check(tools.skeptic_review(r, groups))["passed"]
+    # without the independent faults, two of the three groups have no owner
+    lonely = {**r, "other_faults": []}
+    c = check(tools.skeptic_review(lonely, groups))
+    assert not c["passed"] and "payments-db" in c["detail"] and "catalog-es" in c["detail"]
+
+
+def test_betweenness_is_repeatable_and_finds_chokepoints(fresh):
+    a = tools.single_points_of_failure(fresh, 5)
+    seed.build("kestrel", force=True)
+    b = tools.single_points_of_failure(Graph("kestrel"), 5)
+    assert a == b
+    assert {x["service"] for x in a[:3]} == {"checkout", "payments", "api-gateway"}
+
+
+def test_label_propagation_covers_every_service_once(fresh):
+    doms = tools.failure_domains(fresh)
+    members = [s for d in doms for s in d["services"]]
+    assert len(members) == len(set(members)) == 24 and len(doms) >= 2
+
+
+def test_sppaths_returns_shortest_paths_first(fresh):
+    paths = tools.failure_paths(fresh, "mobile-bff", "users", k=3)
+    two_hop = {tuple(p["path"]) for p in paths if p["hops"] == 2}
+    assert paths[0]["hops"] == 2 and two_hop == {("mobile-bff", "auth", "users"), ("mobile-bff", "api-gateway", "users")}
+    assert all(p["path"][0] == "mobile-bff" and p["path"][-1] == "users" for p in paths)
+    assert [p["hops"] for p in paths] == sorted(p["hops"] for p in paths)
+
+
+def test_investigation_uses_the_algorithms(fresh):
+    out = agent.investigate("kestrel", "INC-302")
+    used = {s["tool"] for s in out["steps"]}
+    assert {"alert_clusters", "failure_paths", "single_points_of_failure", "failure_domains"} <= used
+    cy = " ".join(q["cypher"] for s in out["steps"] for q in s["cypher"])
+    for proc in ("algo.WCC", "algo.SPpaths", "algo.betweenness", "algo.labelPropagation"):
+        assert proc in cy, proc
+    ev = " ".join(out["findings"]["evidence"])
+    assert "3 separate connected groups (WCC)" in ev
+    assert out["claim_check"]["supported"] == out["claim_check"]["total"]
