@@ -452,10 +452,11 @@ CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson, at: $at})` },
 // ---- product tour: the real pages, live -------------------------------------------------------------------------
 {
   const TOUR = [
-    ["Incident room", "/app?tenant=kestrel&incident=INC-302", "One incident, decided in the open.", "The failure path lit hop by hop, every suspect argued with evidence that cites the graph, and the fix with its proof, waiting for a person."],
+    ["Incident room", "/app?tenant=kestrel&incident=INC-302", "One incident, decided in the open.", "The failure path lit hop by hop, every suspect argued with evidence that cites the graph, eight checks that call the leader proven (or say why not), and the fix with its proof, waiting for a person."],
     ["On-call", "/oncall?tenant=kestrel", "Page the team that owns what broke.", "Who is on call now and next for every team, the rota behind it, and for each open incident who to page: the owners of the blamed service, not of the symptom."],
     ["Explore", "/explore?tenant=kestrel", "The whole graph, every label.", "Every node and edge of a tenant on one canvas. Filter by label, search, open any node to see its properties, neighbours and the Cypher behind the view."],
     ["Break it", "/break", "Change one thing, watch the verdict move.", "Seven experiments, each on its own GRAPH.COPY: cut a call, move a deploy, lose an alert, say \"not the cause\". The real graph is never touched."],
+    ["Ship it?", "/preflight?tenant=kestrel&service=auth&kind=deploy", "Ask the graph before the change goes out.", "Ship, review or hold, with every reason: the open incident it would land in, what a change like it did there before, who would feel it if it breaks, and who should review it."],
     ["Replay", "/replay?tenant=kestrel&incident=INC-302", "Watch the run, step by step.", "The investigation streamed as it runs: every tool call, the FalkorDB time it took, and the graph lighting up as the agents reach each service."],
   ];
   const tabs = $("#tour-tabs"), body = $("#tour-body");

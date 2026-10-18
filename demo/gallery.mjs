@@ -1,4 +1,4 @@
-// The README's Screens: ten pages of the running app at 1440x900 and two at phone width, dark theme.
+// The README's Screens: twelve pages of the running app at 1440x900 and two at phone width, dark theme.
 //   node demo/gallery.mjs docs/media/screens        (app on :8090; resets the demo data)
 import { chromium } from "playwright-core";
 
@@ -47,8 +47,14 @@ await into(p, "#depth"); await p.waitForTimeout(3500); await shot(p, "09-depth")
 await p.goto(`${APP}/app?tenant=kestrel`); await p.waitForSelector("#q"); await p.waitForTimeout(1500);
 await p.fill("#q", "why was C-5101 made?"); await p.press("#q", "Enter"); await p.waitForTimeout(2500); await shot(p, "10-decision-trail");
 
+await p.goto(`${APP}/app?tenant=kestrel&incident=INC-302`); await p.waitForSelector("#case .sec"); await p.waitForTimeout(2200);
+await caseTo(p, "Evidence gate"); await p.waitForTimeout(700); await shot(p, "13-evidence-gate");
+
+await p.goto(`${APP}/preflight?tenant=kestrel&service=auth&kind=deploy`); await p.waitForSelector(".pf-decision", { timeout: 30000 });
+await p.waitForTimeout(800); await into(p, "#form", 90); await p.waitForTimeout(900); await shot(p, "14-ship-it");
+
 const m = await phone.newPage();
 await m.goto(`${APP}/`); await m.waitForTimeout(3200); await shot(m, "11-phone-landing");
 await m.goto(`${APP}/oncall`); await m.waitForTimeout(2500); await shot(m, "12-phone-on-call");
 await browser.close();
-console.log("wrote 12 screens to", out);
+console.log("wrote 14 screens to", out);

@@ -148,6 +148,10 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 <td><img src="docs/media/screens/09-depth.png" alt="Depth 1 against full depth, and a question about something that is not in the graph"><br><sub><b>Depth and unknowns.</b> The same incident at one hop and at five, and a name the graph doesn't have.</sub></td>
 <td><img src="docs/media/screens/10-decision-trail.png" alt="Asking why C-5101 was made: the answer comes from the team's chat"><br><sub><b>Company brain.</b> "Why was C-5101 made?": the proposal, the approval and a warning, from the team's chat.</sub></td>
 </tr>
+<tr>
+<td><img src="docs/media/screens/13-evidence-gate.png" alt="The evidence gate: eight named checks, each with the query that decided it"><br><sub><b>The evidence gate.</b> INC-302's leader through eight named checks, each with its Cypher; every rival through the same ones.</sub></td>
+<td><img src="docs/media/screens/14-ship-it.png" alt="Ship it?: a deploy on auth is held while INC-302 is open"><br><sub><b>Ship it?</b> Before a change goes out: a deploy on auth is held, D-5201 on auth is INC-302's suspect.</sub></td>
+</tr>
 </table>
 
 <p align="center">
