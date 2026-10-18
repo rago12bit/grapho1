@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from . import reasoning, tools
+from . import public_postmortems, reasoning, tools
 from .db import Graph, Trace
 
 MODEL = "claude-opus-5-5"
@@ -111,6 +111,11 @@ TOOL_SPECS: list[dict] = [
      "input_schema": _obj({}, [])},
     {"name": "on_call_at", "description": "Who was on call for a team at a given epoch time (from the shift rota, not who is on call now).",
      "input_schema": _obj({"team": S, "at": {"type": "integer"}}, ["team", "at"])},
+    {"name": "public_precedents", "description": (
+        "Public post-mortems from other companies that look like this incident's leading explanation (same failure "
+        "class, shared words), each with a link to the company's own report. Evidence, never scored; empty until "
+        "the list has been fetched on this machine."),
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
     {"name": "delivery_metrics", "description": "Per team: deploys per week, change failure rate, time to restore and lead time, from the graph.",
      "input_schema": _obj({}, [])},
     {"name": "record_argument", "description": (
@@ -149,6 +154,7 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
         "record_argument": lambda incident_id: record_argument(g, incident_id),
         "commits_in": lambda change_id, incident_id=None: tools.commits_in(g, change_id, incident_id),
         "delivery_metrics": lambda: tools.delivery_metrics(g),
+        "public_precedents": lambda incident_id: public_postmortems.similar(judged(g, incident_id)),
         "journeys_hit": lambda services: tools.journeys_hit(g, services),
         "slo_status": lambda: tools.slo_status(g),
         "on_call_at": lambda team, at: tools.on_call_at(g, team, at),
@@ -540,7 +546,7 @@ people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; tim
 
 ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
-    "investigator": ["read_handoff", "rank_suspects", "commits_in", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
+    "investigator": ["read_handoff", "rank_suspects", "commits_in", "public_precedents", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
                      "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
                      "write_handoff"],
     "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",
@@ -680,6 +686,7 @@ def preview(tenant: str, incident_id: str) -> dict:
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = tools.search_memory(g, words.split(":", 1)[-1])
     ranking["reasoning"] = reasoning.build(g, ranking)
+    ranking["public"] = public_postmortems.similar(ranking)
     findings = _narrate(ranking, tools.runbooks(g, top["service"]) if top else [])
     check = tools.verify_claims(g, incident_id, findings, ranking)
     q = g.trace.queries

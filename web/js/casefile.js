@@ -84,6 +84,16 @@ function streamAgents(inc, v) {
   });
 }
 
+function publicHtml(r) {
+  const p = r?.public;
+  if (!p?.available || !p.matches?.length) return "";
+  return section(`Public post-mortems like this one${p.class ? ` · ${esc(p.class)}` : ""}`, p.matches.map((m) => `<div class="prec">
+      <div class="prec-head"><a class="mono" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(m.company)}</a> <span class="label faint">${esc(m.class)}</span>
+        ${m.shared.length ? `<span class="faint small">shares ${m.shared.map(esc).join(", ")}</span>` : `<span class="faint small">same failure class</span>`}</div>
+      <div class="small">${esc(m.text)}</div></div>`).join("")
+    + `<p class="faint small">From <a class="link" href="${esc(p.source)}" target="_blank" rel="noopener noreferrer">Dan Luu's list of public post-mortems</a>, fetched on this machine (it has no licence, so none of it ships with Faultline). Shown as precedent, never scored.</p>`);
+}
+
 function render(inc, out) {
   const f = out.findings || {};
   const r = out.ranking;
@@ -128,6 +138,7 @@ function render(inc, out) {
     ${groupsHtml(r)}
     ${othersHtml(r)}
     ${precedentHtml(r, top)}
+    ${publicHtml(r)}
     ${dropped(out)}
     ${f.evidence?.length ? section("Evidence", `<ul class="evidence">${f.evidence.map((e) => `<li>${esc(e)}</li>`).join("")}</ul>`) : ""}
     ${r?.suspects?.length ? section("Suspects · scored by the graph", suspects(r)) : ""}

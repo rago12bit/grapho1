@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, learn, postmortem, reasoning, seed, tools, upload, world
+from . import agent, bench, ingest, learn, postmortem, public_postmortems, reasoning, seed, tools, upload, world
 from .db import Graph, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 130, "planted": "94.5–96.8%", "real": "285/360"}
+PROOF = {"tests": 134, "planted": "94.5–96.8%", "real": "285/360"}
 
 
 @app.get("/api/health")
@@ -277,6 +277,14 @@ def feedback(tenant: str, incident_id: str, body: FeedbackIn):
     kept as labelled outcomes the model learns from at the next retrain."""
     g = _g(tenant)
     return _guard(tools.give_feedback, g, incident_id, body.target, body.verdict, body.who, body.note)
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/public")
+def public(tenant: str, incident_id: str):
+    """Public post-mortems from other companies that look like this incident (fetched locally, never scored)."""
+    g = _g(tenant)
+    _guard(tools.get_incident, g, incident_id)
+    return public_postmortems.similar(agent.judged(g, incident_id))
 
 
 @app.get("/api/{tenant}/learning")
