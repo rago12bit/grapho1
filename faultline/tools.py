@@ -1203,19 +1203,25 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
 
 # --- graph algorithms as agent tools -------------------------------------------------------------
 
+BETWEENNESS_SAMPLE = 500    # exact up to this many services; above it, a fixed-seed sample of source nodes
+
+
 def single_points_of_failure(g: Graph, limit: int = 8) -> list[dict]:
     """Betweenness over CALLS: the services the most call paths run through. A fault there cuts the most
-    traffic, so it changes severity and who needs to know. FalkorDB samples source nodes by default, so the
-    sample covers every node and the seed is fixed: the same graph always gives the same ranking."""
+    traffic, so it changes severity and who needs to know. Up to BETWEENNESS_SAMPLE services every node is a
+    source, so the ranking is exact; above that (the scale benchmark ran FalkorDB out of memory computing it
+    exactly at 3,000 services) it samples that many sources with a fixed seed: approximate, and the same graph
+    always gives the same ranking."""
+    n = g.read("MATCH (s:Service) RETURN count(s) AS n")[0]["n"]
     rows = g.read("""
         CALL algo.betweenness({nodeLabels: ['Service'], relationshipTypes: ['CALLS'],
-                               samplingSize: 10000, samplingSeed: 1}) YIELD node, score
-        RETURN node.name AS service, score ORDER BY score DESC, service""")
+                               samplingSize: $k, samplingSeed: 1}) YIELD node, score
+        RETURN node.name AS service, score ORDER BY score DESC, service""", {"k": min(max(n, 1), BETWEENNESS_SAMPLE)})
     top = rows[0]["score"] if rows and rows[0]["score"] else 1.0
     out = []
     for i, r in enumerate(rows, 1):
         out.append({"service": r["service"], "rank": i, "betweenness": round(r["score"], 2),
-                    "share": round(r["score"] / top, 3)})
+                    "share": round(r["score"] / top, 3), "exact": n <= BETWEENNESS_SAMPLE})
     return out[:limit]
 
 
