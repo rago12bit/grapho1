@@ -1,3 +1,7 @@
+# For a judge: build, start, every test, then the product's own checks on scratch graphs (~2 min, Docker only):
+#
+#   make judge-check
+#
 # Reproduce every RCAEval number in the README with one command:
 #
 #   make eval          # ~3.3 GB download the first time, then signals, Hypocenter, RCAEval's baselines, the comparison
@@ -9,7 +13,7 @@ APP     = docker compose run --rm app
 SUITES  = --suites re2,re3 --systems ob,ss,tt
 BASE    = docker run --rm -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -v "$(PWD)/data:/data" -v "$(PWD)/baselines:/b:ro" faultline-baselines
 
-.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale
+.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check
 
 eval: up data signals faultline baselines compare
 
@@ -48,3 +52,6 @@ synthetic:
 
 scale:
 	$(APP) python -W ignore -m faultline.scale --services 3000
+
+judge-check:
+	bash scripts/judge-check.sh

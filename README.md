@@ -43,7 +43,7 @@ The rules page, the challenge text and the organisers' day-1 post ("How to Build
 | "one instance can hold thousands of isolated graphs, so each user, agent, or tenant gets its own" (about the sponsor) | One graph per company (five, plus one per upload); fix proofs, Break-it experiments and the load test each run on a `GRAPH.COPY` that is dropped afterwards. 40 runs, 8 at a time: no run read another run's handoffs. | `python -m faultline.bench` |
 | "Traversals are fast enough to run on every step of an agent loop" (about the sponsor) | At 3,000 services (211,000 nodes) the judge answers in 69 ms (p50) and a 5-hop dependency walk in under a millisecond. | [docs/scale.md](docs/scale.md) |
 
-Rule 10 asks for a public repository, a README with setup and the graph data model, the Cypher the product depends on, a demo video, a deployment or local setup, and the track: [Run it](#run-it), [How the graph is used](#how-the-graph-is-used), [the judge's queries](#how-the-graph-is-used), and [Tracks](#track-fit). Rule 11: [AI use](#ai-use-disclosed).
+Rule 10 asks for a public repository, a README with setup and the graph data model, the Cypher the product depends on, a demo video, a deployment or local setup, and the track: [Run it](#run-it) (and `make judge-check`), [How the graph is used](#how-the-graph-is-used), [the judge's queries](#how-the-graph-is-used), and [Tracks](#track-fit). Rule 11: [AI use](#ai-use-disclosed).
 
 ## Track fit
 
@@ -114,6 +114,7 @@ docker compose up -d --build
   `/replay` (an investigation streamed live, then played back step by step)
 - FalkorDB browser: http://localhost:3003 (graph `hypocenter_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
+- **For a judge: `make judge-check`** (about 2 minutes, Docker only, no key). It builds and starts everything, runs every test, then checks the product itself on scratch graphs it drops afterwards: the agents' verdict on each Kestrel incident, depth 1 against full depth, a question about something not in the graph, the fix proofs, the Break-it experiments, the planted-fault eval against this README's number, and isolation under concurrent runs. The output of a run on a fresh clone is in [docs/judge-check-clean-clone.txt](docs/judge-check-clean-clone.txt).
 
 The graphs are built on first start. **Reset** in the header rebuilds them. **Guided demo** (or http://localhost:8090/app?demo=1) plays the whole story on the live app with captions.
 
@@ -392,6 +393,7 @@ faultline/fixtures/      boutique.json / sockshop.json / trainticket.json: RCAEv
 faultline/ingest.py      live input: CI change events, the Alertmanager webhook, the incident opening rule
 faultline/upload.py      bring your own incident: JSON or an RCAEval-layout zip, validated, as a new tenant
 faultline/postmortem.py  Markdown postmortem from the graph
+faultline/judge_check.py the product checks behind `make judge-check` (scripts/judge-check.sh), on scratch graphs
 faultline/owners.py      fetches Online Boutique's real owners and commit history from GitHub
 deploy/                  public deployment: Caddy (HTTPS) + docker-compose.public.yml, see DEPLOY.md
 demo/fire.sh             plays a live incident in through the webhooks
