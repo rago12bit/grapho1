@@ -105,8 +105,8 @@ const LABELS = [
 
 // ---- FalkorDB features strip ---------------------------------------------------------------------------------
 {
-  const ALGOS = ["algo.WCC", "algo.SPpaths", "algo.betweenness", "algo.labelPropagation", "algo.pageRank", "GRAPH.COPY",
-    "GRAPH.RO_QUERY", "vecf32 vector index", "full-text index", "CALLS*1..5", "CAUSED_BY*1..12", "UNWIND … MERGE"];
+  const ALGOS = ["algo.BFS", "algo.SSpaths", "algo.SPpaths", "algo.WCC", "algo.MSF", "algo.betweenness", "algo.labelPropagation",
+    "algo.pageRank", "GRAPH.COPY", "GRAPH.RO_QUERY", "vecf32 vector index", "full-text index", "CAUSED_BY*1..12", "UNWIND … MERGE"];
   $("#track").innerHTML = [...ALGOS, ...ALGOS].map((a) => `<span>${esc(a)}</span>`).join("");
 }
 
@@ -298,14 +298,16 @@ const STEPS = [
 WHERE s.name IN $svcs AND a.at >= $from AND a.at <= $to
 RETURN a.id AS id, s.name AS service, a.at AS at, a.signal AS signal
 ORDER BY a.at` },
-  { name: "Path", algo: "CALLS*1..5 · changes_near", file: "tools.py · dependencies, changes_near",
+  { name: "Path", algo: "algo.BFS · changes_near", file: "tools.py · dependencies, changes_near",
     text: "Everything mobile-bff depends on, up to five hops: <b>22 services</b>. Six changes landed on that path in the window. A change anywhere else is out before anything is scored.",
     cap: "Walk the call graph down from the symptom; only changes on that path are suspects.",
-    q: `MATCH p = (s:Service {name: $svc})-[:CALLS*1..5]->(d:Service)
-WITH d, min(length(p)) AS hops
-MATCH (c:Change)-[:CHANGED]->(d)
-WHERE c.at >= $from AND c.at <= $to
-RETURN c.id, d.name, hops` },
+    q: `MATCH (s:Service {name: $svc})
+CALL algo.BFS(s, 5, 'CALLS') YIELD nodes, edges
+RETURN nodes, edges   // the BFS tree's levels are the hops
+
+MATCH (c:Change)-[:CHANGED]->(d:Service)
+WHERE d.name IN $on_path AND c.at >= $from AND c.at <= $to
+RETURN c.id, d.name` },
   { name: "Argue", algo: "Hypothesis · Evidence · CITES", file: "reasoning.py · write",
     text: "Each suspect becomes a <b>Hypothesis</b> with evidence for and against. D-5201 leads: auth alerted 240 s after it, mobile-bff 120 s after that. Users never alerted under F-5202, and C-5101's alerts belong to INC-301.",
     cap: "Three hypotheses, each with evidence that cites the node it rests on.",

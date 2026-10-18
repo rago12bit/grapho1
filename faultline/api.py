@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 175, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 184, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -520,6 +520,16 @@ def incident_depth(tenant: str, incident_id: str):
     g = _g(tenant)
     try:
         return tools.depth_sweep(g, incident_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/spread")
+def incident_spread(tenant: str, incident_id: str):
+    """How the failure spread: a minimum spanning forest over the alerting services, weighted by alert timing."""
+    g = _g(tenant)
+    try:
+        return tools.spread_tree(g, incident_id)
     except KeyError as e:
         raise HTTPException(404, str(e))
 

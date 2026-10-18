@@ -151,8 +151,8 @@ def run(services: int = 1000, incidents: int = 200, reps: int = 20) -> dict:
     pick = lambda: rng.choice(planted)  # noqa: E731
     deep = rng.choice([n for n in b["names"] if n.startswith("edge")])
     q = {
-        "dependencies, 5 hops (CALLS*1..5)": lambda: tools.dependencies(g, deep),
-        "blast radius (who calls it)": lambda: tools.blast_radius(g, rng.choice(b["names"])),
+        "dependencies, 5 hops (algo.BFS)": lambda: tools.dependencies(g, deep),
+        "blast radius (algo.SSpaths, incoming)": lambda: tools.blast_radius(g, rng.choice(b["names"])),
         "changes and alerts near an incident": lambda: (lambda p: (tools.changes_near(g, [p["symptom"]], p["started"]),
                                                                    tools.alerts_near(g, [p["symptom"]], p["started"])))(pick()),
         "the judge (rank_suspects)": lambda: tools.rank_suspects(g, pick()["id"]),

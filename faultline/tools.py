@@ -80,13 +80,53 @@ def get_incident(g: Graph, incident_id: str) -> dict:
 
 
 def dependencies(g: Graph, service: str, max_hops: int = MAX_HOPS) -> list[dict]:
-    """Everything `service` calls, directly or through other services, with the fewest hops to reach it."""
+    """Everything `service` calls, directly or through other services, with the fewest hops to reach it.
+
+    One `algo.BFS` over CALLS: the BFS tree's levels are the hop counts. A service on a call cycle (Train Ticket
+    has them) also depends on itself, one hop past whichever service on the cycle calls it back."""
     max_hops = max(1, min(int(max_hops), MAX_HOPS))
-    return g.read(f"""
-        MATCH p = (s:Service {{name: $svc}})-[:CALLS*1..{max_hops}]->(d:Service)
-        WITH d, min(length(p)) AS hops
-        RETURN d.name AS service, d.kind AS kind, hops
-        ORDER BY hops, service""", {"svc": service})
+    rows = g.read("""
+        MATCH (s:Service {name: $svc})
+        CALL algo.BFS(s, $hops, 'CALLS') YIELD nodes, edges
+        OPTIONAL MATCH (back:Service)-[:CALLS]->(s)
+        RETURN [n IN nodes | [n.name, n.kind]] AS reached, [e IN edges | [startNode(e).name, endNode(e).name]] AS tree,
+               s.kind AS kind, collect(back.name) AS back""", {"svc": service, "hops": max_hops})
+    if not rows:
+        return []
+    r = rows[0]
+    parent = {b: a for a, b in r["tree"]}
+    level = {service: 0}
+
+    def depth(n: str) -> int:
+        if n not in level:
+            level[n] = depth(parent[n]) + 1
+        return level[n]
+
+    kinds = {n: k for n, k in r["reached"] if n != service}
+    out = [{"service": n, "kind": k, "hops": depth(n)} for n, k in kinds.items()]
+    loop = [depth(b) + 1 for b in r["back"] if b == service or b in kinds]
+    if loop and min(loop) <= max_hops:
+        out.append({"service": service, "kind": r["kind"], "hops": min(loop)})
+    return sorted(out, key=lambda d: (d["hops"], d["service"]))
+
+
+def callers(g: Graph, service: str) -> list[dict]:
+    """Every service that calls `service`, directly or transitively, with the fewest hops: `algo.SSpaths` walking
+    CALLS backwards from it. On a call cycle a service is also its own caller, as with dependencies()."""
+    rows = g.read(f"""
+        MATCH (s:Service {{name: $svc}})
+        CALL algo.SSpaths({{sourceNode: s, relTypes: ['CALLS'], relDirection: 'incoming', maxLen: {MAX_HOPS},
+                            pathCount: 1000000}}) YIELD path, pathWeight
+        WITH last(nodes(path)) AS u, min(pathWeight) AS hops
+        RETURN u.name AS service, toInteger(hops) AS hops, u.internet_exposed AS internet_exposed, u.tier AS tier""",
+                  {"svc": service})
+    out = {r["service"]: r for r in rows}
+    fwd = g.read("""MATCH (s:Service {name: $svc})-[:CALLS]->(f:Service) RETURN f.name AS f, s.internet_exposed AS e,
+                    s.tier AS tier""", {"svc": service})
+    loop = [out[f["f"]]["hops"] + 1 for f in fwd if f["f"] in out] + [1 for f in fwd if f["f"] == service]
+    if loop and min(loop) <= MAX_HOPS:
+        out[service] = {"service": service, "hops": min(loop), "internet_exposed": fwd[0]["e"], "tier": fwd[0]["tier"]}
+    return sorted(out.values(), key=lambda r: (r["hops"], r["service"]))
 
 
 def changes_near(g: Graph, services: list[str], start: int, window_min: int = WINDOW_MIN) -> list[dict]:
@@ -159,17 +199,13 @@ def who_owns(g: Graph, service: str) -> dict:
 
 def blast_radius(g: Graph, service: str) -> dict:
     """Who is hurt if `service` fails: every service that calls it, directly or transitively."""
-    callers = g.read(f"""
-        MATCH p = (u:Service)-[:CALLS*1..{MAX_HOPS}]->(s:Service {{name: $svc}})
-        WITH u, min(length(p)) AS hops
-        RETURN u.name AS service, hops, u.internet_exposed AS internet_exposed, u.tier AS tier
-        ORDER BY hops, service""", {"svc": service})
+    up = callers(g, service)
     rank = critical_services(g, limit=100)
     pr = next((r for r in rank if r["service"] == service), None)
     return {
         "service": service,
-        "callers": callers,
-        "exposed_entry_points": [c["service"] for c in callers if c["internet_exposed"]],
+        "callers": up,
+        "exposed_entry_points": [c["service"] for c in up if c["internet_exposed"]],
         "pagerank": pr["score"] if pr else None,
         "criticality_rank": pr["rank"] if pr else None,
     }
@@ -247,10 +283,7 @@ def _in_order(path: list[str], alerts: list[dict], after: int) -> bool:
 def _callers(g: Graph, service: str, cache: dict) -> dict[str, int]:
     """Every service that calls `service`, directly or transitively, with its distance."""
     if service not in cache:
-        rows = g.read(f"""
-            MATCH p = (u:Service)-[:CALLS*1..{MAX_HOPS}]->(s:Service {{name: $svc}})
-            RETURN u.name AS service, min(length(p)) AS d""", {"svc": service})
-        cache[service] = {r["service"]: r["d"] for r in rows}
+        cache[service] = {r["service"]: r["hops"] for r in callers(g, service)}
     return cache[service]
 
 
@@ -1367,6 +1400,51 @@ def alert_clusters(g: Graph, incident_id: str) -> dict:
     groups.sort(key=lambda x: (not x["has_symptom"], x["first_alert"]))
     return {"incident": incident_id, "symptom": sym, "groups": groups, "count": len(groups)}
 
+
+def spread_tree(g: Graph, incident_id: str) -> dict:
+    """How the failure most plausibly spread: `algo.MSF` over the alerting services under the symptom, each call
+    between two of them weighted by how far apart their first alerts were.
+
+    The minimum spanning forest joins every alerting service by the smallest timing gaps the call graph allows,
+    so each tree is one problem (the same groups WCC finds) and its links read from the first service to alert
+    outwards. It is an independent check on the causal chain: it uses timing and topology, never the judge."""
+    inc = get_incident(g, incident_id)
+    sym, start = inc["symptom"], inc["started"]
+    area = [sym] + [d["service"] for d in dependencies(g, sym)]
+    first: dict[str, int] = {}
+    for a in alerts_near(g, area, start):
+        first[a["service"]] = min(first.get(a["service"], a["at"]), a["at"])
+    alerting = sorted(first)
+    edges = g.read("""
+        MATCH (a:Service)-[:CALLS]->(b:Service) WHERE a.name IN $s AND b.name IN $s AND a <> b
+        RETURN a.name AS a, b.name AS b""", {"s": alerting})
+    rows = [{"services": [x], "links": []} for x in alerting]   # no calls between them: each alert is its own tree
+    if edges:                                                     # (MSF needs at least one edge of the type)
+        scratch = Graph("scratch_" + uuid.uuid4().hex[:10], g.trace)
+        try:
+            scratch.write("UNWIND $s AS name CREATE (:Service {name: name})", {"s": alerting})
+            scratch.write("""
+                UNWIND $e AS e MATCH (a:Service {name: e.a}), (b:Service {name: e.b}) CREATE (a)-[:CALLS {gap: e.gap}]->(b)""",
+                          {"e": [{**e, "gap": abs(first[e["a"]] - first[e["b"]])} for e in edges]})
+            rows = scratch.read("""
+                CALL algo.MSF({nodeLabels: ['Service'], relationshipTypes: ['CALLS'], weightAttribute: 'gap'})
+                YIELD nodes, edges
+                RETURN [n IN nodes | n.name] AS services, [e IN edges | [startNode(e).name, endNode(e).name, e.gap]] AS links""")
+        finally:
+            scratch.drop()
+    trees = []
+    for r in rows:
+        svcs = sorted(r["services"])
+        links = []
+        for a, b, gap in r["links"]:
+            early, late = (a, b) if (first[a], a) <= (first[b], b) else (b, a)
+            links.append({"from": early, "to": late, "gap_s": gap})
+        links.sort(key=lambda x: (first[x["to"]], x["to"]))
+        origin = min(svcs, key=lambda x: (first[x], x))
+        trees.append({"origin": origin, "first_alert": first[origin], "services": svcs, "links": links,
+                      "has_symptom": sym in svcs, "total_gap_s": sum(x["gap_s"] for x in links)})
+    trees.sort(key=lambda t: (not t["has_symptom"], t["first_alert"]))
+    return {"incident": incident_id, "symptom": sym, "trees": trees, "count": len(trees)}
 
 # --- verifying a fix --------------------------------------------------------------------------------
 

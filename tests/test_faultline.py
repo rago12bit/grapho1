@@ -473,6 +473,27 @@ def test_claims_must_be_right_not_just_real(fresh):
     assert "did not alert before" in v["claims"][2]["problems"][0]
 
 
+def test_an_off_path_change_cannot_be_called_the_cause(fresh):
+    r = tools.apply_review(*(lambda x: (x, tools.skeptic_review(x)))(tools.rank_suspects(fresh, "INC-301")))
+    f = {"summary": "F-5202 caused the checkout latency.", "change_id": "C-5101", "root_cause_service": "payments-db",
+         "evidence": []}
+    v = tools.verify_claims(fresh, "INC-301", f, r)
+    assert v["claims"][0]["problems"] == ["F-5202 cannot be the cause: users is not on checkout's dependency path"]
+
+
+def test_a_change_the_failure_climbed_past_is_marked_down(fresh):
+    # a payments deploy lands after payments-db had already alerted (13:36) and before payments did (13:39)
+    fresh.write("""MATCH (s:Service {name: 'payments'})
+                   CREATE (:Change {id: 'D-9001', kind: 'deploy', at: 1792243000, risk: 'high', summary: 'payments v2.4.1'})
+                          -[:CHANGED]->(s)""")
+    r = tools.rank_suspects(fresh, "INC-301", limit=20)
+    d = next(s for s in r["suspects"] if s["change"] and s["change"]["id"] == "D-9001")
+    raw = tools._alert_chain(d["path"], r["alerts"], d["change"]["at"])[0]
+    assert d["from_below"] and raw > 0
+    assert d["factors"]["alert_chain"] == round(raw * 0.5, 3)      # half: the failure was already climbing past it
+    assert tools._label(r["suspects"][0]) == "C-5101"
+
+
 def test_experts_come_from_what_people_did(fresh):
     ex = tools.experts(fresh, "payments-db")
     assert ex[0]["handle"] == "marta" and ex[0]["fixed"] == ["INC-212"]

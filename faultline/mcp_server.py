@@ -54,6 +54,16 @@ def depth_sweep(incident_id: str) -> str:
     return _call("depth_sweep", incident_id=incident_id)
 
 
+@server.tool(description="How an incident's failure spread: MSF over the alerting services, each call weighted by the gap between their first alerts. One tree per problem, read from the first service to alert.")
+def spread_tree(incident_id: str) -> str:
+    return _call("spread_tree", incident_id=incident_id)
+
+
+@server.tool(description="Every service that calls this one, directly or transitively, with hop counts (SSpaths walking CALLS backwards).")
+def callers(service: str) -> str:
+    return _call("callers", service=service)
+
+
 @server.tool(description="Look a name up anywhere in the graph, with near service names. Nothing found means it isn't modelled, not that it is safe.")
 def find_named(name: str) -> str:
     return _call("find_named", name=name)

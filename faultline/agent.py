@@ -41,6 +41,13 @@ TOOL_SPECS: list[dict] = [
         "also_explains (other open incidents with the same cause), owners, recommended actions, and changes ruled "
         "out as off-path."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "spread_tree", "description": (
+        "MSF (minimum spanning forest) over the alerting services under the symptom, each call weighted by the gap "
+        "between the two services' first alerts: one tree per problem, links read from the first service to alert "
+        "outwards. An independent check on the causal chain, from timing and topology only."),
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "callers", "description": "Every service that calls this one, directly or transitively, with hop counts (SSpaths walking CALLS backwards).",
+     "input_schema": _obj({"service": S}, ["service"])},
     {"name": "depth_sweep", "description": (
         "The same incident judged with the search capped at 1, 2, ... 5 hops below the symptom: what a one-hop look "
         "blames, and the depth from which the verdict stops changing (settles_at)."),
@@ -174,6 +181,8 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
         "search_memory": lambda query: tools.search_memory(g, query),
         "shape_matches": lambda incident_id: tools.shape_matches(g, incident_id),
         "alert_clusters": lambda incident_id: tools.alert_clusters(g, incident_id),
+        "spread_tree": lambda incident_id: tools.spread_tree(g, incident_id),
+        "callers": lambda service: tools.callers(g, service),
         "failure_paths": lambda source, target, k=3: tools.failure_paths(g, source, target, k),
         "single_points_of_failure": lambda limit=8: tools.single_points_of_failure(g, limit),
         "failure_domains": lambda: tools.failure_domains(g),
@@ -372,6 +381,9 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     groups = run("investigator", "alert_clusters",
                  "Split the alerts into connected groups (WCC): each separate group is a separate problem.",
                  incident_id=incident_id)["groups"]
+    run("investigator", "spread_tree",
+        "Join the alerting services by the smallest timing gaps the calls allow (MSF): how each problem spread.",
+        incident_id=incident_id)
     if top:
         run("investigator", "failure_paths", f"Shortest call paths from {inc['symptom']} down to {top['service']} (SPpaths).",
             source=inc["symptom"], target=_svc(top))
@@ -593,7 +605,7 @@ people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; tim
 
 ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
-    "investigator": ["read_handoff", "rank_suspects", "commits_in", "public_precedents", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
+    "investigator": ["read_handoff", "rank_suspects", "commits_in", "public_precedents", "alert_clusters", "spread_tree", "failure_paths", "alerts_near", "paths_between",
                      "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
                      "write_handoff"],
     "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",

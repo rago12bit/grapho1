@@ -1,0 +1,49 @@
+# make mutants
+# each safeguard broken on purpose, one at a time, on a scratch copy; a mutant is caught when a test fails
+
+unbroken: 9 test files pass
+
+caught  depth-cap            the depth limit is ignored, so depth 1 sees everything
+        tests/test_depth_and_unknowns.py::test_one_hop_blames_the_victim_and_two_hops_find_the_pool_change (0 s)
+caught  not-in-graph         a name the graph doesn't have gets the help text, not 'not modelled'
+        tests/test_depth_and_unknowns.py::test_a_name_that_is_not_in_the_graph_is_not_modelled_not_safe (1 s)
+caught  bfs-cycles           BFS forgets a service on a call cycle depends on itself (Train Ticket)
+        tests/test_algorithms.py::test_the_same_on_a_graph_with_call_cycles (0 s)
+caught  msf-direction        the spread tree's links lose their timing order
+        tests/test_algorithms.py::test_spread_tree_finds_one_tree_per_problem_with_the_timing (0 s)
+caught  alert-order          alerts climbing the path in the wrong order count as in order
+        tests/test_faultline.py::test_silent_cause_and_failure_from_below (2 s)
+caught  climbed-past         a change the failure climbed past is no longer marked down
+        tests/test_faultline.py::test_a_change_the_failure_climbed_past_is_marked_down (5 s)
+caught  not-the-cause        a person's 'not the cause' no longer drops the suspect
+        tests/test_learning.py::test_a_person_ruling_a_suspect_out_takes_effect_at_once (1 s)
+caught  skeptic-mute         the skeptic can never overturn the leader
+        tests/test_faultline.py::test_skeptic_overturns_a_leader_that_leaves_alerts_unexplained (3 s)
+caught  claim-service        'C-5101 changed auth' passes although C-5101 changed payments-db
+        tests/test_faultline.py::test_claims_must_be_right_not_just_real (8 s)
+caught  claim-ruled-out      a ruled-out change can be called the cause
+        tests/test_faultline.py::test_an_off_path_change_cannot_be_called_the_cause (8 s)
+caught  claim-order          'A alerted before B' passes when the times say otherwise
+        tests/test_faultline.py::test_claims_must_be_right_not_just_real (8 s)
+caught  verify-always        a fix is 'verified' even when its alerts keep firing
+        tests/test_faultline.py::test_wrong_fix_is_caught_and_the_incident_reopens (4 s)
+caught  dup-proposals        re-running an investigation stacks duplicate fixes
+        tests/test_faultline.py::test_action_lifecycle_writes_memory (1 s)
+caught  free-cypher-writes   the free-form Cypher tool accepts writes
+        tests/test_faultline.py::test_read_only_tool_refuses_writes (1 s)
+caught  tenant-names         a tenant id like ../kestrel reaches another graph
+        tests/test_faultline.py::test_tenants_are_separate_graphs (1 s)
+caught  answer-key           the judge imports the simulator's answer key
+        tests/test_case_file.py::test_answer_key_stays_out_of_the_agents (2 s)
+caught  webhook-token        on a public server anyone can post alerts and changes
+        tests/test_live.py::test_public_mode_guards_webhooks_and_rate_limits (2 s)
+caught  public-writes        the public MCP endpoint offers propose_action
+        tests/test_live.py::test_public_mcp_is_read_only (3 s)
+caught  break-copy           a Break-it experiment leaves its graph copy behind
+        tests/test_site_pages.py::test_experiments_run_on_a_copy_and_leave_the_real_graph_alone (1 s)
+caught  proof-copy           a fix proof leaves its graph copy behind
+        tests/test_proof.py::test_the_proof_never_touches_the_real_graph (2 s)
+caught  proof-decoy          the live fix proofs call a fix that predicts nothing 'held'
+        tests/test_results.py::test_a_real_fix_that_predicts_nothing_does_not_hold (2 s)
+
+21 of 21 mutants caught

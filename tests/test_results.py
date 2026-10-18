@@ -29,7 +29,7 @@ def test_scale_planted_and_learning_come_from_their_files():
     big = d["scale"][-1]
     assert big["services"] == 3000 and big["nodes"] > 200_000
     judge = next(q for q in big["queries"] if q["query"].startswith("the judge"))
-    assert judge["p50_ms"] == 69.0 and big["planted"] == {"incidents": 198, "first": 197, "top3": 198}
+    assert judge["p50_ms"] == 73.1 and big["planted"] == {"incidents": 198, "first": 197, "top3": 198}
     assert [s["seed"] for s in d["held_out_seeds"]] == [3, 11, 42]
     assert d["synthetic"]["kinds"][:5] == ["deep", "silent", "infra", "shared", "host"]
     assert [c["label"] for c in d["confidence"]] == ["high", "medium", "low"]

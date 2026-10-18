@@ -2,6 +2,10 @@
 #
 #   make judge-check
 #
+# Break each safeguard on purpose, one at a time, on a scratch copy, and check a test notices (~2 min):
+#
+#   make mutants
+#
 # Reproduce every RCAEval number in the README with one command:
 #
 #   make eval          # ~3.3 GB download the first time, then signals, Hypocenter, RCAEval's baselines, the comparison
@@ -13,7 +17,7 @@ APP     = docker compose run --rm app
 SUITES  = --suites re2,re3 --systems ob,ss,tt
 BASE    = docker run --rm -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -v "$(PWD)/data:/data" -v "$(PWD)/baselines:/b:ro" faultline-baselines
 
-.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check
+.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check mutants
 
 eval: up data signals faultline baselines compare
 
@@ -55,3 +59,7 @@ scale:
 
 judge-check:
 	bash scripts/judge-check.sh
+
+mutants:
+	docker compose build -q app
+	$(APP) python -m faultline.mutants
