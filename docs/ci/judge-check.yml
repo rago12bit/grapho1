@@ -1,0 +1,19 @@
+# GitHub Actions: the same two commands a judge runs, on every push.
+# Add it on github.com (Add file -> Create new file -> .github/workflows/judge-check.yml, paste this), because a
+# token without the `workflow` scope can't push files under .github/workflows. Then `git pull` before the next push.
+name: judge-check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  judge-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, start, every test, then the product's checks on scratch graphs
+        run: make judge-check
+      - name: Break each safeguard on purpose and check a test notices
+        run: make mutants

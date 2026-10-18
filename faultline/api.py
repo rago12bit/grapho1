@@ -109,6 +109,7 @@ def _guard(fn, *args, **kw):
 
 class Ask(BaseModel):
     question: str = Field(min_length=2, max_length=500)
+    session: str | None = Field(default=None, pattern=r"^[a-z0-9-]{8,40}$")   # keep the conversation in the graph
 
 
 class Decision(BaseModel):
@@ -153,7 +154,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 184, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 198, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -426,7 +427,13 @@ def decide(tenant: str, action_id: str, body: Decision):
 @app.post("/api/{tenant}/ask")
 def ask(tenant: str, body: Ask):
     _g(tenant)
-    return agent.ask(tenant, body.question)
+    return agent.ask(tenant, body.question, body.session)
+
+
+@app.get("/api/{tenant}/sessions/{session_id}")
+def session_history(tenant: str, session_id: str):
+    """A conversation's turns, read back from the graph."""
+    return {"session": session_id, "turns": tools.conversation(_g(tenant), session_id)}
 
 
 @app.get("/api/{tenant}/memory")
@@ -530,6 +537,15 @@ def incident_spread(tenant: str, incident_id: str):
     g = _g(tenant)
     try:
         return tools.spread_tree(g, incident_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.get("/api/{tenant}/changes/{change_id}/trail")
+def change_trail(tenant: str, change_id: str):
+    """Where a change came from: who made it, the chat that led to it, what it shipped, what was said after."""
+    try:
+        return tools.decision_trail(_g(tenant), change_id)
     except KeyError as e:
         raise HTTPException(404, str(e))
 

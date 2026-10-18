@@ -6,6 +6,18 @@ import * as graph from "./graph.js";
 
 const ID = /^\s*(INC-\d+)\s*$/i;
 
+// One conversation per company per browser. Its turns live in the graph, so "who owns it?" knows what "it" is.
+const sessions = {};
+function session() {
+  const key = `hypocenter.session.${state.tenant}`;
+  try { sessions[key] = sessions[key] || localStorage.getItem(key); } catch {}
+  if (!sessions[key]) {
+    sessions[key] = (crypto.randomUUID ? crypto.randomUUID() : `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`).toLowerCase();
+    try { localStorage.setItem(key, sessions[key]); } catch {}
+  }
+  return sessions[key];
+}
+
 export async function run(text) {
   const q = text.trim();
   if (!q) return;
@@ -20,7 +32,7 @@ export async function run(text) {
   $("#run").disabled = true;
   let out;
   try {
-    out = await tapi("/ask", { method: "POST", body: JSON.stringify({ question: q }) });
+    out = await tapi("/ask", { method: "POST", body: JSON.stringify({ question: q, session: session() }) });
   } catch (e) {
     if (v === state.view) strip.innerHTML = `<div class="ans-body bad">${esc(e.message)}</div>${closeBtn()}`;
     return;
@@ -33,6 +45,8 @@ export async function run(text) {
   strip.innerHTML = `<div class="ans-body">
       <p class="serif ans">${esc(out.answer)}</p>
       ${out.fallback_reason ? `<p class="banner">Claude was unavailable; offline routing answered.</p>` : ""}
+      ${out.resolved ? `<p class="faint small">"it" is <b>${esc(out.resolved.it)}</b>, from earlier in this conversation</p>` : ""}
+      ${out.turn != null ? `<p class="faint small mono">turn ${out.turn + 1} of this conversation, kept in the graph: (:Session)-[:HAS_TURN]->(:Turn)-[:MENTIONS]->(${esc((out.mentions || []).slice(0, 3).join(", ") || "nothing it names")})</p>` : ""}
       <details class="how"><summary>how this was answered · ${plural(calls.length, "tool call")} · ${out.mode === "claude" ? `${esc(out.model)} chose the tools` : "offline router, no LLM"}</summary>
         <ol>${calls.map((s) => `<li><span class="mono"><b>${esc(s.tool)}</b><span class="faint">(${esc(Object.values(s.input || {}).map((x) => JSON.stringify(x)).join(", "))})</span></span>${s.note ? ` <span class="faint small">→ ${esc(s.note)}</span>` : ""}${queries(s.cypher, 2)}</li>`).join("")}</ol>
       </details>
@@ -77,6 +91,7 @@ export function samples() {
     { label: "Search degraded and nothing changed", q: "INC-303" },
     { label: "What breaks if ledger-db goes down?", q: "what breaks if ledger-db goes down?" },
     { label: "Who knows payments-db?", q: "who knows payments-db" },
+    { label: "Why was C-5101 made? (from the team's chat)", q: "why was C-5101 made?" },
     ...common,
   ];
   if (state.tenant === "boutique") return [

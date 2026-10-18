@@ -46,6 +46,14 @@ TOOL_SPECS: list[dict] = [
         "between the two services' first alerts: one tree per problem, links read from the first service to alert "
         "outwards. An independent check on the causal chain, from timing and topology only."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "chat_about", "description": (
+        "What people said in chat (Slack-style channels in the graph) about these services, changes or incidents, "
+        "from three hours before the incident to an hour after. Context and leads, never proof."),
+     "input_schema": _obj({"incident_id": S, "names": {"type": "array", "items": S}}, ["incident_id", "names"])},
+    {"name": "decision_trail", "description": (
+        "Where a change came from: who made it, the chat discussion that led to it (with replies), the commits it "
+        "shipped, what was said after it landed, and whether it was reverted and by whose approval."),
+     "input_schema": _obj({"change_id": S}, ["change_id"])},
     {"name": "callers", "description": "Every service that calls this one, directly or transitively, with hop counts (SSpaths walking CALLS backwards).",
      "input_schema": _obj({"service": S}, ["service"])},
     {"name": "depth_sweep", "description": (
@@ -182,6 +190,8 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
         "shape_matches": lambda incident_id: tools.shape_matches(g, incident_id),
         "alert_clusters": lambda incident_id: tools.alert_clusters(g, incident_id),
         "spread_tree": lambda incident_id: tools.spread_tree(g, incident_id),
+        "chat_about": lambda incident_id, names: tools.chat_about(g, names, _start(g, incident_id)),
+        "decision_trail": lambda change_id: tools.decision_trail(g, change_id),
         "callers": lambda service: tools.callers(g, service),
         "failure_paths": lambda source, target, k=3: tools.failure_paths(g, source, target, k),
         "single_points_of_failure": lambda limit=8: tools.single_points_of_failure(g, limit),
@@ -393,8 +403,11 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
                 change_id=top["change"]["id"], incident_id=incident_id)
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = run("investigator", "search_memory",
-                                     "Full-text search of past lessons, changes and alerts for the same symptoms.",
+                                     "Full-text search of past lessons, changes, alerts and chat for the same symptoms.",
                                      query=words.split(":", 1)[-1])
+        about = [_svc(top)] + ([top["change"]["id"]] if top["change"] else [])
+        ranking["chat"] = run("investigator", "chat_about", f"What people said in chat about {' and '.join(about)} around the incident.",
+                              incident_id=incident_id, names=about)
         run("investigator", "simulate_failure", f"Predict how a failure of {_svc(top)} spreads.", service=_svc(top))
     run("investigator", "write_handoff", "Hand off to the responder through the graph.", incident_id=incident_id,
         summary=(f"Leading suspect {(top['change'] or {}).get('id') or top['service']} on {top['service']} "
@@ -430,6 +443,10 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     if sym_alert and top:
         run("responder", "why", f"Follow {inc['symptom']}'s alert down its CAUSED_BY links to where it started.",
             alert_id=sym_alert["id"])
+    if top and top["change"]:
+        ranking["decision_trail"] = run("responder", "decision_trail",
+                                        f"Where {top['change']['id']} came from: who decided it, and what was said.",
+                                        change_id=top["change"]["id"])
     if act:
         run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
         who = _svc(top) if top and top["type"] == "host" else act["target"]
@@ -453,6 +470,7 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
 
 
 _ASK_ROUTES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"(why (was|did|were)|who decided|decision behind|where did|story of|history of)\b.*?\b([CDF]-\d+)", re.I), "decision_trail"),
     (re.compile(r"\b(INC-\d+)\b", re.I), "investigate"),
     (re.compile(r"who (knows|has fixed|is the expert on)\s+([\w-]+)", re.I), "experts"),
     (re.compile(r"(search|find|lessons? about|anything about)\s+(.+)", re.I), "search_memory"),
@@ -467,15 +485,27 @@ _ASK_ROUTES: list[tuple[re.Pattern, str]] = [
 ]
 
 
-def ask_offline(tenant: str, question: str) -> dict:
+_FOLLOW_UP = re.compile(r"\b(it|its|it's|that|this|there|them)\b", re.I)
+
+
+def ask_offline(tenant: str, question: str, previous: str | None = None) -> dict:
+    """`previous` is the service the conversation was last about: "who owns it?" after "what breaks if
+    ledger-db goes down?" means ledger-db."""
     services = {r["service"] for r in Graph(tenant).read("MATCH (s:Service) RETURN s.name AS service")}
     mentioned = [w for w in re.findall(r"[\w-]+", question.lower()) if w in services]
+    if not mentioned and previous in services and _FOLLOW_UP.search(question):
+        mentioned = [previous]
     for pat, route in _ASK_ROUTES:
         m = pat.search(question)
         if not m:
             continue
         if route == "investigate":
             return investigate_offline(tenant, m.group(1).upper(), propose=False)
+        if route == "decision_trail":
+            args = {"change_id": m.group(3).upper()}
+            res, q, err = call_tool(tenant, route, args)
+            return {"mode": "offline", "steps": [_step(route, args, res, q, err)], "answer": err or _trail_story(res),
+                    "findings": None}
         if route == "critical_services":
             args = {"limit": 8}
             res, q, err = call_tool(tenant, route, args)
@@ -536,6 +566,21 @@ def _not_in_graph(tenant: str, name: str) -> dict:
             answer += " Closest service names: " + ", ".join(res["near"]) + "."
     return {"mode": "offline", "steps": [_step("find_named", {"name": name}, res, q, err)], "answer": answer,
             "findings": None, "not_in_graph": not (res and res["found"])}
+
+
+def _trail_story(t: dict) -> str:
+    clock = lambda x: datetime.fromtimestamp(x, timezone.utc).strftime("%H:%M")  # noqa: E731
+    out = f"{t['id']} ({t['kind']} on {t['service']}) was made by {t['by_name'] or t['by'] or 'someone not recorded'} at {clock(t['at'])} UTC."
+    if t["discussion"]:
+        out += " In chat before it landed: " + " ".join(
+            f"{m['name'] or m['by']} in {m['channel']} at {clock(m['at'])}: \"{m['text']}\"" for m in t["discussion"])
+    else:
+        out += " Nothing in the chat the graph holds discussed it beforehand."
+    if t["said_after"]:
+        out += " Afterwards: " + " ".join(f"{m['name'] or m['by']} ({clock(m['at'])}): \"{m['text']}\"" for m in t["said_after"])
+    if t["reverts"]:
+        out += " Reverted: " + ", ".join(f"{r['action']} ({r['status']}, approved by {r['decided_by']})" for r in t["reverts"]) + "."
+    return out
 
 
 def _summarize(route: str, svc: str, res: Any, err: str | None) -> str:
@@ -605,12 +650,12 @@ people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; tim
 
 ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
-    "investigator": ["read_handoff", "rank_suspects", "commits_in", "public_precedents", "alert_clusters", "spread_tree", "failure_paths", "alerts_near", "paths_between",
+    "investigator": ["read_handoff", "rank_suspects", "commits_in", "public_precedents", "alert_clusters", "spread_tree", "chat_about", "failure_paths", "alerts_near", "paths_between",
                      "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
                      "write_handoff"],
     "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",
                 "write_handoff"],
-    "responder": ["read_handoff", "argument", "why", "journeys_hit", "on_call_at", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
+    "responder": ["read_handoff", "argument", "why", "decision_trail", "journeys_hit", "on_call_at", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
                   "failure_domains", "propose_action", "submit_findings"],
 }
 ROLE_BRIEF = {
@@ -633,14 +678,20 @@ ROLE_BRIEF = {
 ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "failure_paths", "similar_incidents",
              "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
              "failure_domains", "alert_clusters", "runbooks", "experts", "search_memory", "shape_matches",
-             "argument", "why", "commits_in", "delivery_metrics", "journeys_hit", "slo_status", "on_call_at", "run_cypher"]
+             "argument", "why", "commits_in", "delivery_metrics", "journeys_hit", "slo_status", "on_call_at", "run_cypher",
+             "chat_about", "decision_trail", "find_named", "depth_sweep", "spread_tree"]
+
+
+def _client():
+    """The Anthropic client (a seam: the tests hand the real SDK a fake transport)."""
+    import anthropic
+    return anthropic.Anthropic()
 
 
 def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,
                run_id: str | None = None) -> dict:
-    import anthropic
-
-    client = anthropic.Anthropic()
+    client = _client()
+    usage = {"input_tokens": 0, "output_tokens": 0, "cache_read_input_tokens": 0, "requests": 0}
     names = ROLE_TOOLS[role] if role else ASK_TOOLS
     specs = [t for t in TOOL_SPECS if t["name"] in names]
     system = _system(tenant) + (f"\n\n{ROLE_BRIEF[role]}" if role else "")
@@ -663,6 +714,9 @@ def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | No
             fallbacks="default",
             cache_control={"type": "ephemeral"},
         )
+        usage["requests"] += 1
+        for k in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
+            usage[k] += getattr(resp.usage, k, 0) or 0
         if resp.stop_reason == "refusal":
             answer = "The model declined this request."
             break
@@ -693,7 +747,7 @@ def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | No
                 answer = findings.get("summary", answer)
             break
     out = {"mode": "claude", "model": MODEL, "steps": steps, "findings": findings, "answer": answer,
-           "incident_id": incident_id}
+           "incident_id": incident_id, "usage": usage}
     if incident_id and not role:
         out["ranking"] = tools.rank_suspects(Graph(tenant), incident_id)
     return out
@@ -703,14 +757,17 @@ def investigate_claude(tenant: str, incident_id: str, run_id: str) -> dict:
     """Three Claude agents with separate tools; the only channel between them is the graph."""
     steps: list[dict] = []
     out: dict = {}
+    usage: dict[str, int] = {}
     for role in tools.ROLES:
         out = run_claude(tenant, f"Incident {incident_id}.", incident_id, role=role, run_id=run_id)
         steps += out["steps"]
+        for k, v in out["usage"].items():
+            usage[k] = usage.get(k, 0) + v
     ranking = tools.rank_suspects(Graph(tenant), incident_id)
     ranking = tools.apply_review(ranking, tools.skeptic_review(ranking))
     findings = out.get("findings") or _narrate(ranking)
     return {"mode": "claude", "model": MODEL, "incident_id": incident_id, "run_id": run_id, "steps": steps,
-            "findings": findings, "answer": findings.get("summary", ""), "ranking": ranking}
+            "findings": findings, "answer": findings.get("summary", ""), "ranking": ranking, "usage": usage}
 
 
 # --- entry points -------------------------------------------------------------------------------
@@ -785,13 +842,30 @@ def investigate(tenant: str, incident_id: str) -> dict:
     return out
 
 
-def ask(tenant: str, question: str) -> dict:
+def ask(tenant: str, question: str, session: str | None = None) -> dict:
+    """Answer a question. With a session, the conversation so far is read back from the graph first (what "it"
+    refers to; Claude gets the earlier turns), and the question and answer are kept as a new Turn."""
+    g = Graph(tenant)
+    history = tools.conversation(g, session, 6) if session else []
+    previous = next((t["subject"] for t in reversed(history) if t["subject"]), None)    # what "it" means now
+    out = None
     if claude_available():
         try:
             m = re.search(r"\b(INC-\d+)\b", question, re.I)
-            return run_claude(tenant, question, m.group(1).upper() if m else None)
+            earlier = "".join(f"Earlier: {t['question']}\nYou answered: {t['answer'][:400]}\n\n" for t in history)
+            out = run_claude(tenant, earlier + question, m.group(1).upper() if m else None)
         except Exception as e:
-            out = ask_offline(tenant, question)
+            out = ask_offline(tenant, question, previous)
             out["fallback_reason"] = f"{type(e).__name__}: {e}"[:300]
-            return out
-    return ask_offline(tenant, question)
+    if out is None:
+        out = ask_offline(tenant, question, previous)
+    asked = tools.mentions_in(g, question)
+    if previous and not asked and _FOLLOW_UP.search(question):
+        out["resolved"] = {"it": previous}
+    if session:
+        about = asked or ([previous] if out.get("resolved") else [])
+        about += [x for x in tools.mentions_in(g, out.get("answer") or "") if x not in about]
+        # what "it" will mean next: the first service the turn was about (for an incident, the one at fault)
+        subject = next((x for x in about if not re.fullmatch(r"(INC|[CDF])-\d+", x)), None)
+        out |= tools.record_turn(g, session, question, out.get("answer") or "", out["mode"], about, subject)
+    return out

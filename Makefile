@@ -17,7 +17,7 @@ APP     = docker compose run --rm app
 SUITES  = --suites re2,re3 --systems ob,ss,tt
 BASE    = docker run --rm -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -v "$(PWD)/data:/data" -v "$(PWD)/baselines:/b:ro" faultline-baselines
 
-.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check mutants
+.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check mutants live-run
 
 eval: up data signals faultline baselines compare
 
@@ -63,3 +63,7 @@ judge-check:
 mutants:
 	docker compose build -q app
 	$(APP) python -m faultline.mutants
+
+INC ?= INC-302
+live-run:   ## the four agents played by Claude on one incident; needs ANTHROPIC_API_KEY, spends tokens
+	docker compose run --rm -e ANTHROPIC_API_KEY -e FAULTLINE_GRAPH_PREFIX=livecheck_ -v "$(PWD)/docs:/app/docs" app python -m faultline.live_run $(INC)

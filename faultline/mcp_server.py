@@ -64,6 +64,16 @@ def callers(service: str) -> str:
     return _call("callers", service=service)
 
 
+@server.tool(description="What people said in chat about these services, changes or incidents around an incident. Context, never proof.")
+def chat_about(incident_id: str, names: list[str]) -> str:
+    return _call("chat_about", incident_id=incident_id, names=names)
+
+
+@server.tool(description="Where a change came from: who made it, the chat discussion that led to it, its commits, what was said after, and any revert.")
+def decision_trail(change_id: str) -> str:
+    return _call("decision_trail", change_id=change_id)
+
+
 @server.tool(description="Look a name up anywhere in the graph, with near service names. Nothing found means it isn't modelled, not that it is safe.")
 def find_named(name: str) -> str:
     return _call("find_named", name=name)

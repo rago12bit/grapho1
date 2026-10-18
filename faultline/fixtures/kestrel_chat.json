@@ -1,0 +1,99 @@
+{
+ "source": "synthetic: written for the Kestrel Pay demo company, in Slack's export shape",
+ "channels": [
+  {
+   "name": "payments-eng",
+   "messages": [
+    {
+     "user": "lin",
+     "ts": "1792240860.000100",
+     "text": "Cost review follow-up: going to drop pgbouncer max_client_conn on payments-db from 400 to 60. We never see more than ~45 client connections."
+    },
+    {
+     "user": "ravi",
+     "ts": "1792241041.000100",
+     "text": "Fine from Platform. Ship it after lunch and watch the refund batch at 13:15.",
+     "thread_ts": "1792240860.000100"
+    },
+    {
+     "user": "marta",
+     "ts": "1792241162.000100",
+     "text": "Careful: INC-212 was a pool limit on payments-db too, and the refund batch opens a lot of connections at once.",
+     "thread_ts": "1792240860.000100"
+    },
+    {
+     "user": "lin",
+     "ts": "1792241343.000100",
+     "text": "Noted, 60 still covers the peak we've seen. Going ahead.",
+     "thread_ts": "1792240860.000100"
+    },
+    {
+     "user": "lin",
+     "ts": "1792242784.000100",
+     "text": "C-5101 is out: max_client_conn is 60 on payments-db."
+    }
+   ]
+  },
+  {
+   "name": "inc-301-checkout",
+   "messages": [
+    {
+     "user": "priya",
+     "ts": "1792243440.000100",
+     "text": "Checkout p99 is at 8s and 12% errors. payments is timing out under it."
+    },
+    {
+     "user": "tomas",
+     "ts": "1792243561.000100",
+     "text": "D-5102 was mine but it only moves promo banner copy in cart; I can't see how that reaches checkout."
+    },
+    {
+     "user": "ade",
+     "ts": "1792243742.000100",
+     "text": "payments-db has clients waiting on the pool. Looks like the pool change, C-5101."
+    }
+   ]
+  },
+  {
+   "name": "identity-eng",
+   "messages": [
+    {
+     "user": "noor",
+     "ts": "1792243860.000100",
+     "text": "Rolling out D-5201: auth validates JWTs against the rotating JWKS cache now."
+    },
+    {
+     "user": "sam",
+     "ts": "1792244461.000100",
+     "text": "Mobile login errors are climbing, 401s from auth since about 13:38."
+    },
+    {
+     "user": "noor",
+     "ts": "1792244582.000100",
+     "text": "The JWKS cache refreshes slower than mobile-bff's tokens rotate. D-5201 looks like it.",
+     "thread_ts": "1792244461.000100"
+    }
+   ]
+  },
+  {
+   "name": "inc-303-search",
+   "messages": [
+    {
+     "user": "elena",
+     "ts": "1792244940.000100",
+     "text": "search is returning empty results and the catalog-es cluster is red. Nothing was deployed on search today."
+    }
+   ]
+  },
+  {
+   "name": "platform",
+   "messages": [
+    {
+     "user": "jo",
+     "ts": "1792234920.000100",
+     "text": "k8s-node-4 has disk pressure; the catalog and users pods on it keep restarting."
+    }
+   ]
+  }
+ ]
+}

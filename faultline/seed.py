@@ -590,7 +590,7 @@ def _write_history(g: Graph, history: list[dict]) -> None:
             FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | CREATE (p)-[:APPROVED]->(a))""", {"tried": tried})
 
 
-FULLTEXT = [("Lesson", "text"), ("Change", "summary"), ("Alert", "signal"), ("Incident", "title")]
+FULLTEXT = [("Lesson", "text"), ("Change", "summary"), ("Alert", "signal"), ("Incident", "title"), ("Message", "text")]
 SIGNATURE_DIM = 18
 
 
@@ -600,7 +600,7 @@ def _write_indexes(g: Graph) -> None:
     g.write(f"CREATE VECTOR INDEX FOR (i:Incident) ON (i.signature) "
             f"OPTIONS {{dimension: {SIGNATURE_DIM}, similarityFunction: 'cosine'}}")
     for label, prop in [("Service", "name"), ("Change", "id"), ("Incident", "id"), ("Person", "handle"),
-                        ("Team", "id"), ("Alert", "id"), ("Action", "id"), ("Episode", "id")]:
+                        ("Team", "id"), ("Alert", "id"), ("Action", "id"), ("Episode", "id"), ("Message", "id")]:
         g.write(f"CREATE INDEX FOR (n:{label}) ON (n.{prop})")
 
 
@@ -852,6 +852,8 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _link_config_changes(g)
         _write_journeys(g, KESTREL_JOURNEYS)
         _write_shifts(g)
+        from . import chat
+        chat.load_fixture(g)
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])

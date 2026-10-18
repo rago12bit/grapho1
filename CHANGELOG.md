@@ -28,13 +28,18 @@ Built during Graph Hacks (WeMakeDevs × FalkorDB, Oct 15–18 2026). The first c
 - Runtime and config from real Kubernetes manifests, deploys to commits, real Online Boutique releases,
   journeys and SLO budgets, the on-call rota, public post-mortems as precedent (fetched locally, never committed).
 - Alertmanager and CI webhooks, uploads as new tenants, an MCP server (read-only on a public server).
+- Conversations kept in the graph (`Session`, `Turn`): a follow-up knows what "it" refers to.
+- Chat in the graph from a Slack export (Kestrel's is synthetic): channels, threads, mentions, and the decision
+  trail of a change, from the discussion that led to it to its revert. Context for the agents, never scored.
 
 **Evidence**
 - All 360 RCAEval RE2/RE3 failures against RCAEval's own baseline code; Train Ticket held out until the method
   was frozen (v1 623d340, v2 8de51f4, v3 0b4ef76). 0.81 AC@1 over all 360; 0.71 held out, behind NSigma (0.76).
 - Planted-fault eval with ablations and baselines: 94.5–96.8% top-1 on held-out seeds.
 - Scale: 3,000 services, 211k nodes, a verdict in 73 ms.
-- `make judge-check` (passes on a fresh clone), `make mutants` (21 of 21 caught), 184 tests.
+- `make judge-check` (passes on a fresh clone), `make mutants` (25 of 25 caught), 198 tests.
+- The Claude path tested end to end through the real Anthropic SDK with a scripted transport; `make live-run` for
+  the real thing (needs a key).
 
 **Site**
 - Landing page, incident room, On-call, Explore, Break it (seven experiments on graph copies), Replay, Results.

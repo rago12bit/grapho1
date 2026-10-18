@@ -57,13 +57,13 @@ Each track's key-focus bullets, as the hackathon page lists them, with where Hyp
 | **T1** Actions based on what the graph shows | A fix is proposed, proved on a `GRAPH.COPY`, approved by a person, then verified from which alerts cleared | `faultline/proof.py`, `tools.verify_fix` | 5 of 5 fix proofs hold; the decoy clears nothing |
 | **T1** Explainable results | Hypotheses with evidence for and against, each citing nodes; the `CAUSED_BY` chain; every claim checked against the graph | `faultline/reasoning.py`, `tools.verify_claims` | INC-302: 15 of 15 claims checked |
 | **T2** Episodic, semantic, procedural memory | Episodic: resolved incidents, `Lesson`s, past `Investigation`s. Semantic: owners, runbooks, journeys. Procedural: each fix's track record per service | `faultline/tools.py` | deleting memory lowers the same change's score (a test) |
-| **T2** Persistent conversation history | Partly: every investigation and agent handoff is stored (`Investigation`, `Episode`) and read back by the next run. Free-form questions in the Ask bar are not stored | `tools.record_investigation`, `tools.past_investigations` | |
+| **T2** Persistent conversation history | Every question in the Ask bar and its answer is a `Turn` in a `Session`, linked to the turn before and to what it was about, and read back before the next question: "who owns it?" after "what breaks if ledger-db goes down?" means ledger-db. Investigations and agent handoffs are stored too (`Investigation`, `Episode`) | `tools.record_turn`, `tools.conversation`, `agent.ask` | `GET /api/{t}/sessions/{id}`; tests |
 | **T2** Shared state and handoffs between agents | Four agents pass nothing in code: each writes an `Episode`, the next reads it (`READ` edge) | `faultline/agent.py` | investigations resume from the graph |
 | **T2** High-concurrency reads and writes | Many investigations at once on a graph copy, isolation and consistency checked; retries when FalkorDB is busy | `faultline/bench.py` | 40 runs, 8 at a time: ~80 runs/s, 0 crossed handoffs, identical verdicts |
 | **T2** Separate memory per user or tenant | One graph per company; learned weights per company | `faultline/db.py`, `faultline/learn.py` | a test proves tenant isolation |
-| **T3** Knowledge from docs, tickets, and chats in one graph | Partly: runbooks, lessons, incidents, commit messages, CODEOWNERS and public post-mortems sit beside the topology. No chat import | `faultline/owners.py`, `faultline/delivery.py`, `faultline/public_postmortems.py` | |
+| **T3** Knowledge from docs, tickets, and chats in one graph | Chat channels, messages, threads and what each message mentions (from a Slack export; Kestrel's chat is synthetic), runbooks, lessons, incidents, commit messages, CODEOWNERS and public post-mortems sit beside the topology. Memory search covers chat | `faultline/chat.py`, `faultline/owners.py`, `faultline/delivery.py` | the investigator reads the chat around the incident |
 | **T3** Who owns what, and who knows what | Owners and on-call rota; experts ranked by the fixes they approved and the changes they made | `tools.who_owns`, `tools.experts`, `faultline/site.py` | INC-302 pages Identity's Sam Whitfield (a test) |
-| **T3** Tracing decisions back to their source | Each change links to who made it and the commits it shipped; each fix to who approved it; each verdict to the evidence it cites | `faultline/reasoning.py`, `faultline/delivery.py` | D-5201 → the commit that changed the token check |
+| **T3** Tracing decisions back to their source | `decision_trail`: a change, who made it, the chat discussion that led to it (with its replies), the commits it shipped, what was said once it landed and any revert. Each fix links to who approved it, each verdict to the evidence it cites | `tools.decision_trail`, `faultline/reasoning.py` | "why was C-5101 made?": Lin's proposal, Ravi's OK and Marta's INC-212 warning, before it landed |
 | **T3** Keeping knowledge current as things change | Alertmanager and CI webhooks write alerts and changes as they happen; each company's judge is refitted on its solved incidents | `faultline/ingest.py`, `faultline/learn.py` | `demo/fire.sh` plays a live incident in |
 | **T3** Answers with clear sources | Each answer step shows its Cypher; a name the graph doesn't have is answered as not modelled | `faultline/agent.py` `ask_offline`, `tools.find_named` | [Results: depth and unknowns](http://localhost:8090/results#depth) |
 
@@ -100,7 +100,7 @@ The Python package is still called `faultline` (the project's working name); eve
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
 Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**, **03 Company Brain**.
 
-Kestrel Pay and Harbor Freight are synthetic. **Online Boutique, Sock Shop and Train Ticket** are real: every failure in the public RCAEval benchmark's RE2 and RE3 suites (call graphs, metrics, logs, operation-level traces, root causes), with Online Boutique's owners and contributors from its own CODEOWNERS and git history. Nothing outside the graph is ever changed.
+Kestrel Pay and Harbor Freight are synthetic, Kestrel's chat included. **Online Boutique, Sock Shop and Train Ticket** are real: every failure in the public RCAEval benchmark's RE2 and RE3 suites (call graphs, metrics, logs, operation-level traces, root causes), with Online Boutique's owners and contributors from its own CODEOWNERS and git history. Nothing outside the graph is ever changed.
 
 ## Run it
 
@@ -115,7 +115,8 @@ docker compose up -d --build
 - FalkorDB browser: http://localhost:3003 (graph `hypocenter_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
 - **For a judge: `make judge-check`** (about 2 minutes, Docker only, no key). It builds and starts everything, runs every test, then checks the product itself on scratch graphs it drops afterwards: the agents' verdict on each Kestrel incident, depth 1 against full depth, a question about something not in the graph, the fix proofs, the Break-it experiments, the planted-fault eval against this README's number, and isolation under concurrent runs. The output of a run on a fresh clone is in [docs/judge-check-clean-clone.txt](docs/judge-check-clean-clone.txt).
-- **`make mutants`** breaks each safeguard on purpose, one at a time, on a scratch copy of the code, and checks a test notices: the depth limit, the "not in the graph" answer, the alert-order rule, the skeptic, the claim checks, fix verification, the read-only guards, tenant ids, the answer key staying out of the judge, the public-server guards, and graph copies being dropped. **21 of 21 caught** ([docs/mutants.txt](docs/mutants.txt)).
+- **`make live-run`** (needs `ANTHROPIC_API_KEY`, spends tokens): the four agents played by Claude on INC-302, on scratch graphs, written down as a transcript: every tool each agent chose, the findings, which claims the graph backed, and whether the model agreed with the judge.
+- **`make mutants`** breaks each safeguard on purpose, one at a time, on a scratch copy of the code, and checks a test notices: the depth limit, the "not in the graph" answer, the alert-order rule, the skeptic, the claim checks, fix verification, the read-only guards, tenant ids, the answer key staying out of the judge, the public-server guards, graph copies being dropped, the follow-up memory, chat mentions, each agent's tool list, and dropping claims the graph can't back. **25 of 25 caught** ([docs/mutants.txt](docs/mutants.txt)).
 
 The graphs are built on first start. **Reset** in the header rebuilds them. **Guided demo** (or http://localhost:8090/app?demo=1) plays the whole story on the live app with captions.
 
@@ -199,6 +200,8 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 (:Person)-[:ON_SHIFT]->(:OnCallShift {from, to})-[:COVERS]->(:Team)
 (:Action {predicted_clear, preview})   # the fix as proved on a GRAPH.COPY before approval (faultline/proof.py)
 (:Feedback {verdict, by, note})-[:ABOUT]->(:Incident)   (:Model {kind, weights, enabled, evaluation})   # learned from outcomes
+(:Session)-[:HAS_TURN]->(:Turn {question, answer, subject})-[:MENTIONS]->(:Service|:Incident|:Change)   (:Turn)-[:FOLLOWS]->(:Turn)
+(:Message {at, text})-[:IN_CHANNEL]->(:Channel)   (:Message)-[:POSTED_BY]->(:Person)   (:Message)-[:REPLY_TO]->(:Message)   (:Message)-[:MENTIONS]->(:Service|:Change|:Incident|:Node)
 (:Version {tag})-[:INCLUDES]->(:Commit)-[:MENTIONS]->(:Service)   (:Version)-[:CHANGED {files, additions}]->(:Service)   (:Image)-[:BUILT_FROM]->(:Version)
 ```
 
@@ -398,7 +401,9 @@ faultline/ingest.py      live input: CI change events, the Alertmanager webhook,
 faultline/upload.py      bring your own incident: JSON or an RCAEval-layout zip, validated, as a new tenant
 faultline/postmortem.py  Markdown postmortem from the graph
 faultline/judge_check.py the product checks behind `make judge-check` (scripts/judge-check.sh), on scratch graphs
-faultline/mutants.py     `make mutants`: 21 safeguards broken one at a time on a scratch copy; a test must catch each
+faultline/mutants.py     `make mutants`: 25 safeguards broken one at a time on a scratch copy; a test must catch each
+faultline/live_run.py    `make live-run`: the Claude agents on one incident, written down as a transcript
+faultline/chat.py        chat in the graph: a Slack export (or Kestrel's synthetic chat) as channels, messages, threads, mentions
 faultline/owners.py      fetches Online Boutique's real owners and commit history from GitHub
 deploy/                  public deployment: Caddy (HTTPS) + docker-compose.public.yml, see DEPLOY.md
 demo/fire.sh             plays a live incident in through the webhooks
@@ -422,8 +427,8 @@ tests/                   pytest against a real FalkorDB, on separate test graphs
 Rule 11 asks for it.
 
 - **How it was built.** Claude Code (Anthropic) was the coding assistant and wrote most of the code, tests and docs. The author chose the problem and the tracks, the rules the agent works under (the alert chain decides, "nothing changed" is an answer, the agent can only propose, a person approves), what data to use and what to leave out (the post-mortem list has no licence, so it is never committed), and approved every push.
-- **How the output was checked rather than trusted.** The test suite runs against a real FalkorDB (`docker compose run --rm app pytest -q`), and the safeguards are checked by breaking the code on purpose: `make mutants` runs 21 named breakages and a test catches every one. The planted-fault eval has ablations and naive baselines; the RCAEval comparison runs RCAEval's own baseline code, with Train Ticket held out until the method was frozen. Numbers on the site and in the Results page are read from the files that publish them, and tests tie them together.
-- **The product's own model use.** With `ANTHROPIC_API_KEY` set, `claude-opus-5-5` plays the four agents with only each role's tools. Without it, the offline playbook calls the same tools in a fixed order. The verdict comes from the deterministic judge either way. The Claude path has not been run against the live API from this repository's tests.
+- **How the output was checked rather than trusted.** The test suite runs against a real FalkorDB (`docker compose run --rm app pytest -q`), and the safeguards are checked by breaking the code on purpose: `make mutants` runs 25 named breakages and a test catches every one. The planted-fault eval has ablations and naive baselines; the RCAEval comparison runs RCAEval's own baseline code, with Train Ticket held out until the method was frozen. Numbers on the site and in the Results page are read from the files that publish them, and tests tie them together.
+- **The product's own model use.** With `ANTHROPIC_API_KEY` set, `claude-opus-5-5` plays the four agents with only each role's tools. Without it, the offline playbook calls the same tools in a fixed order. The verdict comes from the deterministic judge either way. The Claude path is tested end to end through the real Anthropic SDK with a scripted transport (`tests/test_claude_path.py`: the request each role sends, its tool list, the handoffs, the dropped claims), and `make live-run` runs it against the API with your key and writes the transcript to `docs/live-run-<incident>.md`. Until that file is in the repository, the live API has not been called from here.
 - **Media.** The demo video is recorded from the running app by `demo/record.mjs` and mixed by `demo/mix.py`; its captions come from `demo/narration.json`.
 
 ## Limits
@@ -433,4 +438,4 @@ Rule 11 asks for it.
 - The clock is frozen at 14:00 UTC on 17 Oct 2026, so every run tells the same story.
 - The base scoring weights are hand-set and explained in the UI; each real company's refit is used only when cross-validation on its solved incidents says it is at least as good. The eval shows what each factor contributes.
 - The fault simulator models the call graph only. It does not know fault types (CPU, memory, network) or traffic volume, which would sharpen the predicted footprint.
-- The Claude-driven agents have not been run against the live API in this repo's tests; the offline playbook is what the tests and the eval exercise.
+- The tests reach the Claude path through a scripted transport, not the live API; the eval and the demo use the offline playbook. `make live-run` is the live check, and it spends tokens.

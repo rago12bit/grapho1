@@ -1446,6 +1446,100 @@ def spread_tree(g: Graph, incident_id: str) -> dict:
     trees.sort(key=lambda t: (not t["has_symptom"], t["first_alert"]))
     return {"incident": incident_id, "symptom": sym, "trees": trees, "count": len(trees)}
 
+# --- chat ---------------------------------------------------------------------------------------------
+
+def chat_about(g: Graph, names: list[str], around: int, before_min: int = 180, after_min: int = 60) -> list[dict]:
+    """What people said in chat about these services, changes or incidents around a moment: context, never scored."""
+    return g.read("""
+        MATCH (m:Message)-[:MENTIONS]->(x) WHERE coalesce(x.name, x.id) IN $names AND m.at >= $lo AND m.at <= $hi
+        MATCH (m)-[:IN_CHANNEL]->(c:Channel), (m)-[:POSTED_BY]->(p:Person)
+        OPTIONAL MATCH (m)-[:REPLY_TO]->(parent:Message)
+        RETURN DISTINCT m.id AS id, m.at AS at, '#' + c.name AS channel, p.handle AS by, p.name AS name, m.text AS text,
+               parent.id AS reply_to
+        ORDER BY at""", {"names": names, "lo": around - before_min * 60, "hi": around + after_min * 60})
+
+
+def decision_trail(g: Graph, change_id: str) -> dict:
+    """Where a change came from: who made it, the chat that led to it (messages about its service in the three hours
+    before it landed, and every reply in those threads), what it shipped, what was said once it was out, and
+    whether it was later reverted and by whose approval."""
+    rows = g.read("""
+        MATCH (c:Change {id: $id})-[:CHANGED]->(s:Service)
+        OPTIONAL MATCH (p:Person)-[:MADE]->(c)
+        OPTIONAL MATCH (c)-[:SHIPS]->(k:Commit)
+        OPTIONAL MATCH (a:Action)-[:REVERTS]->(c)
+        RETURN c.id AS id, c.kind AS kind, c.at AS at, c.summary AS summary, s.name AS service, p.handle AS by,
+               p.name AS by_name, collect(DISTINCT k.message) AS commits,
+               collect(DISTINCT {action: a.id, status: a.status, decided_by: a.decided_by}) AS reverts""", {"id": change_id})
+    if not rows:
+        raise KeyError(f"no change {change_id}")
+    c = rows[0]
+    before = g.read("""
+        MATCH (m:Message)-[:MENTIONS]->(x) WHERE (x:Service AND x.name = $svc OR x:Change AND x.id = $id)
+              AND m.at >= $lo AND m.at <= $at
+        OPTIONAL MATCH (reply:Message)-[:REPLY_TO]->(m)
+        WITH collect(DISTINCT m) + collect(DISTINCT reply) AS ms
+        UNWIND ms AS m
+        WITH DISTINCT m WHERE m IS NOT NULL
+        MATCH (m)-[:IN_CHANNEL]->(ch:Channel), (m)-[:POSTED_BY]->(p:Person)
+        RETURN m.id AS id, m.at AS at, '#' + ch.name AS channel, p.handle AS by, p.name AS name, m.text AS text
+        ORDER BY at""", {"svc": c["service"], "id": change_id, "lo": c["at"] - 180 * 60, "at": c["at"] + 5 * 60})
+    seen = {m["id"] for m in before}
+    after = [m for m in chat_about(g, [change_id], c["at"], 0, 24 * 60) if m["id"] not in seen]
+    people = list(dict.fromkeys(m["by"] for m in before))
+    return {**c, "reverts": [r for r in c["reverts"] if r["action"]], "discussion": before, "said_after": after,
+            "people_in_discussion": people}
+
+# --- conversation memory ------------------------------------------------------------------------------
+
+def mentions_in(g: Graph, text: str) -> list[str]:
+    """Services, incidents and changes a piece of text names that the graph has, in the order they appear."""
+    words = re.findall(r"[A-Za-z][\w-]*", text)
+    ids = {w.upper() for w in words if re.fullmatch(r"(?i)(INC|[CDF])-\d+", w)}
+    rows = g.read("""
+        MATCH (x) WHERE (x:Service AND x.name IN $words) OR ((x:Incident OR x:Change) AND x.id IN $ids)
+        RETURN coalesce(x.name, x.id) AS name""", {"words": sorted(set(words)), "ids": sorted(ids)})
+    found = {r["name"] for r in rows}
+    out = []
+    for w in words:              # service names are matched as written: "Payments" the team is not payments
+        name = w.upper() if w.upper() in ids else w
+        if name in found and name not in out:
+            out.append(name)
+    return out
+
+
+def record_turn(g: Graph, session_id: str, question: str, answer: str, mode: str, mentions: list[str],
+                subject: str | None = None) -> dict:
+    """One question and its answer, kept: (:Session)-[:HAS_TURN]->(:Turn)-[:MENTIONS]->(what it was about), each
+    turn linked to the one before, so a later question (or another agent) can pick the conversation up."""
+    n = g.read("MATCH (:Session {id: $s})-[:HAS_TURN]->(t:Turn) RETURN count(t) AS n", {"s": session_id})[0]["n"]
+    tid = f"{session_id}-{n}"
+    g.write("""
+        MERGE (s:Session {id: $s}) ON CREATE SET s.started = $at
+        CREATE (s)-[:HAS_TURN]->(t:Turn {id: $tid, n: $n, question: $q, answer: $a, mode: $mode, at: $at, subject: $subject})
+        WITH s, t
+        OPTIONAL MATCH (s)-[:HAS_TURN]->(prev:Turn {n: $n - 1})
+        FOREACH (_ IN CASE WHEN prev IS NULL THEN [] ELSE [1] END | CREATE (t)-[:FOLLOWS]->(prev))
+        WITH t
+        UNWIND $mentions AS m
+        MATCH (x) WHERE (x:Service AND x.name = m) OR ((x:Incident OR x:Change) AND x.id = m)
+        CREATE (t)-[:MENTIONS]->(x)""",
+            {"s": session_id, "tid": tid, "n": n, "q": question, "a": answer[:2000], "mode": mode,
+             "at": int(time.time()), "mentions": mentions, "subject": subject})
+    return {"session": session_id, "turn": n, "mentions": mentions, "subject": subject}
+
+
+def conversation(g: Graph, session_id: str, limit: int = 20) -> list[dict]:
+    """A session's turns read back from the graph, oldest first, with what each one was about."""
+    rows = g.read("""
+        MATCH (:Session {id: $s})-[:HAS_TURN]->(t:Turn)
+        OPTIONAL MATCH (t)-[:MENTIONS]->(x)
+        WITH t, collect({name: coalesce(x.name, x.id), kind: labels(x)[0]}) AS about
+        RETURN t.n AS n, t.question AS question, t.answer AS answer, t.mode AS mode, t.at AS at, t.subject AS subject,
+               [a IN about WHERE a.name IS NOT NULL] AS about
+        ORDER BY n DESC LIMIT $limit""", {"s": session_id, "limit": limit})
+    return rows[::-1]
+
 # --- verifying a fix --------------------------------------------------------------------------------
 
 def verify_fix(g: Graph, action_id: str) -> dict:
@@ -1550,7 +1644,7 @@ def experts(g: Graph, service: str, limit: int = 5) -> list[dict]:
 # --- full-text memory search -------------------------------------------------------------------------
 
 def search_memory(g: Graph, query: str, limit: int = 8) -> list[dict]:
-    """Full-text search (FalkorDB's full-text indexes) over past lessons, changes, alerts and incident titles.
+    """Full-text search (FalkorDB's full-text indexes) over past lessons, changes, alerts, incident titles and chat.
     Any of the words may match; results come with what they belong to."""
     words = [w for w in re.findall(r"[A-Za-z0-9_]+", query) if len(w) > 2][:12]
     if not words:
@@ -1562,6 +1656,8 @@ def search_memory(g: Graph, query: str, limit: int = 8) -> list[dict]:
         ("Change", "summary", "OPTIONAL MATCH (node)-[:CHANGED]->(s:Service) RETURN 'change' AS kind, node.id AS ref, node.summary AS text, score, s.name AS service"),
         ("Alert", "signal", "OPTIONAL MATCH (node)-[:FIRED_ON]->(s:Service) RETURN 'alert' AS kind, node.id AS ref, node.signal AS text, score, s.name AS service"),
         ("Incident", "title", "RETURN 'incident' AS kind, node.id AS ref, node.title AS text, score"),
+        ("Message", "text", "MATCH (node)-[:IN_CHANNEL]->(c:Channel) OPTIONAL MATCH (node)-[:POSTED_BY]->(p:Person) "
+                            "RETURN 'chat' AS kind, '#' + c.name AS ref, node.text AS text, score, p.handle AS by"),
     ]:
         rows += g.read(f"""
             CALL db.idx.fulltext.queryNodes('{label}', $q) YIELD node, score
