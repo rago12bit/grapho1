@@ -452,3 +452,9 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .journeys .meter { margin: 3px 0; }
 .meter.bad-meter i { background: var(--accent); }
 .meter.warn-meter i { background: var(--amber); }
+.scrub { position: absolute; left: 12px; right: 12px; bottom: 34px; display: flex; gap: 10px; align-items: center;
+  background: var(--overlay); border: 1px solid var(--line); padding: 4px 10px; z-index: 5; }
+.scrub input[type=range] { flex: 1; accent-color: var(--accent); }
+.scrub .btn { padding: 2px 9px; }
+.live-steps { list-style: none; margin: 8px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--accent-line); max-height: 220px; overflow: auto; font-size: 12px; }
+.live-steps li { padding: 2px 0; }

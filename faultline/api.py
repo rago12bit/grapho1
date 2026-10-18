@@ -3,14 +3,17 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import os
+import queue
+import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -35,7 +38,7 @@ app = FastAPI(title="Faultline", lifespan=lifespan)
 PUBLIC = os.environ.get("FAULTLINE_PUBLIC") == "1"
 INGEST_TOKEN = os.environ.get("FAULTLINE_INGEST_TOKEN", "")
 # route suffix -> (requests, per seconds), per client address
-LIMITS = [("/investigate", 20, 60), ("/upload", 4, 600), ("/bench", 2, 60), ("/reset", 2, 300), ("/ask", 30, 60),
+LIMITS = [("/investigate", 20, 60), ("/investigate/stream", 20, 60), ("/upload", 4, 600), ("/bench", 2, 60), ("/reset", 2, 300), ("/ask", 30, 60),
           ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300)]
 _hits: dict[tuple[str, str], deque] = {}
 
@@ -150,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 127, "planted": "94.5–96.8%", "real": "285/360"}
+PROOF = {"tests": 130, "planted": "94.5–96.8%", "real": "285/360"}
 
 
 @app.get("/api/health")
@@ -307,6 +310,55 @@ def investigate(tenant: str, incident_id: str):
             return agent.investigate(tenant, incident_id)
     except ingest.Busy as e:
         raise HTTPException(409, str(e))
+
+
+def _brief(st: dict) -> dict:
+    """A step as the stream sends it: what ran, why, how long FalkorDB took, and a short result."""
+    res = st.get("result")
+    short = (f"{len(res)} rows" if isinstance(res, list) else
+             ", ".join(f"{k}: {str(v)[:60]}" for k, v in list(res.items())[:3]) if isinstance(res, dict) else str(res)[:120])
+    return {"tool": st["tool"], "role": st.get("role"), "note": st.get("note") or "", "error": st.get("error"),
+            "queries": len(st.get("cypher") or []), "ms": round(sum(q["ms"] for q in st.get("cypher") or []), 1),
+            "result": short, "input": {k: str(v)[:60] for k, v in (st.get("input") or {}).items()}}
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/investigate/stream")
+async def investigate_stream(tenant: str, incident_id: str, pace_ms: int = 0):
+    """The same investigation as POST .../investigate, streamed as server-sent events: one `step` event per
+    tool call as it happens, then `done` with the full result (or `error`). The offline playbook finishes in well
+    under a second, so `pace_ms` (at most 500) can space the steps out for someone watching; it only waits
+    between steps, nothing is replayed or faked."""
+    _guard(tools.get_incident, _g(tenant), incident_id)
+    pace = max(0, min(int(pace_ms), 500)) / 1000
+    q: queue.Queue = queue.Queue()
+
+    def sink(st: dict) -> None:
+        q.put(("step", _brief(st)))
+        if pace:
+            time.sleep(pace)
+
+    def work() -> None:
+        token = agent.STEP_SINK.set(sink)
+        try:
+            with ingest.exclusive(tenant, incident_id):
+                q.put(("done", agent.investigate(tenant, incident_id)))
+        except ingest.Busy as e:
+            q.put(("error", {"detail": str(e)}))
+        except Exception as e:  # reported to the watcher, not swallowed
+            q.put(("error", {"detail": f"{type(e).__name__}: {e}"[:300]}))
+        finally:
+            agent.STEP_SINK.reset(token)
+
+    threading.Thread(target=work, daemon=True).start()
+
+    async def events():
+        while True:
+            kind, data = await asyncio.to_thread(q.get)
+            yield f"event: {kind}\ndata: {json.dumps(data, default=str)}\n\n"
+            if kind in ("done", "error"):
+                break
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/{tenant}/changes")

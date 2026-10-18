@@ -3,6 +3,7 @@ a fixed playbook calls the same tools in order. Both return the same shape, step
 Cypher behind every step, so the UI can't tell them apart except by the `mode` label."""
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
@@ -198,10 +199,17 @@ def call_tool(tenant: str, name: str, args: dict, run_id: str | None = None,
         return None, trace.queries, f"{type(e).__name__}: {e}"
 
 
+# Where each step goes as it happens, when someone is watching (the streaming route sets it for its own run).
+STEP_SINK: contextvars.ContextVar[Callable[[dict], None] | None] = contextvars.ContextVar("step_sink", default=None)
+
+
 def _step(name: str, args: dict, result: Any, queries: list[dict], error: str | None, note: str = "",
           role: str | None = None) -> dict:
-    return {"tool": name, "input": args, "result": result, "cypher": queries, "error": error, "note": note,
-            "role": role}
+    st = {"tool": name, "input": args, "result": result, "cypher": queries, "error": error, "note": note, "role": role}
+    sink = STEP_SINK.get()
+    if sink:
+        sink(st)
+    return st
 
 
 # --- offline playbook ---------------------------------------------------------------------------

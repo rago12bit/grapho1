@@ -44,6 +44,7 @@ function style() {
     { selector: "edge.hit", style: { "line-color": t.ink, "target-arrow-color": t.ink, width: 1.8, opacity: 1 } },
     { selector: "edge.caused", style: { label: "data(lag)", "font-family": "IBM Plex Mono, monospace", "font-size": 9, color: t.ink,
       "text-background-color": t.bg, "text-background-opacity": 1, "text-background-padding": 2, "text-rotation": "none" } },
+    { selector: "node.changed", style: { "border-color": t.accent, "border-style": "dashed", "border-width": 2 } },
     { selector: "edge.reach", style: { "line-color": t.amber, "target-arrow-color": t.amber, width: 1.6, "line-style": "dashed", opacity: 0.9 } },
   ];
 }
@@ -80,7 +81,7 @@ export function fit(cap = 1.3) {
 
 export function clear() {
   if (!cy) return;
-  cy.elements().removeClass("dim symptom suspect alerting path hit lit sel reach caused");
+  cy.elements().removeClass("dim symptom suspect alerting path hit lit sel reach caused changed");
   caption(null);
 }
 
@@ -161,6 +162,9 @@ function draw(spec, animate = true) {
 
 export function showSystem() {
   shown = null;
+  replay = null;
+  const bar = document.querySelector("#scrub");
+  if (bar) bar.hidden = true;
   if (!cy) return;
   cy.elements().removeClass("gone");
   cy.nodes().positions((n) => home[n.id()] || n.position());
@@ -173,6 +177,59 @@ export function showSystem() {
 export function showCase(r, timeline, { animate = false } = {}) {
   draw(caseSpec(r, timeline), true);
   mark(r, timeline, !animate);
+  setupReplay(r, timeline);
+}
+
+// --- replay: scrub through the incident and watch the graph change -----------------------------------------
+
+let replay = null;
+
+function setupReplay(r, timeline) {
+  const bar = $("#scrub");
+  const events = [...(timeline?.alerts || []).map((a) => ({ ...a, type: "alert" })), ...(timeline?.changes || []).map((c) => ({ ...c, type: "change" }))]
+    .filter((e) => e.at && cy.$id(e.service).nonempty()).sort((a, b) => a.at - b.at);
+  if (!events.length) { bar.hidden = true; replay = null; return; }
+  const t0 = events[0].at - 120, t1 = Math.max(events[events.length - 1].at, r.incident.started) + 120;
+  replay = { r, timeline, events, t0, t1 };
+  const range = $("#scrub-t");
+  range.min = 0; range.max = 1000; range.value = 1000;
+  bar.hidden = false;
+  $("#scrub-label").textContent = "whole incident";
+}
+
+/** The graph as it stood at time t: what had changed, what was alerting, which causal hops had happened. */
+export function replayAt(frac) {
+  if (!replay || !cy) return;
+  const { r, events, t0, t1 } = replay;
+  const t = t0 + (t1 - t0) * frac;
+  cy.elements().not(".gone").removeClass("alerting suspect path caused lit symptom changed reach").addClass("dim");
+  const sym = cy.$id(r.incident.symptom);
+  sym.removeClass("dim");
+  const seen = events.filter((e) => e.at <= t);
+  seen.forEach((e) => cy.$id(e.service).removeClass("dim").addClass(e.type === "alert" ? "alerting" : "changed"));
+  if (seen.some((e) => e.type === "alert" && e.service === r.incident.symptom) || t >= r.incident.started) sym.addClass("symptom");
+  const at = new Map(seen.filter((e) => e.type === "alert").map((e) => [e.id, e.at]));
+  for (const l of r.reasoning?.chain?.links || []) {
+    if (l.to_label !== "Alert" || !l.direct || !at.has(l.from) || !at.has(l.to)) continue;
+    const e = cy.$id(`${l.from_service}->${l.to_service}`);
+    if (e.nonempty()) e.data("lag", `+${l.lag_s}s`).removeClass("dim").addClass("caused path");
+  }
+  const last = seen[seen.length - 1];
+  const hhmm = (x) => new Date(x * 1000).toISOString().slice(11, 16);
+  $("#scrub-label").textContent = `${hhmm(t)} UTC · ${seen.filter((e) => e.type === "alert").length} alerting, ${seen.filter((e) => e.type === "change").length} changed`
+    + (last ? ` · last: ${last.type === "alert" ? `${last.service} alerted` : `${last.id} on ${last.service}`}` : "");
+  if (frac >= 1) mark(r, replay.timeline, true);
+}
+
+export async function playReplay(v) {
+  if (!replay) return;
+  const range = $("#scrub-t");
+  for (let i = 0; i <= 100; i++) {
+    if (v !== state.view) return;
+    range.value = i * 10;
+    replayAt(i / 100);
+    await sleep(80);
+  }
 }
 
 function mark(r, timeline, full) {

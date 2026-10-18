@@ -41,7 +41,7 @@ export async function runAgents(inc) {
   $("#go-note").innerHTML = `<span class="spinner"></span> ${state.health?.claude ? "Claude is walking the graph" : "triage → investigator → skeptic → responder"}`;
   let out;
   try {
-    out = await tapi(`/incidents/${inc.id}/investigate`, { method: "POST" });
+    out = await streamAgents(inc, v);
   } catch (e) {
     if (v === state.view) { $("#go-note").textContent = e.message; if (btn) { btn.disabled = false; btn.textContent = "Run the four agents"; } }
     return;
@@ -54,6 +54,34 @@ export async function runAgents(inc) {
   graph.showCase(out.ranking, out.timeline, { animate: true });
   act.refreshBoard?.();
   await graph.animate(out.ranking, out.timeline, v);
+}
+
+/** Run the agents over server-sent events: each tool call shows up as it happens, then the full result. The
+ *  offline playbook is fast, so the server spaces the steps out (pace_ms) for watching; it waits, it doesn't fake. */
+function streamAgents(inc, v) {
+  if (!window.EventSource) return tapi(`/incidents/${inc.id}/investigate`, { method: "POST" });
+  const live = document.createElement("ol");
+  live.className = "live-steps";
+  $("#go-note").after(live);
+  return new Promise((resolve, reject) => {
+    const es = new EventSource(`/api/${state.tenant}/incidents/${encodeURIComponent(inc.id)}/investigate/stream?pace_ms=${state.health?.claude ? 0 : 220}`);
+    let n = 0;
+    es.addEventListener("step", (e) => {
+      if (v !== state.view) return;
+      const st = JSON.parse(e.data);
+      n += 1;
+      live.insertAdjacentHTML("beforeend", `<li class="fade-in"><span class="label">${esc(st.role || "")}</span> <b class="mono">${esc(st.tool)}</b>
+        <span class="faint small">${esc(st.note)}</span> <span class="num faint tiny">${st.queries} queries · ${st.ms} ms</span>
+        ${st.error ? `<span class="small bad">${esc(st.error)}</span>` : ""}</li>`);
+      live.lastElementChild.scrollIntoView({ block: "nearest" });
+      $("#go-note").innerHTML = `<span class="spinner"></span> ${plural(n, "step")} so far · ${esc(st.role || "")} is working`;
+    });
+    es.addEventListener("done", (e) => { es.close(); resolve(JSON.parse(e.data)); });
+    es.addEventListener("error", (e) => {
+      es.close();
+      try { reject(new Error(JSON.parse(e.data).detail)); } catch { reject(new Error("The stream was cut off")); }
+    });
+  });
 }
 
 function render(inc, out) {

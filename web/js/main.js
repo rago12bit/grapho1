@@ -157,6 +157,8 @@ function wire() {
     applyTheme(theme);
   });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => graph.restyle());
+  $("#scrub-t").addEventListener("input", (e) => { state.view++; graph.replayAt(e.target.value / 1000); });
+  $("#scrub-play").addEventListener("click", () => graph.playReplay(++state.view));
   $("#tenants").addEventListener("click", (e) => { const b = e.target.closest("button[data-t]"); if (b && b.dataset.t !== state.tenant) switchTenant(b.dataset.t); });
   $$(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
   $("#cmd").addEventListener("submit", (e) => { e.preventDefault(); run($("#q").value); });

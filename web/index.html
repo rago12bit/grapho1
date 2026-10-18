@@ -57,6 +57,11 @@
           <button data-scope="system">Whole system</button>
         </div>
         <div id="caption" class="caption" hidden></div>
+        <div id="scrub" class="scrub" hidden>
+          <button id="scrub-play" class="btn quiet" aria-label="Play the incident">▶</button>
+          <input id="scrub-t" type="range" min="0" max="100" value="100" aria-label="Time in the incident">
+          <span id="scrub-label" class="mono tiny"></span>
+        </div>
         <div class="legend mono">
           <span><i class="k sym"></i>symptom</span>
           <span><i class="k sus"></i>root cause</span>
