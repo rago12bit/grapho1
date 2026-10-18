@@ -4,7 +4,11 @@
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB), Tracks 01, 02 and 03. `docker compose up -d --build`, then http://localhost:8090.
 
-![Hypocenter's case file for INC-302 after the agents ran: the failure path from mobile-bff down to auth in red, each causal hop labelled with its lag, the two independent faults below it in amber, and the verdict with 15 of 15 claims checked on the right](docs/img/case-file.png)
+![Hypocenter running on INC-302: the four agents stream their steps into the case file, each with its Cypher, then the fix is proved on a copy of the graph and waits for a person to approve it](docs/img/hypocenter.gif)
+
+<sub>Recorded from the running app (`demo/gif.mjs`): mobile logins failing, seven services alerting. The verdict is on screen before the agents run; running them re-derives it step by step, splits the alerts into three problems, and proves the rollback on a `GRAPH.COPY`.</sub>
+
+![Hypocenter's case file for INC-302: the failure path from mobile-bff down to auth in red, each causal hop labelled with its lag, the two independent faults below it in amber, and the verdict with 14 of 14 claims checked on the right](docs/img/case-file.png)
 
 <sub>INC-302 after the four agents ran. Red is the path the failure climbed (auth → mobile-bff, +120 s); amber are the two other faults below the symptom, which belong to other incidents. The scrubber under the graph replays it minute by minute.</sub>
 
@@ -29,6 +33,93 @@ A person approves every fix; nothing outside the simulated world is changed.
 
 **What's real.** Online Boutique, Sock Shop and Train Ticket: call graphs, metrics, logs, traces, endpoints, manifests and root causes from RCAEval and the projects' own repositories. Kestrel Pay is a synthetic company built to show every kind of answer (a bad deploy, a config change behind two incidents, a failing cluster, a failing node).
 
+## Graph model
+
+One FalkorDB graph per company. The seed writes the company (topology, people, changes, alerts, runtime, chat); the agents write their reasoning into the same graph as they work (orange below).
+
+```mermaid
+flowchart LR
+  classDef agent fill:#ff6b4a22,stroke:#ff6b4a,color:#ff6b4a
+  Service -- CALLS --> Service
+  Service -- OWNED_BY --> Team
+  Person -- MEMBER_OF --> Team
+  Person -- ON_SHIFT --> OnCallShift -- COVERS --> Team
+  Person -- MADE --> Change -- CHANGED --> Service
+  Change -- SHIPS --> Commit -- TOUCHED --> Service
+  Change -- SETS --> ConfigKey
+  Service -- DEPLOYED_AS --> Deployment -- HAS_POD --> Pod -- ON_NODE --> Node -- IN_ZONE --> Zone
+  Deployment -- READS --> ConfigKey
+  Journey -- USES --> Service
+  Runbook -- FOR_SERVICE --> Service
+  Alert -- FIRED_ON --> Service
+  Incident -- SYMPTOM_ON --> Service
+  Incident -- "ROOT_CAUSE, TAUGHT" --> Lesson
+  Message -- IN_CHANNEL --> Channel
+  Message -- "POSTED_BY" --> Person
+  Message -- MENTIONS --> Change
+  Incident -- HAS_HYPOTHESIS --> Hypothesis
+  Hypothesis -- "SUPPORTED_BY, CONTRADICTED_BY" --> Evidence
+  Evidence -- CITES --> Alert
+  Alert -- "CAUSED_BY {lag_s}" --> Change
+  Episode -- "ABOUT, READ" --> Incident
+  Action -- "FOR, REVERTS" --> Change
+  Person -- APPROVED --> Action
+  Session -- HAS_TURN --> Turn -- MENTIONS --> Service
+  class Hypothesis,Evidence,Episode,Action,Session,Turn agent
+```
+
+- **Every label, relationship type, property and count** is in [docs/graph-model.md](docs/graph-model.md), generated from freshly seeded graphs after the agents have run on every open incident. `tests/test_schema.py` regenerates it and fails if the file has drifted from what the code builds. Kestrel, after a run: 655 nodes, 1,476 relationships, 28 labels and 46 relationship types; 6 of the labels and 14 of the relationship types are written by the agents, not the seed.
+- The real systems (Online Boutique, Sock Shop, Train Ticket) add the operation graph from their traces (`(:Service)-[:EXPOSES]->(:Operation)-[:CALLS]->(:Operation)`, with p50, p99 and error rates), log templates (`LogPattern`), and Online Boutique's releases (`Version`, `Image`).
+- Indexes: full-text over `Lesson.text`, `Change.summary`, `Alert.signal`, `Incident.title` and `Message.text`; a vector index (18 dimensions, cosine) over `Incident.signature`; range indexes on every id.
+- The reasoning is data: `MATCH p = (:Alert {id: 'A-9102'})-[:CAUSED_BY*]->(root) RETURN p` answers "why did this alert fire?" with A-9102 on mobile-bff ← A-9101 on auth ← D-5201.
+
+## The graph does the work
+
+`tests/test_load_bearing.py` takes each algorithm, changes exactly what it reads on a `GRAPH.COPY` of Kestrel, and checks that the decision it feeds changes with it. The real graph is never touched.
+
+| Algorithm (tool) | Decision it feeds | One change on the copy → what flips |
+|---|---|---|
+| `algo.BFS` (`dependencies`) | which changes can be suspects at all: the judge's first step | nothing calls `auth` any more → INC-302's verdict moves from **D-5201** to **C-5101** |
+| `algo.SSpaths`, incoming (`callers`) | blast radius, and every suspect's footprint in the fault simulator | cut `checkout → payments` → `payments-db`'s blast radius goes from **5 services to 1** |
+| `algo.SPpaths` (`failure_paths`) | the failure path the verdict shows and cites | cut `payments → payments-db` → **no path**, so none is claimed |
+| `algo.WCC` (`alert_clusters`) | how many separate problems; the skeptic fails a verdict that leaves one unexplained | join `auth` to `payments` → INC-302's **3 problems become 2** |
+| `algo.MSF` (`spread_tree`) | how each problem spread, from alert timing | add `users → catalog` → INC-305's tree links **catalog to users** instead of to `api-gateway` |
+| `algo.betweenness` (`single_points_of_failure`) | the chokepoint on the failure path | drop `checkout`'s outgoing calls → top chokepoint **checkout → api-gateway** |
+| `algo.labelPropagation` (`failure_domains`) | which failure domains and teams the alerts reach | drop `api-gateway`'s calls → **4 domains become 6** |
+| `algo.pageRank` (`critical_services`) | criticality, and node size in the UI | everything calls `sendgrid` → most critical **events-kafka → sendgrid** |
+
+Taken out, at the level of outcomes:
+
+| Taken out | What happens | Where it's measured |
+|---|---|---|
+| **FalkorDB** | No answer at all: an investigation fails on the connection. There is no other store to fall back to, and nothing is guessed. | `tests/test_load_bearing.py` |
+| **The alert chain** (the order alerts climb the call path) | Planted-fault top-1 drops from 93.3% to 88.7%; deep faults from 100% to 83.3% | [Evaluation](#evaluation) |
+| **Paths altogether** ("blame the nearest recent change") | 10.7% top-1, against the judge's 93.3% | [Evaluation](#evaluation) |
+| **Depth beyond one hop** | Kestrel's open incidents: 5 of 5 right become 3 of 5, and INC-301 blames a victim with high confidence | [Results, depth](http://localhost:8090/results#depth) |
+| **Where things run** (pods on nodes) | A failing node becomes two "independent" service faults: every host scenario is wrong | [Evaluation](#evaluation) |
+| **Memory of solved incidents** | The same 150 faults a second time: 97.3% with precedent, 95.3% without | [Evaluation](#evaluation) |
+| **One edge or node, seven ways** | Each Break-it experiment moves the verdict: 7 of 7 | `/break` |
+| **Any safeguard** | Each of 25 named breakages is caught by a test | `make mutants` |
+
+## FalkorDB feature map
+
+| Feature | Used for | Where |
+|---|---|---|
+| `algo.BFS` | everything a symptom depends on, with hop levels; the depth sweep | `tools.dependencies`, `tools.depth_sweep` |
+| `algo.SSpaths` (`relDirection: 'incoming'`) | who a failure reaches; every suspect's footprint | `tools.callers`, `tools.blast_radius` |
+| `algo.SPpaths` | the k shortest failure paths | `tools.failure_paths` |
+| `algo.WCC` | alert groups, on a scratch graph of the alerting services | `tools.alert_clusters` |
+| `algo.MSF` | how each problem spread, weighted by alert timing, on a scratch graph | `tools.spread_tree` |
+| `algo.betweenness` | chokepoints (exact up to 500 services, sampled with a fixed seed above) | `tools.single_points_of_failure` |
+| `algo.labelPropagation` | failure domains and the teams they reach | `tools.failure_domains` |
+| `algo.pageRank` | criticality; node size | `tools.critical_services` |
+| Vector index (`vecf32`, cosine) | past incidents with the same shape of story | `tools.similar_by_shape`, `tools.store_signature` |
+| Full-text indexes | memory search over lessons, changes, alerts, incidents and chat | `tools.search_memory` |
+| Variable-length paths | `CAUSED_BY*` "why did this alert fire", the alert chain over `CALLS*1..5` | `reasoning.why`, `tools.paths_between` |
+| `GRAPH.COPY` | fix proofs, Break it, the load test, these tests | `proof.py`, `site.py`, `bench.py` |
+| `GRAPH.RO_QUERY` | every read, so the database itself refuses writes there | `db.py` |
+| One graph per tenant | each company and each upload, isolated | `db.graph_name` |
+
 ## What the judges asked for
 
 The rules page, the challenge text and the organisers' day-1 post ("How to Build an Agent That Reasons Over a Graph", section "What Judges Are Looking For") say what is judged. Each line is quoted as published, then answered with something you can run.
@@ -36,7 +127,7 @@ The rules page, the challenge text and the organisers' day-1 post ("How to Build
 | Judging line | What Hypocenter does | Check it |
 |---|---|---|
 | "The graph has to shape what the agent does, not sit on the side." (challenge) | The verdict is a graph walk: every suspect comes from a 5-hop `algo.BFS` down `CALLS` from the symptom and is scored by whether the alerts climb that path in order. Switching the alert chain off drops planted-fault accuracy from 93.3% to 88.7% (deep faults: 100% → 83.3%); "blame the nearest recent change" gets 10.7%. | `python -m faultline.eval` ([Evaluation](#evaluation)) |
-| "If the product still works once FalkorDB is taken out, the graph is decoration rather than the thing the product runs on." (rule 3) | There is no other store. The API's first act at startup is building each company's graph, every agent tool is a Cypher query or a FalkorDB algorithm, and the reasoning itself (hypotheses, evidence, the `CAUSED_BY` chain) is written back as nodes and edges. | [How the graph is used](#how-the-graph-is-used) |
+| "If the product still works once FalkorDB is taken out, the graph is decoration rather than the thing the product runs on." (rule 3) | There is no other store: without FalkorDB an investigation fails on the connection rather than guessing. Every agent tool is a Cypher query or a FalkorDB algorithm, and for each algorithm a test changes what it reads on a graph copy and the decision changes with it. | [The graph does the work](#the-graph-does-the-work) |
 | "Run the same question twice. Once with a depth of one … Then with a depth of four" (organisers' post) | `depth_sweep` judges one incident with the search capped at 1 to 5 hops. INC-301 at depth 1 sees 6 services and blames `payments`, with high confidence; it only alerted. From depth 2 it finds C-5101, the pool change on `payments-db`. Over Kestrel's open incidents: 3 of 5 right at depth 1, 5 of 5 from depth 2. On the RCAEval systems the front end calls nearly everything directly, so depth doesn't change their accuracy; we say so. | `GET /api/kestrel/incidents/INC-301/depth`, the [Results page](http://localhost:8090/results#depth), the `depth_sweep` MCP tool |
 | "ask the agent something that is not in the graph and let it say so" (organisers' post) | "What breaks if billing-svc goes down?" answers "Nothing in the graph is called billing-svc. That means it isn't modelled, not that it is safe", with the lookup's Cypher. A service nothing calls is reported as an entry point or as unknown, never as safe. | Ask bar in the app, `find_named` MCP tool |
 | "Show the path behind an answer" (challenge) | `MATCH p = (:Alert {id: 'A-9102'})-[:CAUSED_BY*]->(root) RETURN p` returns A-9102 on mobile-bff ← A-9101 on auth ← D-5201. Every step in the case file shows its Cypher. | [In detail, 9](#in-detail) |
@@ -115,6 +206,7 @@ docker compose up -d --build
 - FalkorDB browser: http://localhost:3003 (graph `hypocenter_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
 - **For a judge: `make judge-check`** (about 2 minutes, Docker only, no key). It builds and starts everything, runs every test, then checks the product itself on scratch graphs it drops afterwards: the agents' verdict on each Kestrel incident, depth 1 against full depth, a question about something not in the graph, the fix proofs, the Break-it experiments, the planted-fault eval against this README's number, and isolation under concurrent runs. The output of a run on a fresh clone is in [docs/judge-check-clean-clone.txt](docs/judge-check-clean-clone.txt).
+- **The README's images** come from the running app: `node demo/screens.mjs docs/img` for the screenshots, `node demo/gif.mjs` then `bash demo/gif.sh` for the GIF (both need `playwright-core`).
 - **`make live-run`** (needs `ANTHROPIC_API_KEY`, spends tokens): the four agents played by Claude on INC-302, on scratch graphs, written down as a transcript: every tool each agent chose, the findings, which claims the graph backed, and whether the model agreed with the judge.
 - **`make mutants`** breaks each safeguard on purpose, one at a time, on a scratch copy of the code, and checks a test notices: the depth limit, the "not in the graph" answer, the alert-order rule, the skeptic, the claim checks, fix verification, the read-only guards, tenant ids, the answer key staying out of the judge, the public-server guards, graph copies being dropped, the follow-up memory, chat mentions, each agent's tool list, and dropping claims the graph can't back. **25 of 25 caught** ([docs/mutants.txt](docs/mutants.txt)).
 
@@ -229,6 +321,26 @@ The judge (`faultline/tools.py`, `rank_suspects`) does the multi-hop work:
 | `algo.pageRank` | `critical_services` | Criticality, node size in the UI, blast radius. |
 
 Other graph tools: **what-if** (`simulate_failure`: the waves in which alerts would arrive if a service failed, entry points hit, teams paged, runbooks), **blast radius**, owners and on-call, runbooks, a read-only Cypher tool (runs through `GRAPH.RO_QUERY`, so the database itself refuses writes), and the action and memory writes. Every algorithm is also available to Claude (per role) and over MCP.
+
+## Query catalogue
+
+The queries the product depends on, as the code runs them (each step in the case file shows its own Cypher too).
+
+| Question | Cypher | Where |
+|---|---|---|
+| What does the symptom depend on? | `MATCH (s:Service {name: $svc}) CALL algo.BFS(s, $hops, 'CALLS') YIELD nodes, edges` | `tools.dependencies` |
+| Who does a failure reach? | `CALL algo.SSpaths({sourceNode: s, relTypes: ['CALLS'], relDirection: 'incoming', maxLen: 5, pathCount: 1000000}) YIELD path, pathWeight` | `tools.callers` |
+| What changed on that path? | `MATCH (c:Change)-[:CHANGED]->(s:Service) WHERE s.name IN $svcs AND c.at >= $from AND c.at <= $to` | `tools.changes_near` |
+| Every path from the symptom down to a suspect | `MATCH p = (a:Service {name: $a})-[:CALLS*1..5]->(b:Service {name: $b}) RETURN [n IN nodes(p) \| n.name] AS path` | `tools.paths_between` |
+| The failure path | `CALL algo.SPpaths({sourceNode: a, targetNode: b, relTypes: ['CALLS'], maxLen: $max, pathCount: $k})` | `tools.failure_paths` |
+| How many separate problems? | `CALL algo.WCC({nodeLabels: ['Service'], relationshipTypes: ['CALLS']}) YIELD node, componentId` (scratch graph) | `tools.alert_clusters` |
+| How did each one spread? | `CALL algo.MSF({nodeLabels: ['Service'], relationshipTypes: ['CALLS'], weightAttribute: 'gap'}) YIELD nodes, edges` (scratch graph) | `tools.spread_tree` |
+| Why did this alert fire? | `MATCH p = (a:Alert {id: $id})-[:CAUSED_BY*1..12]->(root) RETURN p` | `reasoning.why` |
+| Where are the chokepoints? | `CALL algo.betweenness({nodeLabels: ['Service'], relationshipTypes: ['CALLS'], samplingSize: $k, samplingSeed: 1})` | `tools.single_points_of_failure` |
+| Which incidents looked like this one? | `CALL db.idx.vector.queryNodes('Incident', 'signature', $k, vecf32($v)) YIELD node, score` | `tools.similar_by_shape` |
+| What do we know about these words? | `CALL db.idx.fulltext.queryNodes('Message', $q) YIELD node, score` (and over lessons, changes, alerts, incidents) | `tools.search_memory` |
+| Where did this change come from? | `MATCH (m:Message)-[:MENTIONS]->(x) WHERE (x:Service AND x.name = $svc OR x:Change AND x.id = $id) AND m.at >= $lo` plus the thread replies | `tools.decision_trail` |
+| What would this fix clear? | `GRAPH.COPY`, then the alerts whose `CAUSED_BY` path ends at what the fix removes | `proof.preview_fix` |
 
 ## Evaluation
 
