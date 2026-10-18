@@ -1,25 +1,25 @@
 # make judge-check on a fresh clone
-# git clone <repo> && cd <repo> && make judge-check   (commit d093131, macOS, Docker Desktop)
+# git clone <repo> && cd <repo> && make judge-check   (commit 53333be, macOS, Docker Desktop)
 
 bash scripts/judge-check.sh
-Hypocenter judge-check, d093131 on 2026-10-18 10:26 UTC
+Hypocenter judge-check, 53333be on 2026-10-18 10:59 UTC
 PASS  build: app image built
 PASS  app: serving on http://localhost:8090 (FalkorDB 4.14.10, 7,621 nodes in 5 graphs)
-PASS  tests: 175 passed in 61.49s (0:01:01)
-    PASS  FalkorDB engine: FalkorDB 4.14.10, ping 0.05 ms
+PASS  tests: 184 passed in 67.49s (0:01:07)
+    PASS  FalkorDB engine: FalkorDB 4.14.10, ping 0.06 ms
     PASS  agents name each Kestrel cause: 5/5 right: INC-301 C-5101, INC-302 D-5201, INC-303 catalog-es (no change), INC-304 C-5101, INC-305 k8s-node-4 (shared host)
     PASS  depth 1 vs full depth: INC-301 at depth 1 blames payments (no change); from depth 2 C-5101
     PASS  a name not in the graph: Nothing in the graph is called billing-svc. That means it isn't modelled, not that it is s…
     PASS  fixes proved on graph copies: 5/5 hold, decoy clears 0 alerts
     PASS  break-it experiments move the verdict: 7/7 moved, 0 copies left behind
     PASS  planted-fault eval matches the README: seed 7, 150 scenarios: 93.3% top-1 (README: 93.3%)
-    PASS  concurrent investigations stay isolated: 24 investigations, 8 at a time: 0.54 s, 44.05 runs/s, p50 0.138 s, p95 0.287 s, 0 retried queries isolation: 0 cross-run handoff reads, 0 incomplete runs; consi
+    PASS  concurrent investigations stay isolated: 24 investigations, 8 at a time: 0.62 s, 38.41 runs/s, p50 0.166 s, p95 0.326 s, 0 retried queries isolation: 0 cross-run handoff reads, 0 incomplete runs; consi
 PASS  product checks: 8/8 checks passed
 
 RESULT STEP             DETAIL
 PASS   build            app image built
 PASS   app              serving on http://localhost:8090 (FalkorDB 4.14.10, 7,621 nodes in 5 graphs)
-PASS   tests            175 passed in 61.49s (0:01:01)
+PASS   tests            184 passed in 67.49s (0:01:07)
 PASS   product checks   8/8 checks passed
 
 Not run here: the RCAEval comparison needs ~3.3 GB of data (make eval, or make eval-quick once it is downloaded).
