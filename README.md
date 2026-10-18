@@ -12,7 +12,7 @@
   <a href="docs/mutants.txt"><img alt="mutants: 28 of 28 caught" src="https://img.shields.io/badge/mutants-28%20of%2028%20caught-2ea44f"></a>
   <a href="#proof-at-a-glance"><img alt="RCAEval: 360 real failures" src="https://img.shields.io/badge/RCAEval-360%20real%20failures-ff6b4a"></a>
   <a href="#falkordb-feature-map"><img alt="FalkorDB v4.14.10, 8 of 8 algorithms" src="https://img.shields.io/badge/FalkorDB-v4.14.10%20%C2%B7%208%2F8%20algorithms-ff6b4a"></a>
-  <a href="#demo-video"><img alt="demo video" src="https://img.shields.io/badge/demo-video-ffb347"></a>
+  <a href="https://youtu.be/arIp5REAKmw"><img alt="demo video on YouTube" src="https://img.shields.io/badge/demo%20video-YouTube%203%3A25-FF0000?logo=youtube&logoColor=white"></a>
   <a href="https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man"><img alt="blog post on DEV" src="https://img.shields.io/badge/blog-DEV.to-0a0a0a?logo=devdotto&logoColor=white"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <br>
@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <a href="https://16-4-94-72.sslip.io"><b>Live demo</b></a> · <a href="#demo-video"><b>Demo video</b></a> · <a href="https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man"><b>Blog post</b></a> · <a href="#use-it"><b>Use it</b></a> · <a href="#proof-at-a-glance"><b>Proof</b></a> · <a href="#see-it"><b>Screens</b></a> · <a href="#graph-model"><b>Graph model</b></a> · <a href="#what-the-judges-asked-for"><b>For judges</b></a> · <a href="#contents"><b>Contents</b></a>
+  <a href="https://16-4-94-72.sslip.io"><b>Live demo</b></a> · <a href="https://youtu.be/arIp5REAKmw"><b>Demo video</b></a> · <a href="https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man"><b>Blog post</b></a> · <a href="#use-it"><b>Use it</b></a> · <a href="#proof-at-a-glance"><b>Proof</b></a> · <a href="#see-it"><b>Screens</b></a> · <a href="#graph-model"><b>Graph model</b></a> · <a href="#what-the-judges-asked-for"><b>For judges</b></a> · <a href="#contents"><b>Contents</b></a>
 </p>
 
 ## At a glance
@@ -168,8 +168,9 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 ## Demo video
 
 
-<!-- Replace the line below with the link to the demo video. -->
-**The demo video will be linked here.** Until then, the GIF at the top is the app running, and [Use it](#use-it) runs it on your machine in one command.
+<p align="center"><a href="https://youtu.be/arIp5REAKmw"><img src="https://img.youtube.com/vi/arIp5REAKmw/maxresdefault.jpg" width="100%" alt="Watch the Hypocenter demo video on YouTube (3:25)"></a></p>
+
+**▶ [Watch the demo on YouTube (3:25)](https://youtu.be/arIp5REAKmw)**: the 13:40 login outage, a real RCAEval failure, the four agents, the evidence gate, the fix proved on a graph copy, Replay, Break it, depth one against depth four, the team's chat, Ship it? and the results. Narration is an AI voice.
 
 **Blog post:** [Hypocenter: The On-Call Agent That Won't Blame Your Deploy Without Proof](https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man) on DEV, the story behind it in five minutes.
 
