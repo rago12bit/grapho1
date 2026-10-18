@@ -44,6 +44,7 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.03em; margin: 0; }
   padding: 0 20px; background: color-mix(in srgb, var(--bg) 80%, transparent); backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line); }
 .sh-brand { display: flex; align-items: center; gap: 9px; font: 700 16px var(--display); letter-spacing: -0.01em; }
+:focus-visible { outline: 2px solid var(--hot); outline-offset: 3px; border-radius: 4px; }
 .sh-brand svg { width: 20px; height: 20px; fill: none; stroke: var(--hot); stroke-width: 3; stroke-linejoin: round; }
 .sh-nav { display: flex; gap: 2px; font-size: 13.5px; }
 .sh-nav a { position: relative; padding: 6px 10px; color: var(--ink-2); border-radius: 8px; white-space: nowrap; }

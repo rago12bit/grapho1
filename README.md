@@ -12,6 +12,7 @@
   <a href="#proof-at-a-glance"><img alt="RCAEval: 360 real failures" src="https://img.shields.io/badge/RCAEval-360%20real%20failures-ff6b4a"></a>
   <a href="#falkordb-feature-map"><img alt="FalkorDB v4.14.10, 8 of 8 algorithms" src="https://img.shields.io/badge/FalkorDB-v4.14.10%20%C2%B7%208%2F8%20algorithms-ff6b4a"></a>
   <a href="#demo-video"><img alt="demo video" src="https://img.shields.io/badge/demo-video-ffb347"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <br>
   <a href="#context-for-any-agent-mcp"><img alt="MCP: stdio and HTTP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-6f42c1"></a>
   <a href="#use-it"><img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white"></a>
@@ -160,7 +161,6 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 
 ## Contents
 
-
 - [At a glance](#at-a-glance)
 - [Use it](#use-it)
 - [In short](#in-short)
@@ -199,6 +199,7 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 - [What didn't work](#what-didnt-work)
 - [AI disclosure](#ai-disclosure)
 - [Repo map](#repo-map)
+- [License](#license)
 
 ## What makes it different
 
@@ -325,16 +326,16 @@ sequenceDiagram
   participant S as Skeptic
   participant R as Responder
   participant P as Person
-  M->>G: changes and alerts (webhooks); an incident opens
+  M->>G: changes and alerts (webhooks), an incident opens
   T->>G: the incident, its dependencies (algo.BFS), recent changes, alerts
   T->>G: write a handoff (Episode)
-  I->>G: read it; judge every suspect (alert chain, footprint via algo.SSpaths)
+  I->>G: read it, judge every suspect (alert chain, footprint via algo.SSpaths)
   I->>G: alert groups (algo.WCC), how each spread (algo.MSF), failure path (algo.SPpaths), chat
-  S->>G: read it; challenge the leader; write the argument (Hypothesis, Evidence, CAUSED_BY)
-  R->>G: read it; why the symptom fired; the decision trail; owner, on call, experts
+  S->>G: read it, challenge the leader, write the argument (Hypothesis, Evidence, CAUSED_BY)
+  R->>G: read it, why the symptom fired, the decision trail, owner, on call, experts
   R->>G: propose the fix, proved on a GRAPH.COPY
   P->>G: approve
-  G-->>P: verified from the alerts that cleared; ROOT_CAUSE and a Lesson written back
+  G-->>P: verified from the alerts that cleared, ROOT_CAUSE and a Lesson written back
 ```
 
 Every step is a tool call with its Cypher, streamed to the case file as it happens and kept for Replay. Each agent sees only its own tools; nothing passes between them except through the graph.
@@ -362,6 +363,24 @@ Every step is a tool call with its Cypher, streamed to the case file as it happe
 "No change on the path" is an answer, not a failure: in a graph, the absence of a path is evidence.
 
 ## The evidence checks
+
+```mermaid
+flowchart TD
+  A["Incident on a symptom service"] --> B["algo.BFS down CALLS: everything it depends on, up to 5 hops"]
+  B --> C{"Changes on those services<br/>in the 2 hours before?"}
+  C -- yes --> D["Score each change: alert chain along every path,<br/>recency, risk, precedent, footprint (algo.SSpaths)"]
+  C -- "none fits" --> E["Alerting services with no change compete:<br/>who alerted first, nothing below it earlier"]
+  B --> H["Nodes where two services that don't call<br/>each other failed together compete too"]
+  D --> F["Rank every suspect"]
+  E --> F
+  H --> F
+  F --> I["Skeptic: unexplained alerts, order, full path,<br/>alert groups (algo.WCC), margin"]
+  I -- "a rival explains more, within reach" --> J["Rival takes the lead"]
+  I -- holds --> K["Confidence from the gap to #2"]
+  J --> K
+  K --> L["Every claim looked up in the graph;<br/>unbacked ones dropped"]
+  L --> M(["Verdict, with its path, evidence and Cypher"])
+```
 
 
 What a verdict has to get through before it is shown, in order:
@@ -566,6 +585,18 @@ Taken out, at the level of outcomes:
 | **One edge or node, seven ways** | Each Break-it experiment moves the verdict: 7 of 7 | `/break` |
 | **Any safeguard** | Each of 25 named breakages is caught by a test | `make mutants` |
 
+```mermaid
+flowchart LR
+  R[("company graph")] -- "GRAPH.COPY" --> C[("copy")]
+  C --> X["one change:<br/>a fix, a cut edge,<br/>a deleted alert"]
+  X --> J["judge asked again<br/>on the copy"]
+  J --> D["compare with the<br/>real graph's answer"]
+  D --> Q["copy dropped<br/>(in a finally)"]
+  R -. "never written" .- D
+```
+
+The same sandbox serves the fix proofs, Break it, the load test and the load-bearing tests above.
+
 ## Query catalogue
 
 
@@ -588,6 +619,17 @@ The queries the product depends on, as the code runs them (each step in the case
 | What would this fix clear? | `GRAPH.COPY`, then the alerts whose `CAUSED_BY` path ends at what the fix removes | `proof.preview_fix` |
 
 ## Results
+
+```mermaid
+flowchart LR
+  A["v1: settings committed<br/>before any Sock Shop, Train Ticket<br/>or RE3 result (623d340)"] --> B["develop on 270 cases<br/>(everything but RE2 Train Ticket)"]
+  B --> C["v2 frozen (8de51f4)"]
+  C --> D["RE2 Train Ticket opened once:<br/>0.70 AC@1"]
+  D --> E["v3 built on the same 270 only"]
+  E --> F["v3 frozen (0b4ef76)"]
+  F --> G["held-out set scored again:<br/>0.71 AC@1, NSigma 0.76"]
+  G --> H["both versions reported,<br/>where it loses included"]
+```
 
 The charts above summarise it; the [Results page](http://localhost:8090/results) has every table, read from the files that publish them, and runs the fix proofs live. Below: the planted-fault evaluation, then every RCAEval case against the published baselines.
 
@@ -753,6 +795,20 @@ Kestrel Pay and Harbor Freight are synthetic, Kestrel's chat included. **Online 
 - **Conversations:** each question in the Ask bar is a `Turn` in a `Session`, so "who owns it?" knows what "it" was.
 - **Searchable:** full-text over lessons, changes, alerts, incidents and chat; past incidents matched by the shape of their story through a vector index.
 
+```mermaid
+flowchart LR
+  Q["question + session id"] --> H["read the session's turns<br/>from the graph"]
+  H --> I{"says 'it', 'that'<br/>and names nothing?"}
+  I -- yes --> S["'it' = the last turn's subject"]
+  I -- no --> N["names in the question"]
+  S --> R["route to a tool<br/>(owners, what-if, decision trail, ...)"]
+  N --> F{"is the name<br/>in the graph?"}
+  F -- no --> U["'not modelled, not safe',<br/>with the lookup's Cypher"]
+  F -- yes --> R
+  R --> W["write the Turn:<br/>HAS_TURN, FOLLOWS, MENTIONS"]
+  U --> W
+```
+
 ## On-call
 
 
@@ -765,7 +821,37 @@ The rota is in the graph: `(:Person)-[:ON_SHIFT]->(:OnCallShift {from, to})-[:CO
 - Each real company's judge is refitted on its own solved incidents (people's verdicts included) and the refit is used only if cross-validation on the solved incidents says it is at least as good; the open incidents stay a clean test.
 - Precedent changes the score: the same 150 planted faults a second time score 97.3% with memory of the first round, 93.3% the first time.
 
+```mermaid
+flowchart LR
+  I["incident solved"] --> W["ROOT_CAUSE, Lesson,<br/>fix track record"]
+  P["a person: 'not the cause'<br/>or 'confirm'"] --> FB["Feedback node"]
+  W --> T["training rows: every suspect's factors<br/>+ the service's track record"]
+  FB --> T
+  T --> M["logistic regression per company"]
+  M --> V{"cross-validated on solved incidents:<br/>at least as good as the hand weights?"}
+  V -- yes --> U["used by the judge"]
+  V -- no --> K["hand weights kept"]
+  U --> N["next incident"]
+  K --> N
+```
+
 ## Agents and actions
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> Proposed: responder proposes (agent or MCP)
+  Proposed --> Proved: applied to a GRAPH.COPY,<br/>alerts it clears predicted
+  Proved --> Rejected: a person rejects
+  Proved --> Approved: a person approves
+  Approved --> Verified: its alerts cleared
+  Approved --> NotVerified: alerts still firing
+  NotVerified --> Reopened: incident goes back to open
+  Verified --> Resolved: ROOT_CAUSE, Lesson,<br/>track record written
+  Resolved --> [*]
+  Rejected --> [*]
+  Reopened --> Proposed: investigate again
+```
 
 
 - **Four agents.** *Triage* reads the incident, its dependencies, recent changes and alerts. *Investigator* reads triage's handoff from the graph, runs the judge and the fault simulator, and checks precedent. *Skeptic* reads the investigator's handoff and challenges the leader (deterministic checks, up to two rounds, may overturn). *Responder* reads the skeptic's verdict, finds the owner and the runbook, and proposes the fix. Each writes an `Episode` that the next reads back (`(:Episode)-[:READ]->(:Episode)`); nothing is passed in memory.
@@ -797,6 +883,18 @@ On a public server (`docker-compose.public.yml`) the same tools are served over 
 There is deliberately no approve tool. An agent can propose a fix; only a person can run it.
 
 ## Running it in detail
+
+```mermaid
+flowchart LR
+  CI["CI / flag service"] -- "POST /changes" --> G[("graph")]
+  AM["Alertmanager"] -- "POST /alerts/alertmanager" --> G
+  G --> R{"new paging alert covered by<br/>an open incident (within 60 min)?"}
+  R -- yes --> X["attached to that incident"]
+  R -- no --> T{"on a tier-1 or<br/>internet-facing service?"}
+  T -- yes --> O["open an incident on the highest one"] --> A["agents investigate at once"]
+  T -- no --> K["kept as an alert, no incident"]
+  AM -- "resolved" --> C["cleared_at set"] --> V["waiting fixes re-verified"]
+```
 
 
 ```bash
@@ -865,6 +963,7 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 - **Tenants are separate graphs**, and tenant ids are validated so one can't reach another's.
 - **Copies are dropped.** Fix proofs, Break-it experiments and the load test run on `GRAPH.COPY`s that are deleted afterwards.
 - **Data:** only public, synthetic or our own; secret values in the projects' manifests are never kept; the public post-mortem list has no licence, so it is fetched on your machine and never committed.
+- How to report a vulnerability, and every guard with the file it lives in: [SECURITY.md](SECURITY.md). Keyboard, screen-reader and motion support, and what isn't covered yet: [ACCESSIBILITY.md](ACCESSIBILITY.md).
 - Most of these are among the 25 breakages `make mutants` checks a test catches ([docs/mutants.txt](docs/mutants.txt)).
 
 ## What's real vs synthetic
@@ -950,3 +1049,6 @@ web/js/                  ES modules, no build step: util, parts (shared HTML), g
 tests/                   pytest against a real FalkorDB, on separate test graphs
 ```
 
+## License
+
+Apache License 2.0: see [LICENSE](LICENSE). Data derived from RCAEval (MIT) and from Online Boutique, Sock Shop and Train Ticket (Apache 2.0) is credited in [NOTICE](NOTICE).

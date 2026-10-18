@@ -1,0 +1,21 @@
+Hypocenter
+Copyright 2026 Raghav Gupta
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This repository includes data derived from third-party projects, under their own licences:
+
+- faultline/fixtures/boutique.json, sockshop.json, trainticket.json: cases boiled down from the RCAEval
+  benchmark (https://github.com/phamquiluan/RCAEval, dataset https://huggingface.co/datasets/phamquiluan/RCAEval),
+  MIT licence; the licence text is in licenses/RCAEval-MIT.txt.
+- faultline/fixtures/manifests.json: Kubernetes manifests, reduced to the fields Hypocenter reads (secret values
+  dropped), from Online Boutique (GoogleCloudPlatform/microservices-demo), Sock Shop
+  (microservices-demo/microservices-demo) and Train Ticket (FudanSELab/train-ticket), each Apache License 2.0.
+- faultline/fixtures/boutique_owners.json, boutique_releases.json: owners, contributors, releases and commit
+  metadata of Online Boutique (GoogleCloudPlatform/microservices-demo, Apache License 2.0), from its public
+  repository.
+
+Not included: the list of public post-mortems (github.com/danluu/post-mortems) has no licence, so it is only ever
+fetched onto the user's own machine by `python -m faultline.public_postmortems --fetch` and never committed.
+
+Kestrel Pay and Harbor Freight, including Kestrel's chat, are synthetic and written for this project.
