@@ -633,9 +633,13 @@ def main() -> None:
     ap.add_argument("--signals", choices=SIGNALS, default="metrics")
     ap.add_argument("--extract", action="store_true", help="only extract and cache signals.json per case")
     ap.add_argument("--profile", action="store_true", help="only add the span profile to each case's signals.json")
+    ap.add_argument("--refresh", action="store_true", help="with --extract: redo cases that already have signals.json")
     ap.add_argument("--shard", default="0/1", help="i/n: this process takes every n-th case starting at i")
     a = ap.parse_args()
     if a.suites:
+        if a.download:
+            download_suite([f"{s}{y}" for s in a.suites.split(",") for y in a.systems.split(",")])
+            return
         i, n = (int(x) for x in a.shard.split("/"))
         cases = all_cases(tuple(a.suites.split(",")), tuple(a.systems.split(",")))[i::n]
         if a.profile:
@@ -646,6 +650,8 @@ def main() -> None:
             return
         if a.extract:
             for c in cases:
+                if (DATA / c / "signals.json").exists() and not a.refresh:
+                    continue
                 t = time.time()
                 sig = extract(c, refresh=True)
                 print(f"{c:48} {len(sig['edges']):4} edges  alerts m/l/t {len(sig['alerts']['metrics'])}/"

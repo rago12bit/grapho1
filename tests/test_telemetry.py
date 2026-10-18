@@ -106,3 +106,21 @@ def test_scores_follow_rcaeval():
     s = rcaeval.summarize(rows)["RE2-SS"]["judge"]
     assert s == {"ac1": 1, "ac3": 2, "avg5": 0.9}
     assert np.isclose((0.8 + 1.0) / 2, 0.9)
+
+
+def test_the_span_profile_tells_a_slow_service_from_one_that_waits():
+    """frontend calls cart; after the fault cart's own work is 20x slower and frontend only waits for it."""
+    inject = 1_705_000_000
+    df = T.prepare_traces(_spans(inject, slow_from=inject), lambda s: s)
+    p = T.span_profile(df, inject)
+    assert p["cart"]["self_ratio"] > 10 and p["cart"]["own_share"] > 0.9
+    assert p["frontend"]["child_ratio"] > 10 and p["frontend"]["self_ratio"] < 2 and p["frontend"]["own_share"] < 0.3
+
+
+def test_the_ranking_goes_on_past_the_judges_suspects():
+    from faultline import tools
+    sus = [{"type": "host", "service": "node-1", "host": {"services": ["b", "a"]}},
+           {"type": "signal", "service": "c"}]
+    alerts = [{"service": "d", "at": 0, "strength": 2.0}, {"service": "e", "at": 1, "strength": 9.0},   # stronger, not earlier
+              {"service": "a", "at": 2, "strength": 1.0}]
+    assert tools.service_order(sus, alerts, {"q1": 3.0, "q2": 7.0, "e": 9.0}) == ["b", "a", "c", "e", "d", "q2", "q1"]

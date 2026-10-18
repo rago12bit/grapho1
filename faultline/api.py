@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 143, "planted": "94.5–96.8%", "real": "285/360"}
+PROOF = {"tests": 145, "planted": "94.5–96.8%", "real": "288/360"}
 
 
 @app.get("/api/health")
