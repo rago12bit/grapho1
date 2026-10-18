@@ -30,6 +30,9 @@ SYMPTOM_CAN_BE_CAUSE = True
 # a silent-failure suspect's score blends in its strength relative to the strongest alert in the area. Kestrel's
 # alerts carry none, so its scores are unchanged.
 STRENGTH_W = 0.5
+# Where spans are in the graph (Service.self_ratio, the growth of a service's own time against its callees'), a
+# silent-failure suspect's score also blends in how much its own work slowed, relative to the other suspects.
+OWN_W = 0.15
 RISK = {"high": 1.0, "medium": 0.5, "low": 0.2}
 
 
@@ -607,6 +610,28 @@ def give_feedback(g: Graph, incident_id: str, target: str, verdict: str, by: str
     return {"incident": incident_id, "target": target, "verdict": verdict, "by": by}
 
 
+def service_order(suspects: list[dict], alerts: list[dict], quiet: dict[str, float] | None = None) -> list[str]:
+    """The whole ranking as services: the judge's suspects first (a shared host stands for the services it runs),
+    then every other service that alerted on the symptom's dependency path, the ones whose metrics moved most
+    first, then the earliest. The judge's rules can set a service aside (something below it alerted first, a
+    recent change explains it better); it still belongs lower in the list rather than nowhere."""
+    order: list[str] = []
+    for s in suspects:
+        for svc in (s["host"]["services"] if s["type"] == "host" else [s["service"]]):
+            if svc not in order:
+                order.append(svc)
+    first: dict[str, int] = {}
+    power: dict[str, float] = {}
+    for a in alerts:
+        first[a["service"]] = min(first.get(a["service"], a["at"]), a["at"])
+        power[a["service"]] = max(power.get(a["service"], 0.0), a.get("strength") or 0.0)
+    rest = sorted((svc for svc in first if svc not in order), key=lambda svc: (-power[svc], first[svc], svc))
+    # then services on the path that never alerted, by how far their metrics moved anyway (the detector can miss)
+    tail = sorted((svc for svc in (quiet or {}) if svc not in order and svc not in first),
+                  key=lambda svc: (-(quiet[svc] or 0.0), svc))
+    return order + rest + tail
+
+
 def confidence_from(top: float, gap: float) -> tuple[float, str]:
     """Confidence comes from how far the leader is ahead, not from its raw score: a 0.9 with a 0.88 runner-up
     is a coin toss. A logistic on the gap to the runner-up (0.5 at a 0.10 gap), damped when the leader itself
@@ -665,6 +690,9 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
     history = outcome_history(g) if model else []
     power = {a["service"]: max(a.get("strength") or 0.0, 0.0) for a in alerts if a.get("strength") is not None}
     top_power = max(power.values(), default=0.0)
+    own = {r["s"]: r["v"] for r in g.read("""MATCH (s:Service) WHERE s.name IN $svcs AND s.self_ratio IS NOT NULL
+                                             RETURN s.name AS s, s.self_ratio AS v""", {"svcs": sorted(alerting)})} if OWN_W else {}
+    top_own = max((math.log(max(v, 1.0)) for v in own.values()), default=0.0)
     # The symptom service itself competes too: it can be where the failure started, when nothing it depends on
     # was alerting by the time it did (a fault in the entry point's own code, say).
     for svc in alerting if SYMPTOM_CAN_BE_CAUSE else alerting - {sym}:
@@ -700,6 +728,9 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         if top_power > 0:
             factors["strength"] = round(math.log1p(power.get(svc, 0.0)) / math.log1p(top_power), 3)
             score = (1 - STRENGTH_W) * score + STRENGTH_W * factors["strength"]
+        if top_own > math.log(1.05) and svc in own:
+            factors["own"] = round(math.log(max(own[svc], 1.0)) / top_own, 3)
+            score = (1 - OWN_W) * score + OWN_W * factors["own"]
         if model:
             # weights learned from this company's own solved incidents, plus how often this service turned out
             # to be the cause when it alerted before

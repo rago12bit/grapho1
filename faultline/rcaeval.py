@@ -240,7 +240,7 @@ SYSTEMS = {
 # v1: the settings committed before any result on these systems (6d9d5a1). v2: two structural fixes found by
 # looking at v1's misses on everything except RE2 Train Ticket, which stayed unseen as the held-out test: the
 # manifest edges above, and the judge letting the symptom service itself be the cause (tools.rank_suspects).
-VERSION = 2
+VERSION = 3
 SIGNALS = ("metrics", "all")      # metrics only (the detector above, unchanged), or metrics + logs + traces
 
 
@@ -315,6 +315,22 @@ def extract(case: str, refresh: bool = False) -> dict:
     return out
 
 
+def add_span_profile(case: str) -> dict:
+    """Add the span profile (own time vs waiting time per service) to a case's cached signals."""
+    from . import telemetry as T
+    sig = extract(case)
+    if "span_profile" in sig:
+        return sig
+    d = DATA / case
+    prof = {}
+    if (d / "traces.parquet").exists():
+        tr = T.prepare_traces(pd.read_parquet(d / "traces.parquet"), norm_for(sig["system"]), SYSTEMS[sig["system"]]["skip"])
+        prof = T.span_profile(tr, sig["inject"])
+    sig["span_profile"] = prof
+    (d / "signals.json").write_text(json.dumps(sig, default=float))
+    return sig
+
+
 def alerts_for(sig: dict, signals: str) -> list[dict]:
     from .telemetry import merge_alerts
     if signals == "metrics":
@@ -380,6 +396,13 @@ def build_case(case: str, signals: str = "metrics") -> dict:
         power = strengths(_table(DATA / case, "metrics"), sig["inject"], norm_for(sig["system"]), cfg["skip"])
     _write_alerts(g, [{"id": f"A-{i}", "service": a["service"], "at": a["at"], "severity": "page", "signal": a["signal"],
                        "strength": power.get(a["service"])} for i, a in enumerate(alerts)])
+    if VERSION >= 3:
+        # v3: every service's metric strength (alerting or not) and, where the system is traced, how much its own
+        # time grew (telemetry.span_profile)
+        prof = (sig.get("span_profile") or {})
+        g.write("""UNWIND $rows AS r MATCH (s:Service {name: r.s}) SET s.strength = r.strength, s.self_ratio = r.self_ratio""",
+                {"rows": [{"s": svc, "strength": power.get(svc), "self_ratio": (prof.get(svc) or {}).get("self_ratio")}
+                          for svc in services]})
     front = next((a["at"] for a in alerts if a["service"] == entry), None)
     started = front if front is not None else (alerts[0]["at"] if alerts else sig["inject"])
     _write_incidents(g, [{"id": "INC-1", "title": case, "symptom": entry, "started": started, "status": "open", "severity": "SEV2"}])
@@ -409,7 +432,12 @@ def run_cases(cases: list[str], signals: str = "metrics", verbose: bool = True) 
         g, entry = b["graph"], b["entry"]
         r = tools.rank_suspects(g, "INC-1", limit=50)
         review = tools.skeptic_review(r)
-        names = lambda order: list(dict.fromkeys(s["service"] for s in order))  # noqa: E731
+        if VERSION >= 3:   # v3: the judge's suspects, then every other alerting service, then the rest (tools.service_order)
+            quiet = {x["s"]: x["v"] for x in g.read("MATCH (s:Service) WHERE s.strength IS NOT NULL RETURN s.name AS s, s.strength AS v")
+                     if x["s"] in {d["service"] for d in tools.dependencies(g, entry)} | {entry}}
+            names = lambda order: tools.service_order(order, r["alerts"], quiet)  # noqa: E731
+        else:
+            names = lambda order: list(dict.fromkeys(s["service"] for s in order))  # noqa: E731
         orders = {
             "judge+skeptic": names(review["suspects"]), "judge": names(r["suspects"]),
             "earliest alert": [a["service"] for a in b["alerts"] if a["service"] != entry],
@@ -604,11 +632,18 @@ def main() -> None:
     ap.add_argument("--systems", default="ob,ss,tt")
     ap.add_argument("--signals", choices=SIGNALS, default="metrics")
     ap.add_argument("--extract", action="store_true", help="only extract and cache signals.json per case")
+    ap.add_argument("--profile", action="store_true", help="only add the span profile to each case's signals.json")
     ap.add_argument("--shard", default="0/1", help="i/n: this process takes every n-th case starting at i")
     a = ap.parse_args()
     if a.suites:
         i, n = (int(x) for x in a.shard.split("/"))
         cases = all_cases(tuple(a.suites.split(",")), tuple(a.systems.split(",")))[i::n]
+        if a.profile:
+            for c in cases:
+                t = time.time()
+                p = add_span_profile(c)["span_profile"]
+                print(f"{c:48} {len(p)} services profiled  {time.time() - t:.1f}s", flush=True)
+            return
         if a.extract:
             for c in cases:
                 t = time.time()

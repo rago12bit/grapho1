@@ -218,3 +218,30 @@ def merge_alerts(*sources: list[dict]) -> list[dict]:
     for svc, a in best.items():
         a["sources"] = seen[svc]
     return sorted(best.values(), key=lambda a: (a["at"], a["service"]))
+
+
+PROFILE_WINDOW_S = 600
+
+
+def span_profile(df: pd.DataFrame, inject: int) -> dict[str, dict]:
+    """Where each service's time went, before and after the fault: its own time (a span's duration minus the time
+    its direct children took) and its waiting time (the children's), p90 over the 10 minutes after against the 10
+    before. A service whose own time grew is doing the slow work; one that only waits longer is a victim of
+    something below it. `own_share` is the share of the slowdown that is its own (0.5 when nothing slowed)."""
+    d = df[(df.ts >= inject - PROFILE_WINDOW_S) & (df.ts < inject + PROFILE_WINDOW_S)]
+    kids = d.groupby("parentSpanID").ms.sum().rename("child_ms")
+    d = d.join(kids, on="spanID")
+    d = d.assign(child_ms=d.child_ms.fillna(0.0))
+    d = d.assign(self_ms=(d.ms - d.child_ms).clip(lower=0.0), after=d.ts >= inject)
+    out: dict[str, dict] = {}
+    for svc, part in d.groupby("service"):
+        b, a = part[~part.after], part[part.after]
+        if len(b) < 20 or len(a) < 20:
+            continue
+        r = lambda col: float(a[col].quantile(.9) / max(b[col].quantile(.9), 0.01))  # noqa: E731
+        self_r, child_r = r("self_ms"), (r("child_ms") if part.child_ms.max() > 0 else 1.0)
+        up_self, up_child = max(self_r - 1, 0.0), max(child_r - 1, 0.0)
+        share = up_self / (up_self + up_child) if up_self + up_child > 0.05 else 0.5
+        out[svc] = {"self_ratio": round(self_r, 3), "child_ratio": round(child_r, 3), "own_share": round(share, 3),
+                    "spans": int(len(part))}
+    return out
