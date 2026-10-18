@@ -13,6 +13,7 @@
   <a href="#proof-at-a-glance"><img alt="RCAEval: 360 real failures" src="https://img.shields.io/badge/RCAEval-360%20real%20failures-ff6b4a"></a>
   <a href="#falkordb-feature-map"><img alt="FalkorDB v4.14.10, 8 of 8 algorithms" src="https://img.shields.io/badge/FalkorDB-v4.14.10%20%C2%B7%208%2F8%20algorithms-ff6b4a"></a>
   <a href="#demo-video"><img alt="demo video" src="https://img.shields.io/badge/demo-video-ffb347"></a>
+  <a href="https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man"><img alt="blog post on DEV" src="https://img.shields.io/badge/blog-DEV.to-0a0a0a?logo=devdotto&logoColor=white"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
   <br>
   <a href="#context-for-any-agent-mcp"><img alt="MCP: stdio and HTTP" src="https://img.shields.io/badge/MCP-stdio%20%2B%20HTTP-6f42c1"></a>
@@ -31,7 +32,7 @@
 </p>
 
 <p align="center">
-  <a href="https://16-4-94-72.sslip.io"><b>Live demo</b></a> · <a href="#demo-video"><b>Demo video</b></a> · <a href="#use-it"><b>Use it</b></a> · <a href="#proof-at-a-glance"><b>Proof</b></a> · <a href="#see-it"><b>Screens</b></a> · <a href="#graph-model"><b>Graph model</b></a> · <a href="#what-the-judges-asked-for"><b>For judges</b></a> · <a href="#contents"><b>Contents</b></a>
+  <a href="https://16-4-94-72.sslip.io"><b>Live demo</b></a> · <a href="#demo-video"><b>Demo video</b></a> · <a href="https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man"><b>Blog post</b></a> · <a href="#use-it"><b>Use it</b></a> · <a href="#proof-at-a-glance"><b>Proof</b></a> · <a href="#see-it"><b>Screens</b></a> · <a href="#graph-model"><b>Graph model</b></a> · <a href="#what-the-judges-asked-for"><b>For judges</b></a> · <a href="#contents"><b>Contents</b></a>
 </p>
 
 ## At a glance
@@ -169,6 +170,8 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 
 <!-- Replace the line below with the link to the demo video. -->
 **The demo video will be linked here.** Until then, the GIF at the top is the app running, and [Use it](#use-it) runs it on your machine in one command.
+
+**Blog post:** [Hypocenter: The On-Call Agent That Won't Blame Your Deploy Without Proof](https://dev.to/rag2102/hypocenter-the-on-call-agent-that-wont-blame-your-deploy-without-proof-man) on DEV, the story behind it in five minutes.
 
 ## Contents
 
