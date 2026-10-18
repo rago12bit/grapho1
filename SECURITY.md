@@ -11,7 +11,7 @@ is no hosted service holding anyone's data.
 
 ## What the design already guards
 
-Each item below is enforced in code, and most are among the 25 breakages `make mutants` checks a test catches
+Each item below is enforced in code, and most are among the 28 breakages `make mutants` checks a test catches
 ([docs/mutants.txt](docs/mutants.txt)).
 
 | Risk | Guard | Where |

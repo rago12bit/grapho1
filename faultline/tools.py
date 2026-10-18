@@ -523,6 +523,41 @@ def _other_faults(g: Graph, suspects: list[dict], incident_id: str) -> list[dict
     return found
 
 
+def unlinked_failures(g: Graph, inc: dict, on_path: set[str], until: int) -> list[dict]:
+    """Services that started alerting before the symptom did (by `until`) with no CALLS link to it: not below it
+    within MAX_HOPS, not one of its callers, and not under another open incident's symptom. The graph can't connect
+    them to this incident, and that doesn't make them safe: each is a question about the topology, which the evidence
+    gate raises instead of ruling the service out. The changes they carry come with them. Another open incident
+    accounts for a service when it is that incident's symptom, below it or above it (a caller feeling its failure)."""
+    sym, start = inc["symptom"], inc["started"]
+    rows = g.read("""
+        MATCH (a:Alert)-[:FIRED_ON]->(s:Service)
+        WHERE a.at >= $from AND a.at <= $until AND NOT s.name IN $known
+        WITH s, min(a.at) AS first
+        OPTIONAL MATCH (c:Change)-[:CHANGED]->(s) WHERE c.at >= $from AND c.at <= first AND c.kind IN ['deploy', 'config', 'flag']
+        RETURN s.name AS service, first, collect(c.id) AS changes
+        ORDER BY first, service""", {"from": start - WINDOW_MIN * 60, "until": until, "known": sorted(on_path)})
+    if not rows:
+        return []
+    known = set(on_path) | {c["service"] for c in callers(g, sym)}
+    others = g.read("""
+        MATCH (i:Incident)-[:SYMPTOM_ON]->(s:Service)
+        WHERE i.id <> $inc AND i.status <> 'resolved' AND abs(i.started - $at) <= $window
+        RETURN DISTINCT s.name AS symptom""", {"inc": inc["id"], "at": start, "window": WINDOW_MIN * 60})
+    for o in others:          # what sits under another open incident's symptom, or above it, is that incident's
+        known |= {o["symptom"]} | {d["service"] for d in dependencies(g, o["symptom"])} | {c["service"] for c in callers(g, o["symptom"])}
+    out = []
+    for r in rows:
+        if r["service"] in known:
+            continue
+        lead = round((until - r["first"]) / 60, 1)
+        out.append({"service": r["service"], "first_alert": r["first"], "minutes_before_symptom": lead,
+                    "changes": sorted(x for x in r["changes"] if x),
+                    "reason": f"{r['service']} started alerting {lead:g} min before {sym} did, and the graph has no CALLS "
+                              f"path between them within {MAX_HOPS} hops: not ruled out, not proven. Check the topology."})
+    return out
+
+
 def runbooks(g: Graph, service: str) -> list[dict]:
     """Procedural memory: how the team fixes things on this service."""
     return g.read("""
@@ -819,17 +854,21 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6, depth: int = MAX_H
     other_faults = _other_faults(g, suspects, incident_id)
 
     path_set = set(on_path)
+    # No path is not proof of safety: a change on a service that was already failing before the symptom, with no
+    # CALLS link the judge could follow, is a question about the topology, not a change ruled out.
+    unlinked = unlinked_failures(g, inc, path_set, first_symptom_alert) if depth == MAX_HOPS else []
+    gap = {cid for u in unlinked for cid in u["changes"]}
     ruled_out = [
         {**c, "reason": f"{c['service']} is not on {sym}'s dependency path"
                         + (f" within {depth} hop{'s' if depth > 1 else ''}" if depth < MAX_HOPS else "")}
-        for c in all_changes_near(g, start) if c["service"] not in path_set
+        for c in all_changes_near(g, start) if c["service"] not in path_set and c["id"] not in gap
     ]
     top = suspects[0] if suspects else None
     margin = round(top["score"] - suspects[1]["score"], 3) if len(suspects) > 1 else (top["score"] if top else 0)
     p_conf, confidence = confidence_from(top["score"] if top else 0.0, margin) if top else (0.0, "none")
     return {
         "incident": inc, "dependency_count": len(deps), "suspects": suspects, "alert_cone": sorted(cone),
-        "ruled_out": ruled_out, "confidence": confidence, "confidence_p": p_conf, "margin": margin,
+        "ruled_out": ruled_out, "unlinked": unlinked, "confidence": confidence, "confidence_p": p_conf, "margin": margin,
         "other_faults": other_faults, "alerts": alerts,
         "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS, "host": HOST_WEIGHTS}, "depth": depth,
     }
@@ -1310,6 +1349,241 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
     ok = [c for c in claims if c["ok"]]
     return {"total": len(claims), "supported": len(ok), "claims": claims, "verdict_problems": verdict,
             "verdict_consistent": not verdict}
+
+
+# --- the evidence gate ---------------------------------------------------------------------------------------
+
+# Every check a verdict goes through before it is called proven, each with the question it asks. G1, G2 and G8 are
+# about what the graph can show at all: if one fails, the answer is that the graph can't prove this. The others
+# are about how strong the case is: if one fails, the leader stands but not with confidence.
+GATE = [
+    ("G1", "In the graph", "the blamed change, service or host is a node in this company's graph"),
+    ("G2", "On a call path", "a CALLS path runs from the symptom down to it"),
+    ("G3", "There first", "it landed (or failed) before the symptom did, and nothing below it was failing earlier"),
+    ("G4", "Alerts climb the path", "every service between it and the symptom alerted after it, deepest first"),
+    ("G5", "Explains every alert", "its footprint covers every alert joined to the symptom, and every separate alert group has a cause"),
+    ("G6", "No rival survives", "every other suspect fails at least one of G2 to G5"),
+    ("G7", "Every claim checked", "every id, service and time in the verdict is backed by the graph"),
+    ("G8", "Nothing failing off the graph", "no service started failing before the symptom without a CALLS link the judge could follow"),
+]
+GATE_NAMES = {k: name for k, name, _ in GATE}
+GATE_HARD = {"G1", "G2", "G8"}
+VERDICTS = {"confirmed": "Confirmed", "not_confident": "Not confident", "cannot_prove": "The graph can't prove this"}
+
+
+def _traced(g: Graph, fn, *args, **kw):
+    """Run fn and return its result with the queries it ran, so each check shows the Cypher that decided it."""
+    mark = len(g.trace.queries)
+    out = fn(*args, **kw)
+    return out, g.trace.queries[mark:]
+
+
+def _check(cid: str, passed: bool, detail: str, queries: list[dict] | None = None) -> dict:
+    asks = next(a for k, _, a in GATE if k == cid)
+    return {"id": cid, "name": GATE_NAMES[cid], "asks": asks, "passed": bool(passed), "detail": detail,
+            "queries": queries or []}
+
+
+def _hm(ts: int) -> str:
+    return time.strftime("%H:%M", time.gmtime(ts))
+
+
+def _suspect_gate(s: dict, ranking: dict) -> list[dict]:
+    """G2 to G5 for one suspect, from what the judge already read. The competitor sweep runs these on every
+    suspect, so a rival that still stands keeps the leader from being called proven."""
+    sym = ranking["incident"]["symptom"]
+    cone = set(ranking.get("alert_cone") or [])
+    fp = s["footprint"]
+    if s["change"]:
+        first = s["minutes_before"] >= 0 and not s.get("from_below")
+        when = (f"landed {s['minutes_before']:g} min before the incident" if s["minutes_before"] >= 0
+                else f"landed {-s['minutes_before']:g} min after the incident started")
+        when += "; something below it was failing first" if s.get("from_below") else ""
+    else:
+        first = s["factors"].get("earliness", 0) >= 1.0
+        when = f"first alert {s['minutes_before']:g} min before the incident" + ("" if first else f", after {sym} alerted")
+    chain = s["factors"]["alert_chain"]
+    seq = " → ".join(f"{x['service']} {_hm(x['at'])}" for x in fp["sequence"])
+    missing = sorted(cone - set(fp["explained"]) - {sym})
+    covered = set(fp["explained"]) | {x for o in ranking.get("other_faults") or [] for x in o["explains"]}
+    orphans = [gr["first_to_alert"] for gr in ranking.get("alert_groups") or []
+               if not gr["has_symptom"] and not covered & set(gr["services"])]
+    explain = f"explains {len(cone & set(fp['explained']))} of {len(cone)} alerting services joined to {sym}"
+    if missing:
+        explain += f"; not {', '.join(missing)}"
+    if orphans:
+        explain += f"; nothing explains the group that starts at {', '.join(orphans)}"
+    return [
+        _check("G2", bool(s["path"]), " → ".join(s["path"]) + f" ({len(s['path']) - 1} hop{'s' if len(s['path']) != 2 else ''})"
+               if s["path"] else f"no CALLS path from {sym}"),
+        _check("G3", first, when),
+        _check("G4", chain >= 0.7, f"alert chain {chain:g}" + (f": {seq}" if seq else "")
+               + (" (the cause itself never alerted)" if chain == 0.6 else "")),
+        _check("G5", not missing and not orphans, explain),
+    ]
+
+
+def evidence_gate(g: Graph, incident_id: str, ranking: dict | None = None, findings: dict | None = None) -> dict:
+    """The named checks a verdict has to pass before it is called proven, each with the query that decided it.
+
+    The leader goes through all eight. Every other suspect goes through G2 to G5 (the competitor sweep), every
+    change the judge ruled out is shown with why, and every failure the graph can't link is shown as a topology
+    question rather than as safe. The verdict is `confirmed` (all pass), `not_confident` (the graph can show the
+    leader but the case has a hole) or `cannot_prove` (no suspect, or G1, G2 or G8 fails). Read-only; G7 runs only
+    when there are findings to check (`claim_check` in the result)."""
+    if ranking is None:
+        ranking = rank_suspects(g, incident_id)
+        groups = alert_clusters(g, incident_id)["groups"]
+        ranking = apply_review(ranking, skeptic_review(ranking, groups))
+        ranking["alert_groups"] = groups
+    inc = ranking["incident"]
+    sym, start, depth = inc["symptom"], inc["started"], ranking.get("depth", MAX_HOPS)
+    sus = ranking["suspects"]
+    lead = sus[0] if sus else None
+    checks: list[dict] = []
+    claim_check = None
+
+    if lead:
+        svc, c = lead["service"], lead["change"]
+        # G1: the cause is really there.
+        if c:
+            rows, q = _traced(g, g.read, """
+                MATCH (c:Change {id: $id})-[:CHANGED]->(s:Service)
+                RETURN c.id AS id, c.kind AS kind, c.at AS at, s.name AS service""", {"id": c["id"]})
+            ok = bool(rows) and rows[0]["service"] == svc
+            checks.append(_check("G1", ok, f"{c['id']}: {c['kind']} on {svc} at {_hm(rows[0]['at'])}" if ok
+                                 else f"{c['id']} is not a change on {svc} in the graph", q))
+        else:
+            label = "Node" if lead["type"] == "host" else "Service"
+            rows, q = _traced(g, g.read, f"MATCH (n:{label} {{name: $name}}) RETURN n.name AS name", {"name": svc})
+            checks.append(_check("G1", bool(rows), f"{label.lower()} {svc}" if rows else f"no {label.lower()} {svc} in the graph", q))
+        # G2: a call path from the symptom down to it (for a shared host, to the hosted service that failed first).
+        target = lead["path"][-1] if lead["path"] else svc
+        paths, q = _traced(g, paths_between, g, sym, target)
+        paths = [p for p in paths if len(p) - 1 <= depth]
+        checks.append(_check("G2", bool(paths), (" → ".join(paths[0]) + f" ({len(paths[0]) - 1} hop{'s' if len(paths[0]) != 2 else ''}"
+                                                 + (f", {len(paths)} paths" if len(paths) > 1 else "") + ")")
+                             if paths else f"no CALLS path from {sym} down to {target} within {depth} hops", q))
+        # G3: there first. A change inside the window, before the incident, with nothing below it already failing.
+        alerts = ranking.get("alerts") or []
+        cone = set(ranking.get("alert_cone") or [])
+        sym_first = min((a["at"] for a in alerts if a["service"] == sym), default=start)
+        if c:
+            at = c["at"]
+            below, q = _traced(g, _from_below, g, svc, cone, alerts, at)
+            inside = start - WINDOW_MIN * 60 <= at <= start
+            detail = (f"landed {_hm(at)}, {round((start - at) / 60, 1):g} min before the incident" if at <= start
+                      else f"landed {_hm(at)}, after the incident started at {_hm(start)}")
+            if inside and below:
+                detail += "; something below it was already failing"
+            checks.append(_check("G3", inside and not below, detail, q))
+        else:
+            first = lead.get("first_alert") or min((a["at"] for a in alerts if a["service"] == target), default=start)
+            seen, q = _traced(g, alerts_near, g, sorted({target, sym}), start)
+            ok = first <= sym_first and bool(seen)
+            checks.append(_check("G3", ok, f"{target} first alerted {_hm(first)}, {sym} at {_hm(sym_first)}", q))
+        # G4: the alerts climb the path, deepest first.
+        on_path, q = _traced(g, alerts_near, g, lead["path"], start)
+        chain = lead["factors"]["alert_chain"]
+        firsts: dict[str, int] = {}
+        for a in on_path:
+            if a["at"] >= ((c or {}).get("at") or 0):
+                firsts.setdefault(a["service"], a["at"])
+        climb = " → ".join(f"{x} {_hm(firsts[x])}" for x in reversed(lead["path"]) if x in firsts)
+        checks.append(_check("G4", chain >= 0.7, f"alert chain {chain:g}" + (f": {climb}" if climb else "")
+                             + (" (the cause itself never alerted)" if chain == 0.6 else ""), q))
+        # G5: the footprint (who calls it: SSpaths backwards) covers the symptom's alerts; WCC groups all owned.
+        q = []
+        if lead["type"] != "host":
+            _, q = _traced(g, callers, g, svc)
+        if ranking.get("alert_groups") is not None:
+            _, q2 = _traced(g, alert_clusters, g, incident_id)
+            q += q2
+        g5 = _suspect_gate(lead, ranking)[3]
+        checks.append({**g5, "queries": q})
+        # G6: the competitor sweep. No query of its own: it is G2 to G5 run on every other suspect.
+        survivors = [_label(o) for o in sus[1:] if all(x["passed"] for x in _suspect_gate(o, ranking))]
+        checks.append(_check("G6", not survivors,
+                             (f"{', '.join(survivors)} also pass{'es' if len(survivors) == 1 else ''} G2 to G5" if survivors
+                              else f"each of the other {len(sus) - 1} suspect{'s' if len(sus) != 2 else ''} fails at least one of G2 to G5"
+                              if len(sus) > 1 else "no other suspect")))
+        # G7: the narrative's claims, looked up.
+        if findings is not None:
+            claim_check, q = _traced(g, verify_claims, g, incident_id, findings, ranking)
+            ok = claim_check["supported"] == claim_check["total"] and claim_check["verdict_consistent"]
+            checks.append(_check("G7", ok, f"{claim_check['supported']} of {claim_check['total']} claims backed by the graph"
+                                 + ("" if claim_check["verdict_consistent"] else "; " + "; ".join(claim_check["verdict_problems"])), q))
+
+    # G8: nothing failing off the graph. Recomputed here so the check carries its own queries.
+    if depth == MAX_HOPS:
+        deps, q = _traced(g, dependencies, g, sym)
+        alerts = ranking.get("alerts") or []
+        sym_first = min((a["at"] for a in alerts if a["service"] == sym), default=start)
+        unlinked, q2 = _traced(g, unlinked_failures, g, inc, {sym} | {d["service"] for d in deps}, sym_first)
+        checks.append(_check("G8", not unlinked, "; ".join(u["reason"] for u in unlinked) if unlinked
+                             else f"every service that alerted before {sym} did is linked to it, or to another open incident", q + q2))
+    else:
+        unlinked = []
+
+    failed = [x for x in checks if not x["passed"]]
+    if not lead:
+        verdict = "cannot_prove"
+        headline = f"No suspect: nothing on {sym}'s call path changed or failed first, so the graph can't prove a cause."
+    elif any(x["id"] in GATE_HARD for x in failed):
+        verdict = "cannot_prove"
+        why = next(x for x in failed if x["id"] in GATE_HARD)
+        headline = f"The graph can't prove {_label(lead)}: " + (why["detail"] if why["id"] != "G8" else unlinked[0]["reason"])
+    elif failed:
+        verdict = "not_confident"
+        names = [x["name"].lower() for x in failed]
+        headline = f"{_label(lead)} leads, but fails {', '.join(names[:-1]) + ' and ' + names[-1] if len(names) > 1 else names[0]}: not confident."
+    else:
+        verdict = "confirmed"
+        headline = f"{_label(lead)} passes all {len(checks)} checks."
+
+    sweep = []
+    for i, s in enumerate(sus):
+        mine = checks if i == 0 else _suspect_gate(s, ranking)
+        fails = [x["id"] for x in mine if not x["passed"]]
+        sweep.append({"label": _label(s), "service": s["service"], "change": (s["change"] or {}).get("id"),
+                      "score": s["score"], "status": "leader" if i == 0 else "survives" if not fails else "rejected",
+                      "failed": fails, "detail": "; ".join(f"{x['id']} {x['detail']}" for x in mine if not x["passed"])})
+    for r in ranking.get("ruled_out") or []:
+        sweep.append({"label": r["id"], "service": r["service"], "change": r["id"], "score": None, "status": "rejected",
+                      "failed": ["G2"], "detail": r["reason"]})
+    for u in unlinked:
+        for cid in u["changes"] or [None]:
+            sweep.append({"label": cid or f"{u['service']} (no change)", "service": u["service"], "change": cid,
+                          "score": None, "status": "not proven", "failed": ["G2"], "detail": u["reason"]})
+    out = {"incident": incident_id, "leader": _label(lead) if lead else None, "verdict": verdict,
+           "verdict_label": VERDICTS[verdict], "headline": headline, "checks": checks,
+           "passed": len(checks) - len(failed), "total": len(checks), "sweep": sweep, "unlinked": unlinked}
+    if claim_check is not None:
+        out["claim_check"] = claim_check
+    return out
+
+
+def record_gate(g: Graph, investigation_id: str, gate: dict) -> dict:
+    """Keep the gate's run with the investigation: (Investigation)-[:GATED]->(GateRun), and a TESTED edge from the
+    run to every change, service or host it judged, with how each fared, rejections and topology questions too."""
+    rows = [{"change": x["change"], "service": x["service"], "status": x["status"], "failed": x["failed"],
+             "score": x["score"], "rank": i + 1} for i, x in enumerate(gate["sweep"])]
+    checks = [{k: x[k] for k in ("id", "name", "passed", "detail")} for x in gate["checks"]]
+    g.write("""
+        MATCH (v:Investigation {id: $inv})
+        CREATE (v)-[:GATED]->(gr:GateRun {verdict: $verdict, leader: $leader, passed: $passed, total: $total,
+                                         checks: $checks, at: $at})
+        WITH gr
+        UNWIND $rows AS r
+        OPTIONAL MATCH (c:Change {id: r.change})
+        OPTIONAL MATCH (s:Service {name: r.service})
+        OPTIONAL MATCH (n:Node {name: r.service})
+        WITH gr, r, coalesce(c, s, n) AS t
+        WHERE t IS NOT NULL
+        CREATE (gr)-[:TESTED {status: r.status, failed: r.failed, score: r.score, rank: r.rank}]->(t)""",
+            {"inv": investigation_id, "verdict": gate["verdict"], "leader": gate["leader"], "passed": gate["passed"],
+             "total": gate["total"], "checks": json.dumps(checks), "at": now(), "rows": rows})
+    return {"verdict": gate["verdict"], "tested": len(rows)}
 
 
 # --- graph algorithms as agent tools -------------------------------------------------------------

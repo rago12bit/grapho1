@@ -114,7 +114,8 @@ function render(inc, out) {
       <button class="link" id="replay">replay traversal</button></span></div>
     <h2 class="verdict-word ${f.change_id ? "" : f.root_cause_service ? "infra" : "none"}">${esc(word)}</h2>
     <div class="chips-row">${sev(inc.severity)} ${status(inc.status)} ${conf(r?.confidence || f.confidence, r?.confidence_p)}
-      ${cc ? `<span class="label ${ok ? "ok" : "bad"}" title="Every id, service and time in the verdict was looked up in the graph">${cc.supported}/${cc.total} claims checked</span>` : ""}</div>
+      ${cc ? `<span class="label ${ok ? "ok" : "bad"}" title="Every id, service and time in the verdict was looked up in the graph">${cc.supported}/${cc.total} claims checked</span>` : ""}
+      ${out.gate ? `<a class="label ${GATE_CLS[out.gate.verdict]}" href="#gate-sec" title="${esc(out.gate.headline)}">gate · ${esc(out.gate.verdict_label.toLowerCase())}</a>` : ""}</div>
     <div class="kind label">${esc(kind)}</div>
     <p class="headline">${esc(f.summary || out.answer || "")}</p>
     <p class="cf-sub">${esc(inc.title)} · symptom on <b>${esc(inc.symptom)}</b> (${esc(inc.team)}) · started ${hhmm(inc.started)}, ${ago(inc.started)}</p>
@@ -128,6 +129,7 @@ function render(inc, out) {
         : `Read straight from the graph: ${out.graph?.queries ?? "?"} queries, ${out.graph?.ms ?? "?"} ms. The agents re-derive it and propose the fix.`}</span>
     </div>
 
+    ${gateHtml(out)}
     ${top ? section("Root cause", facts(r, top)) : ""}
     ${chainHtml(r, out)}
     ${impactHtml(r)}
@@ -163,6 +165,34 @@ function render(inc, out) {
     openIncident(inc.id);
   }));
   renderActions(inc);
+}
+
+const GATE_CLS = { confirmed: "ok", not_confident: "warn", cannot_prove: "bad" };
+
+/** The evidence gate: each named check the leader had to pass, with the query that decided it, then every other
+ *  candidate through the same checks. "Not proven" is not "ruled out": no CALLS link is a question for the topology. */
+function gateHtml(out) {
+  const gt = out.gate;
+  if (!gt) return "";
+  const cls = GATE_CLS[gt.verdict];
+  const rows = gt.checks.map((c) => `<li class="${c.passed ? "ok" : "no"}"><span>${c.passed ? "✓" : "✗"}</span><div>
+      <b class="mono">${esc(c.id)}</b> ${esc(c.name)} <span class="faint small">· ${esc(c.asks)}</span>
+      <div class="small">${esc(c.detail)}</div>
+      ${c.queries.length ? queries(c.queries, 3) : `<div class="faint tiny">No query of its own: decided by running G2 to G5 on every other suspect.</div>`}</div></li>`).join("");
+  const others = gt.sweep.filter((x) => x.status !== "leader");
+  const n = (st) => others.filter((x) => x.status === st).length;
+  const mark = { rejected: ["no", "✗"], survives: ["warn", "!"], "not proven": ["warn", "?"] };
+  const sweep = others.length ? `<details class="gsweep"><summary class="small">Every other candidate through the same checks ·
+      ${plural(n("rejected"), "rejected", "rejected")}${n("survives") ? ` · ${n("survives")} still standing` : ""}${n("not proven") ? ` · ${n("not proven")} not proven` : ""}</summary>
+      <ul class="checks">${others.map((x) => `<li class="${mark[x.status][0]}"><span>${mark[x.status][1]}</span><div><b class="mono">${esc(x.label)}</b>
+        <span class="label ${mark[x.status][0] === "no" ? "faint" : "warn"}">${esc(x.status)}</span> <span class="faint small">${x.failed.length ? `fails ${x.failed.map(esc).join(", ")}` : "passes G2 to G5"}</span>
+        ${x.detail ? `<div class="faint small">${esc(x.detail)}</div>` : ""}</div></li>`).join("")}</ul></details>` : "";
+  const w = out.gate_written;
+  return `<div id="gate-sec">${section(`Evidence gate · ${gt.passed} of ${gt.total} checks`, `<p class="gate-head ${cls}">${esc(gt.headline)}</p>
+    <ul class="checks gate">${rows}</ul>${sweep}
+    <p class="faint small">Confirmed means every check passed. A failed G1, G2 or G8 means the graph can't prove it; any other failure means the leader stands, but not with confidence.
+      ${w ? `Stored with this investigation as a GateRun with ${plural(w.tested, "TESTED edge")}.` : "Running the agents stores it with the investigation as a GateRun."}</p>`,
+    `<span class="label ${cls}">${esc(gt.verdict_label)}</span>`, "gate")}</div>`;
 }
 
 /** What the fix was proved to do on a copy of the graph, before anyone approved it. */
@@ -363,7 +393,8 @@ function suspects(r) {
       ${s.also_explains?.length ? `<div class="linked">also explains ${s.also_explains.map((o) => esc(o.id)).join(", ")}</div>` : ""}
     </li>`;
   }).join("")}</ol>
-  ${r.ruled_out.length ? `<p class="faint small">Off the dependency path, so ruled out: ${r.ruled_out.map((c) => `${esc(c.id)} (${esc(c.service)})`).join(", ")}</p>` : ""}`;
+  ${r.ruled_out.length ? `<p class="faint small">Off the dependency path, so ruled out: ${r.ruled_out.map((c) => `${esc(c.id)} (${esc(c.service)})`).join(", ")}</p>` : ""}
+  ${r.unlinked?.length ? `<p class="small warn">Not ruled out, not proven: ${r.unlinked.map((u) => `${u.changes.length ? `${u.changes.map(esc).join(", ")} on ` : ""}<b>${esc(u.service)}</b>`).join("; ")} started failing before ${esc(r.incident.symptom)} with no CALLS link to it. Check the topology.</p>` : ""}`;
 }
 
 function stepsHtml(steps) {

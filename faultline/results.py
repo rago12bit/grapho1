@@ -104,7 +104,7 @@ def readme(doc: str) -> dict:
 def _load(stamp: tuple) -> dict:
     out = {"rcaeval": rcaeval((ROOT / "docs" / "rcaeval-results.md").read_text())}
     out["scale"] = scale((ROOT / "docs" / "scale.md").read_text())
-    out.update(readme((ROOT / "README.md").read_text()))
+    out.update(readme(re.sub(r"<!-- /?claim(?::[\w.-]+)? -->", "", (ROOT / "README.md").read_text())))   # claim tags: see claims.py
     return out
 
 

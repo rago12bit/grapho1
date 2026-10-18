@@ -3,12 +3,14 @@ import { $, $$, api, cypher, esc, mountShell } from "./shell.js";
 
 mountShell({ tenants: false });
 let EXPS = [], cur = null;
+const GATE_CLS = { confirmed: "ok", not_confident: "warn", cannot_prove: "bad" };
 const results = {};
 
 const verdict = (v, cls) => `
   <div class="vs-col ${cls}"><div class="h">${cls === "after" ? "After, on the copy" : "Before"}</div>
     <div class="lead">${esc(v.leader)}</div>
     <div class="conf">${esc(v.confidence)} confidence · score ${v.score.toFixed(2)}</div>
+    ${v.gate ? `<div class="gatev ${GATE_CLS[v.gate.verdict]}" title="${esc(v.gate.headline)}">Evidence gate: ${esc(v.gate.label)}${v.gate.failed.length ? ` <span class="faint">(fails ${v.gate.failed.map(esc).join(", ")})</span>` : ""}</div>` : ""}
     <div class="mini">${v.top.map((t, i) => `<div class="${i === 0 ? "first" : ""}"><span>${esc(t.label)}<span class="b"><i style="width:${Math.round(t.score * 100)}%"></i></span></span><span class="r" style="text-align:right">${t.score.toFixed(2)}</span></div>`).join("")}</div>
   </div>`;
 
@@ -27,7 +29,8 @@ function panel() {
       ${r ? `
         <div class="vs-grid">${verdict(r.before, "before")}${verdict(r.after, "after")}</div>
         <div class="moved${r.moved ? "" : " no"}">${r.leader_changed ? `The verdict moved: <b>${esc(r.before.leader)}</b> → <b>${esc(r.after.leader)}</b>, confidence ${esc(r.before.confidence)} → ${esc(r.after.confidence)}.`
-          : r.moved ? `Same leader, weaker case: score ${r.before.score.toFixed(2)} → ${r.after.score.toFixed(2)}, confidence ${esc(r.before.confidence)} → ${esc(r.after.confidence)}.` : "Nothing moved."}</div>` : ""}
+          : r.moved ? `Same leader, weaker case: score ${r.before.score.toFixed(2)} → ${r.after.score.toFixed(2)}, confidence ${esc(r.before.confidence)} → ${esc(r.after.confidence)}.` : "Nothing moved."}
+          ${r.after.gate && r.after.gate.verdict !== "confirmed" ? `<div class="gate-why">${esc(r.after.gate.headline)}</div>` : ""}</div>` : ""}
     </div>`;
   $("#go").onclick = () => run(e.id);
 }

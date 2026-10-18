@@ -1,0 +1,51 @@
+# Hypocenter
+
+> An on-call agent whose reasoning lives in a FalkorDB graph. It follows an outage down the call graph to the change, service or node where it started, argues every suspect with evidence that cites graph nodes, puts the leader through eight named checks before calling it proven, and proves the fix on a GRAPH.COPY before a person approves it. Python 3.12 and FastAPI over FalkorDB v4.14.10; vanilla JS UI; MCP over stdio and HTTP. The Python package is called `faultline` (the working name); everything a user sees says Hypocenter.
+
+Run it: `docker compose up -d --build`, then http://localhost:8090 (incident room at /app). Check it: `make judge-check` (Docker only, no key, ~2 minutes). No API key is needed: without `ANTHROPIC_API_KEY` the same four agents run as a fixed playbook. The verdict always comes from the deterministic judge, never from a model.
+
+Rules an agent working here should keep:
+- No path, no blame: a suspect needs a CALLS path to the symptom and alerts that climb it in order.
+- No path is not safe either: a failure the graph can't link is "not proven, check the topology", never "ruled out"; a name the graph doesn't have is "not modelled".
+- Agents only propose fixes. There is no approve tool, over MCP or anywhere else; a person approves in the UI.
+- Reads go through GRAPH.RO_QUERY, and a request for a tenant reads as that tenant's own read-only FalkorDB user.
+- Numbers in the README are tagged with the file that measured them; `make claims` fails if one drifts. Don't type a number in twice.
+- Tests run against a real FalkorDB on their own graph prefix: `docker compose run --rm app pytest -q`.
+
+## Start here
+
+- [README](README.md): what it does, proof, the graph model, the evidence checks, every command
+- [Graph model](docs/graph-model.md): every label, relationship, property and count, generated from the graphs
+- [RCAEval results](docs/rcaeval-results.md): 360 real failures against RCAEval's own baselines (output of `make eval`)
+- [Scale](docs/scale.md): query latencies and judge accuracy at 1,000 and 3,000 services
+- [Mutants](docs/mutants.txt): 25 safeguards broken on purpose, each caught by a test
+- [Judge-check on a fresh clone](docs/judge-check-clean-clone.txt)
+- [Security](SECURITY.md) and [accessibility](ACCESSIBILITY.md)
+
+## The judge and its checks
+
+- [faultline/tools.py](faultline/tools.py): every graph tool. `rank_suspects` (the judge), `skeptic_review`, `verify_claims`, `evidence_gate` (G1 to G8, each with its Cypher), `unlinked_failures` (the no-path-is-not-safe rule), `depth_sweep`, the algorithm tools, actions and memory
+- [faultline/reasoning.py](faultline/reasoning.py): the argument as a subgraph (Hypothesis, Evidence, CITES) and the CAUSED_BY chain
+- [faultline/proof.py](faultline/proof.py): a fix proved on a GRAPH.COPY before approval
+- [faultline/preflight.py](faultline/preflight.py): the pre-deploy check, ship / review / hold before a change goes out
+
+## Agents and interfaces
+
+- [faultline/agent.py](faultline/agent.py): the four agents (triage, investigator, skeptic, responder), tool specs, the offline playbook, the case-file preview, the question router
+- [faultline/mcp_server.py](faultline/mcp_server.py): the same tools for any MCP client; `evidence_gate` and `preflight_change` included, no approve tool
+- [faultline/api.py](faultline/api.py): HTTP routes and the static UI. Useful ones: `GET /api/{tenant}/incidents/{id}/case`, `.../gate`, `GET|POST /api/{tenant}/preflight`
+- [faultline/db.py](faultline/db.py): one graph per tenant, the query trace, the read-only user per tenant
+
+## Measuring
+
+- [faultline/eval.py](faultline/eval.py): planted faults with decoys, ablations, baselines, held-out seeds
+- [faultline/rcaeval.py](faultline/rcaeval.py) and [faultline/compare.py](faultline/compare.py): the public benchmark
+- [faultline/claims.py](faultline/claims.py): the README's numbers against their sources
+- [faultline/judge_check.py](faultline/judge_check.py): the product checks behind `make judge-check`
+
+## Optional
+
+- [faultline/seed.py](faultline/seed.py): the synthetic companies (Kestrel Pay, Harbor Freight)
+- [faultline/site.py](faultline/site.py): on-call, explore, Break-it experiments on graph copies
+- [scripts/preflight.sh](scripts/preflight.sh): the pre-deploy check from CI
+- [web/](web/): the UI, plain ES modules, no build step

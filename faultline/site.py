@@ -10,7 +10,7 @@ import time
 import uuid
 from collections import Counter
 
-from . import tools
+from . import db, tools
 from .db import Graph, client, graph_name, list_tenants
 
 # --- the engine ----------------------------------------------------------------------------------------------
@@ -37,6 +37,7 @@ def engine() -> dict:
         e = g.read("MATCH ()-[r]->() RETURN count(r) AS n")[0]["n"]
         graphs.append({"tenant": t_, "graph": graph_name(t_), "nodes": n, "edges": e})
     return {"engine": "FalkorDB", "version": version, "ping_ms": ping_ms, "graphs": graphs,
+            "acl": {"enabled": db.acl_state["enabled"], "readers": len(db.acl_state["users"]), "error": db.acl_state["error"]},
             "nodes": sum(x["nodes"] for x in graphs), "edges": sum(x["edges"] for x in graphs)}
 
 
@@ -149,7 +150,9 @@ def node(g: Graph, key: int) -> dict:
 EXPERIMENTS = [
     {"id": "cut-path", "incident": "INC-302", "title": "Cut auth out of mobile-bff's call path",
      "what": "Deletes every CALLS edge into auth, so nothing on mobile-bff's dependency path reaches it.",
-     "expect": "D-5201 is no longer on the path from the symptom, so it can't be blamed, however recent it is.",
+     "expect": "D-5201 is no longer on the path from the symptom, so it can't be blamed, however recent it is. But auth "
+               "is still alerting, so the evidence gate won't call anything proven: D-5201 is not proven, not ruled out, "
+               "and the answer is to check the topology.",
      "algo": "CALLS*1..5",
      "cypher": ["MATCH (:Service)-[r:CALLS]->(:Service {name: 'auth'}) DELETE r"]},
     {"id": "late-deploy", "incident": "INC-302", "title": "Ship the auth deploy after the alerts",
@@ -206,6 +209,13 @@ def _verdict(r: dict) -> dict:
             "ruled_out": [c["id"] for c in r.get("ruled_out") or []][:6]}
 
 
+def _gate(g: Graph, inc: str) -> dict:
+    from .agent import gate
+    r = gate(g, inc)
+    return {"verdict": r["verdict"], "label": r["verdict_label"], "headline": r["headline"],
+            "failed": [x["id"] for x in r["checks"] if not x["passed"]]}
+
+
 def break_it(g: Graph, exp_id: str) -> dict:
     """Run one experiment on a copy of the graph and report the verdict before and after."""
     from .agent import judged
@@ -214,6 +224,7 @@ def break_it(g: Graph, exp_id: str) -> dict:
         raise KeyError(f"no experiment {exp_id}")
     inc = exp["incident"]
     before = _verdict(judged(g, inc))
+    before["gate"] = _gate(g, inc)
     sandbox = Graph(f"break_{uuid.uuid4().hex[:10]}", g.trace)
     t = time.perf_counter()
     client().connection.execute_command("GRAPH.COPY", graph_name(g.tenant), graph_name(sandbox.tenant))
@@ -227,6 +238,7 @@ def break_it(g: Graph, exp_id: str) -> dict:
         t = time.perf_counter()
         after = _verdict(judged(sandbox, inc))
         judge_ms = round((time.perf_counter() - t) * 1000, 1)
+        after["gate"] = _gate(sandbox, inc)
     finally:
         sandbox.drop()
     moved = (before["leader"] != after["leader"] or before["confidence"] != after["confidence"]

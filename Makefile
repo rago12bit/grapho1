@@ -6,6 +6,10 @@
 #
 #   make mutants
 #
+# Check every number tagged in the README against the file that measured it (seconds, no database):
+#
+#   make claims
+#
 # Reproduce every RCAEval number in the README with one command:
 #
 #   make eval          # ~3.3 GB download the first time, then signals, Hypocenter, RCAEval's baselines, the comparison
@@ -17,7 +21,7 @@ APP     = docker compose run --rm app
 SUITES  = --suites re2,re3 --systems ob,ss,tt
 BASE    = docker run --rm -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -v "$(PWD)/data:/data" -v "$(PWD)/baselines:/b:ro" faultline-baselines
 
-.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check mutants live-run
+.PHONY: eval eval-quick data signals faultline baselines compare up test synthetic scale judge-check mutants live-run claims
 
 eval: up data signals faultline baselines compare
 
@@ -59,6 +63,9 @@ scale:
 
 judge-check:
 	bash scripts/judge-check.sh
+
+claims:
+	docker compose run --rm --no-deps -v "$(PWD)/README.md:/app/README.md:ro" -v "$(PWD)/docs:/app/docs:ro" app python -m faultline.claims
 
 mutants:
 	docker compose build -q app

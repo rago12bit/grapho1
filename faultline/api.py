@@ -17,8 +17,8 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, learn, postmortem, public_postmortems, reasoning, results, seed, site, tools, upload, world
-from .db import Graph, list_tenants
+from . import agent, bench, ingest, learn, postmortem, preflight, public_postmortems, reasoning, results, seed, site, tools, upload, world
+from .db import Graph, ensure_reader, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 
@@ -39,7 +39,8 @@ PUBLIC = os.environ.get("FAULTLINE_PUBLIC") == "1"
 INGEST_TOKEN = os.environ.get("FAULTLINE_INGEST_TOKEN", "")
 # route suffix -> (requests, per seconds), per client address
 LIMITS = [("/investigate", 20, 60), ("/investigate/stream", 20, 60), ("/upload", 4, 600), ("/bench", 2, 60), ("/reset", 2, 300), ("/ask", 30, 60),
-          ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300), ("/run", 30, 60)]
+          ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300), ("/run", 30, 60),
+          ("/preflight", 30, 60)]
 _hits: dict[tuple[str, str], deque] = {}
 
 
@@ -95,6 +96,7 @@ async def revalidate_static(request, call_next):
 def _g(tenant: str) -> Graph:
     if tenant not in seed.TENANTS and not (tenant.startswith(upload.PREFIX) and upload.is_upload(tenant)):
         raise HTTPException(404, f"unknown tenant {tenant}")
+    ensure_reader(tenant)        # this request's reads go through the tenant's own read-only database user
     return Graph(tenant)
 
 
@@ -154,7 +156,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 212, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 232, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -215,6 +217,34 @@ def case(tenant: str, incident_id: str):
     """Read-only case file for an incident, ready the moment it is opened."""
     _guard(tools.get_incident, _g(tenant), incident_id)
     return agent.preview(tenant, incident_id)
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/gate")
+def gate(tenant: str, incident_id: str):
+    """The evidence gate: each named check the leader has to pass before it is called proven, with the query that
+    decided it, and every other suspect through the same checks. Read-only."""
+    g = _g(tenant)
+    return _guard(agent.gate, g, incident_id)
+
+
+class PreflightIn(BaseModel):
+    service: str = Field(min_length=1, max_length=80)
+    kind: str = Field(default="deploy", pattern="^(deploy|config|flag)$")
+    summary: str = Field(default="", max_length=300)
+
+
+@app.get("/api/{tenant}/preflight")
+def preflight_get(tenant: str, service: str, kind: str = "deploy", summary: str = ""):
+    """Before a change ships: what breaks if it goes wrong, and ship, review or hold, with every reason."""
+    g = _g(tenant)
+    return {**_guard(preflight.preflight, g, service, kind, summary[:300]), "traces": g.trace.queries}
+
+
+@app.post("/api/{tenant}/preflight")
+def preflight_post(tenant: str, body: PreflightIn):
+    """The same check for CI, before merge (scripts/preflight.sh). Nothing is written."""
+    g = _g(tenant)
+    return _guard(preflight.preflight, g, body.service, body.kind, body.summary)
 
 
 @app.get("/api/{tenant}/incidents/{incident_id}/postmortem.md")
@@ -580,7 +610,7 @@ def run_proofs():
 
 # path -> page; every page but the incident room is a static file around the same API
 PAGES = {"/": "landing.html", "/app": "index.html", "/oncall": "oncall.html", "/explore": "explore.html",
-         "/break": "break.html", "/replay": "replay.html", "/results": "results.html"}
+         "/break": "break.html", "/replay": "replay.html", "/results": "results.html", "/preflight": "preflight.html"}
 
 
 def _page(path: str, file: str):

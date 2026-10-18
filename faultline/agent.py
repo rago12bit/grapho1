@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from . import public_postmortems, reasoning, tools
+from . import preflight, public_postmortems, reasoning, tools
 from .db import Graph, Trace
 
 MODEL = "claude-opus-5-5"
@@ -125,6 +125,20 @@ TOOL_SPECS: list[dict] = [
         "clearly ahead? If another suspect explains more and scores within 0.15, it takes over. Returns the verdict "
         "(upheld / upheld with doubts / overturned), each check, the final leader and a calibrated confidence."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "evidence_gate", "description": (
+        "The named checks the leader must pass before it is called proven: G1 in the graph, G2 on a call path, G3 there "
+        "first, G4 alerts climb the path, G5 explains every alert, G6 no rival survives (G2 to G5 run on every other "
+        "suspect), G7 every claim checked, G8 nothing failing off the graph. Each check has its detail and the Cypher that "
+        "decided it. Verdict: confirmed, not_confident, or cannot_prove (no path is never treated as safe: a service "
+        "failing with no CALLS link is reported as a topology question)."),
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "preflight_change", "description": (
+        "Before a change ships: what breaks if it goes wrong. Blast radius (every caller, internet-facing entry points, "
+        "user journeys and SLOs), how central the service is, open incidents it would land in, past incidents caused "
+        "on it, recent changes stacked on it, the owner, on-call and who to ask for review. Returns ship, review or hold "
+        "with each reason. kind: deploy, config or flag. Read-only."),
+     "input_schema": _obj({"service": S, "kind": {"type": "string", "enum": ["deploy", "config", "flag"]}, "summary": S},
+                          ["service"])},
     {"name": "commits_in", "description": (
         "The commits a deploy shipped, ranked by how much request-path code each changed and how many words it shares "
         "with the incident (alerts, error logs, the deploy summary). Use it to say which commit inside a blamed deploy "
@@ -176,6 +190,8 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
     return {
         "simulate_failure": lambda service: tools.simulate_failure(g, service),
         "challenge_leader": lambda incident_id: tools.challenge_leader(g, incident_id),
+        "evidence_gate": lambda incident_id: gate(g, incident_id),
+        "preflight_change": lambda service, kind="deploy", summary="": preflight.preflight(g, service, kind, summary),
         "record_argument": lambda incident_id: record_argument(g, incident_id),
         "commits_in": lambda change_id, incident_id=None: tools.commits_in(g, change_id, incident_id),
         "delivery_metrics": lambda: tools.delivery_metrics(g),
@@ -427,12 +443,15 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
     ranking["alert_groups"] = groups
     top = ranking["suspects"][0] if ranking["suspects"] else None
     sk = challenged["skeptic"]
+    checked = run("skeptic", "evidence_gate", "Put the leader through the eight named checks, and every other suspect "
+                  "through G2 to G5: is it proven, or only leading?", incident_id=incident_id)
     run("skeptic", "record_argument", "Write every hypothesis, the evidence for and against it, and the causal chain into the graph.",
         incident_id=incident_id)
     run("skeptic", "write_handoff", "Hand the reviewed verdict to the responder through the graph.", incident_id=incident_id,
         summary=f"Verdict {sk['verdict']}: leader {sk['leader']}, {sk['failed_checks']} failed check(s), "
-                f"confidence {challenged['confidence']} ({challenged['confidence_p']}).",
+                f"confidence {challenged['confidence']} ({challenged['confidence_p']}). Gate: {checked['headline']}",
         data={"leader": sk["leader"], "verdict": sk["verdict"], "confidence": challenged["confidence"],
+              "gate": checked["verdict"],
               "action": top["recommended_action"] if top else None})
 
     # Responder: who to page, which runbook applies, and the fix to propose.
@@ -653,7 +672,7 @@ ROLE_TOOLS = {
     "investigator": ["read_handoff", "rank_suspects", "commits_in", "public_precedents", "alert_clusters", "spread_tree", "chat_about", "failure_paths", "alerts_near", "paths_between",
                      "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
                      "write_handoff"],
-    "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",
+    "skeptic": ["read_handoff", "challenge_leader", "evidence_gate", "alert_clusters", "alerts_near", "paths_between", "record_argument",
                 "write_handoff"],
     "responder": ["read_handoff", "argument", "why", "decision_trail", "journeys_hit", "on_call_at", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
                   "failure_domains", "propose_action", "submit_findings"],
@@ -679,7 +698,7 @@ ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "
              "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
              "failure_domains", "alert_clusters", "runbooks", "experts", "search_memory", "shape_matches",
              "argument", "why", "commits_in", "delivery_metrics", "journeys_hit", "slo_status", "on_call_at", "run_cypher",
-             "chat_about", "decision_trail", "find_named", "depth_sweep", "spread_tree"]
+             "chat_about", "decision_trail", "find_named", "depth_sweep", "spread_tree", "evidence_gate", "preflight_change"]
 
 
 def _client():
@@ -789,6 +808,15 @@ def record_argument(g: Graph, incident_id: str) -> dict:
     return out | {"standing": tools._label(top) if top else None}
 
 
+def gate(g: Graph, incident_id: str) -> dict:
+    """The evidence gate as a tool: the judge after the skeptic, the narrative it supports, then every check."""
+    ranking = judged(g, incident_id)
+    top = ranking["suspects"][0] if ranking["suspects"] else None
+    out = tools.evidence_gate(g, incident_id, ranking, _narrate(ranking, tools.runbooks(g, top["service"]) if top else []))
+    out.pop("claim_check", None)
+    return out
+
+
 def preview(tenant: str, incident_id: str) -> dict:
     """The case file without running the agents: the judge, the skeptic, the alert groups and the narrative,
     read-only, so the answer is on screen the moment an incident is opened. Running the four agents adds the
@@ -804,10 +832,11 @@ def preview(tenant: str, incident_id: str) -> dict:
     ranking["reasoning"] = reasoning.build(g, ranking)
     ranking["public"] = public_postmortems.similar(ranking)
     findings = _narrate(ranking, tools.runbooks(g, top["service"]) if top else [])
-    check = tools.verify_claims(g, incident_id, findings, ranking)
+    checked = tools.evidence_gate(g, incident_id, ranking, findings)
+    check = checked.pop("claim_check", None) or tools.verify_claims(g, incident_id, findings, ranking)
     q = g.trace.queries
     return {"mode": "preview", "incident_id": incident_id, "steps": [], "findings": findings, "ranking": ranking,
-            "answer": findings["summary"], "claim_check": check, "timeline": tools.timeline(g, incident_id),
+            "answer": findings["summary"], "claim_check": check, "gate": checked, "timeline": tools.timeline(g, incident_id),
             "graph": {"queries": len(q), "ms": round(sum(x["ms"] for x in q), 1)}}
 
 
@@ -827,7 +856,9 @@ def investigate(tenant: str, incident_id: str) -> dict:
     if top and "impact" not in out["ranking"]:
         out["ranking"]["impact"] = tools.impact(g, _svc(top), incident_id)
     out["timeline"] = tools.timeline(g, incident_id)
-    out["claim_check"] = check = tools.verify_claims(g, incident_id, out["findings"], out["ranking"])
+    out["ranking"].setdefault("alert_groups", tools.alert_clusters(g, incident_id)["groups"])
+    checked = tools.evidence_gate(g, incident_id, out["ranking"], out["findings"])
+    out["claim_check"] = check = checked.pop("claim_check", None) or tools.verify_claims(g, incident_id, out["findings"], out["ranking"])
     if out["mode"] == "claude":
         # Claims the graph can't back are dropped from the evidence, not shown as fact.
         bad = {c["text"] for c in check["claims"] if c["kind"] == "evidence" and not c["ok"]}
@@ -839,6 +870,8 @@ def investigate(tenant: str, incident_id: str) -> dict:
     out["reasoning_written"] = reasoning.write(g, incident_id, out["ranking"]["reasoning"])
     out["investigation_id"] = tools.record_investigation(
         g, incident_id, out["mode"], out["ranking"], out.get("answer") or "", len(out["steps"]))
+    out["gate"] = checked
+    out["gate_written"] = tools.record_gate(g, out["investigation_id"], checked)
     return out
 
 

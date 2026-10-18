@@ -5,7 +5,7 @@ and fails if this file has drifted. Counts are for the demo data. One FalkorDB g
 
 ## kestrel
 
-655 nodes, 1,476 relationships, 28 labels, 46 relationship types after the agents ran on every open incident. ◆ = written by the agents at run time, not by the seed.
+660 nodes, 1,506 relationships, 29 labels, 48 relationship types after the agents ran on every open incident. ◆ = written by the agents at run time, not by the seed.
 
 | label | nodes | properties |
 |---|---|---|
@@ -19,6 +19,7 @@ and fails if this file has drifted. Counts are for the demo data. One FalkorDB g
 | `Deployment` | 22 | `cpu_limit`, `cpu_request`, `mem_limit_mi`, `mem_request_mi`, `name`, `ports`, `probe`, `replicas`, `source` |
 | `Episode` ◆ | 20 | `at`, `data`, `id`, `role`, `run`, `summary`, `wall_at` |
 | `Evidence` ◆ | 96 | `id`, `kind`, `text`, `weight` |
+| `GateRun` ◆ | 5 | `at`, `checks`, `leader`, `passed`, `total`, `verdict` |
 | `Hypothesis` ◆ | 13 | `id`, `label`, `rank`, `score`, `service`, `status`, `type` |
 | `Image` | 22 | `id`, `repo`, `tag` |
 | `Incident` | 13 | `id`, `resolved`, `severity`, `signature`, `started`, `status`, `title` |
@@ -65,6 +66,7 @@ and fails if this file has drifted. Counts are for the demo data. One FalkorDB g
 | `FIRED_ON` | `Alert` → `Service` | 12 |  |
 | `FOR` | `Action` → `Incident` | 15 |  |
 | `FOR_SERVICE` | `Runbook` → `Service` | 6 |  |
+| `GATED` ◆ | `Investigation` → `GateRun` | 5 |  |
 | `HAS_HYPOTHESIS` ◆ | `Incident` → `Hypothesis` | 13 |  |
 | `HAS_POD` | `Deployment` → `Pod` | 56 |  |
 | `HAS_TURN` ◆ | `Session` → `Turn` | 1 |  |
@@ -101,6 +103,9 @@ and fails if this file has drifted. Counts are for the demo data. One FalkorDB g
 | `TARGETS` ◆ | `Action` → `Node` | 1 |  |
 | `TARGETS` | `Action` → `Service` | 13 |  |
 | `TAUGHT` | `Incident` → `Lesson` | 8 |  |
+| `TESTED` ◆ | `GateRun` → `Change` | 20 | `failed`, `rank`, `score`, `status` |
+| `TESTED` ◆ | `GateRun` → `Node` | 1 | `failed`, `rank`, `score`, `status` |
+| `TESTED` ◆ | `GateRun` → `Service` | 4 | `failed`, `rank`, `score`, `status` |
 | `TOUCHED` | `Commit` → `Service` | 150 | `files` |
 | `USES` | `Journey` → `Service` | 38 |  |
 | `USES_CONFIG` | `Deployment` → `ConfigMap` | 22 |  |

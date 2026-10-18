@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ship it? · Hypocenter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
+  <link rel="stylesheet" href="/static/pages.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+</head>
+<body>
+  <main class="page" id="main">
+    <p class="kick">Before you ship</p>
+    <h1 class="page-h">Ship it? <span class="dim">Ask the graph before the change goes out.</span></h1>
+    <p class="page-sub">The graph the judge reads after an outage, read before one. Who feels it if this change breaks its service, whether a live incident runs through it, what changes like it did there before, what already changed on it today, and who should review it. Read-only: nothing is written.</p>
+    <div class="card" style="margin-top:28px">
+      <form class="pf-form" id="form">
+        <div class="f">
+          <label>Service<select id="svc" required></select></label>
+          <label>Change<select id="kind"><option value="deploy">deploy</option><option value="config">config</option><option value="flag">flag</option></select></label>
+          <label class="wide">What it does (optional, searched against the graph's memory)<input id="sum" maxlength="300" placeholder="e.g. switch JWT validation to a rotating JWKS cache"></label>
+        </div>
+        <div class="go"><button class="btn primary" id="go" type="submit">Check it <span aria-hidden="true">→</span></button></div>
+      </form>
+      <div class="pf-try" id="try"></div>
+    </div>
+    <div id="out"></div>
+    <div class="how">
+      <b style="color:var(--ink)">From CI, before merge</b>
+      <pre class="code" style="margin-top:10px;white-space:pre-wrap">scripts/preflight.sh auth deploy "switch JWT validation to a rotating JWKS cache"
+# exit 0: ship or review (the reasons are printed) · exit 1: hold · STRICT=1 also fails on review
+curl -s -X POST localhost:8090/api/kestrel/preflight -H 'content-type: application/json' \
+  -d '{"service": "auth", "kind": "deploy", "summary": "rotating JWKS cache"}'</pre>
+      <p style="margin:10px 0 0">Also an MCP tool, <code class="mono">preflight_change</code>, so a coding agent can ask before it opens the pull request.</p>
+    </div>
+  </main>
+  <script type="module" src="/static/js/preflight.js"></script>
+</body>
+</html>

@@ -107,6 +107,9 @@
 .mini div.first span.b i { background: var(--grad); }
 .moved { margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 13.5px; background: rgba(110, 231, 183, .06); border: 1px solid rgba(110, 231, 183, .3); color: var(--cool); }
 .moved.no { background: var(--card-2); border-color: var(--line-2); color: var(--ink-2); }
+.gatev { margin-top: 6px; font: 12px var(--mono); color: var(--ink-2); }
+.gatev.ok { color: var(--cool); } .gatev.warn { color: var(--warm); } .gatev.bad { color: var(--hot); }
+.gate-why { margin-top: 6px; color: var(--ink-2); font-size: 13px; }
 .how { margin-top: 26px; padding: 16px 18px; border: 1px dashed var(--line-2); border-radius: 14px; font-size: 13.5px; color: var(--ink-2); }
 .how ol { margin: 8px 0 0; padding-left: 18px; }
 .summary { margin-top: 22px; }
@@ -170,3 +173,31 @@
   .banner .who { margin-left: 0; }
   .rp-bar select { max-width: 46vw; }
 }
+
+/* ---------- Ship it? (pre-deploy check) ---------- */
+.pf-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 16px 18px; }
+.pf-form .f { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.pf-form label { display: grid; gap: 6px; font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+.pf-form select, .pf-form input { background: var(--bg-2); color: var(--ink); border: 1px solid var(--line-2); border-radius: 10px; padding: 9px 11px; font: 14px var(--sans); letter-spacing: 0; text-transform: none; min-width: 0; }
+.pf-form .wide { grid-column: 1 / -1; }
+.pf-form .go { margin: 0; align-self: end; }
+.pf-try { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 18px 16px; font-size: 12.5px; color: var(--ink-3); align-items: center; }
+.pf-try button { font: 12px var(--mono); color: var(--ink-2); border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 10px; }
+.pf-try button:hover { color: var(--ink); border-color: var(--ink-3); }
+.pf-decision { display: flex; flex-wrap: wrap; align-items: baseline; gap: 14px; padding: 18px 20px; }
+.pf-decision .w { font: 800 40px/1 var(--display); letter-spacing: -0.03em; }
+.pf-decision.ship .w { color: var(--cool); } .pf-decision.review .w { color: var(--warm); } .pf-decision.hold .w { color: var(--hot); }
+.pf-decision p { margin: 0; flex: 1 1 320px; color: var(--ink-2); }
+.pf-reasons { list-style: none; margin: 0; padding: 0; }
+.pf-reasons li { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 12px; padding: 12px 18px; border-top: 1px solid var(--line); font-size: 14px; }
+.pf-reasons li:first-child { border-top: 0; }
+.pf-reasons .lv { font: 500 11px var(--mono); letter-spacing: .1em; text-transform: uppercase; padding-top: 2px; }
+.pf-reasons .lv.hold { color: var(--hot); } .pf-reasons .lv.review { color: var(--warm); } .pf-reasons .lv.info { color: var(--ink-3); }
+.pf-reasons .cites { margin-top: 4px; font: 11.5px var(--mono); color: var(--ink-3); }
+.pf-waves { padding: 6px 18px 14px; }
+.pf-waves div { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 12px; padding: 6px 0; font: 13px var(--mono); }
+.pf-waves span:first-child { color: var(--ink-3); }
+.pf-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 18px; margin-top: 18px; }
+.pf-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+@media (max-width: 960px) { .pf-grid { grid-template-columns: 1fr; } .pf-form { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .pf-form .f { grid-template-columns: 1fr; } .pf-reasons li { grid-template-columns: 1fr; gap: 4px; } }

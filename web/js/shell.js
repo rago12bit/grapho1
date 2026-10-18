@@ -23,7 +23,7 @@ export function setTenant(t) {
 }
 
 const LINKS = [
-  ["/app", "Incidents"], ["/oncall", "On-call"], ["/explore", "Explore"], ["/break", "Break it"], ["/replay", "Replay"],
+  ["/app", "Incidents"], ["/oncall", "On-call"], ["/explore", "Explore"], ["/break", "Break it"], ["/preflight", "Ship it?"], ["/replay", "Replay"],
   ["/app?tab=memory", "Memory"], ["/app?tab=company", "Company brain"], ["/results", "Results"],
 ];
 const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>';
@@ -91,7 +91,8 @@ async function status() {
       <dl><dt>Database</dt><dd>${esc(e.engine)} ${esc(e.version || "")}</dd>
           <dt>Ping</dt><dd>${e.ping_ms} ms</dd>
           <dt>Nodes</dt><dd>${e.nodes.toLocaleString()}</dd>
-          <dt>Edges</dt><dd>${e.edges.toLocaleString()}</dd></dl>
+          <dt>Edges</dt><dd>${e.edges.toLocaleString()}</dd>
+          <dt>Reads</dt><dd>${e.acl?.enabled ? `one read-only user per tenant (${e.acl.readers})` : e.acl?.error ? "shared user (ACL refused)" : "shared user"}</dd></dl>
       <h4>Graphs · one per tenant</h4>
       <table>${e.graphs.map((g) => `<tr class="${g.tenant === cur ? "cur" : ""}"><td>${esc(g.tenant)}</td><td>${g.nodes.toLocaleString()} n</td><td>${g.edges.toLocaleString()} e</td></tr>`).join("")}</table>
       <p class="faint" style="margin:12px 0 0;font-size:12px">Browse it yourself: <a href="http://localhost:3003" target="_blank" rel="noopener">FalkorDB browser on :3003</a></p>`;

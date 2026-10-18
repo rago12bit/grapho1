@@ -13,9 +13,10 @@ import sys
 
 from mcp.server.mcpserver import MCPServer
 
-from . import agent
+from . import agent, db
 
 TENANT = os.environ.get("FAULTLINE_TENANT", "kestrel")
+db.ensure_reader(TENANT)     # every read this server makes goes through the tenant's read-only database user
 
 server = MCPServer(
     name="hypocenter",
@@ -82,6 +83,16 @@ def find_named(name: str) -> str:
 @server.tool(description="Skeptic review of the leading suspect: what it doesn't explain, order, timing, margin. May overturn it. Returns the verdict, each check and a calibrated confidence.")
 def challenge_leader(incident_id: str) -> str:
     return _call("challenge_leader", incident_id=incident_id)
+
+
+@server.tool(description="The evidence gate: eight named checks the leader must pass before it is called proven (in the graph, on a call path, there first, alerts climb the path, explains every alert, no rival survives, every claim checked, nothing failing off the graph), each with the Cypher that decided it. Verdict: confirmed, not_confident or cannot_prove. No path is never treated as safe.")
+def evidence_gate(incident_id: str) -> str:
+    return _call("evidence_gate", incident_id=incident_id)
+
+
+@server.tool(description="Before a change ships: if it broke its service, who would feel it (callers, entry points, journeys, teams paged); open incidents it would land in; what changes like it did there before; changes already stacked on it; who should review. Returns ship, review or hold with each reason. kind: deploy, config or flag. Read-only.")
+def preflight_change(service: str, kind: str = "deploy", summary: str = "") -> str:
+    return _call("preflight_change", service=service, kind=kind, summary=summary)
 
 
 @server.tool(description="The stored argument for an incident: every hypothesis (standing / overturned / rejected) with the evidence for and against it and what each piece cites.")

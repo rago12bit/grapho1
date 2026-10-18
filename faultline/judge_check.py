@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import agent, db, seed, site, tools
+from . import agent, claims, db, seed, site, tools
 from .db import Graph, client
 
 # what the offline agents should conclude for each Kestrel incident (README, "Five incidents")
@@ -77,6 +77,45 @@ def main() -> int:
         held = sum(x["holds"] for x in p)
         return held == len(p), f"{held}/{len(p)} hold, decoy clears {sum(len(x['predicted_clear']) for x in p if x.get('decoy'))} alerts"
 
+    @check("evidence gate: proven, or why not")
+    def _():
+        got = {i: agent.gate(g, i)["verdict"] for i in EXPECTED}
+        ok = sum(v == "confirmed" for v in got.values())
+        cut = site.break_it(g, "cut-path")["after"]["gate"]
+        return (ok == len(EXPECTED) and cut["verdict"] == "cannot_prove" and "G8" in cut["failed"],
+                f"{ok}/{len(EXPECTED)} Kestrel verdicts confirmed; with auth's CALLS edges cut: {cut['label'].lower()} "
+                f"(fails {', '.join(cut['failed'])}), not 'ruled out'")
+
+    @check("pre-deploy check")
+    def _():
+        from . import preflight
+        got = {(s, k): preflight.preflight(g, s, k)["decision"] for s, k in
+               [("auth", "deploy"), ("notifications", "deploy"), ("ledger-db", "config")]}
+        want = {("auth", "deploy"): "hold", ("notifications", "deploy"): "review", ("ledger-db", "config"): "ship"}
+        return got == want, ", ".join(f"{k} on {s}: {v}" for (s, k), v in got.items())
+
+    @check("one read-only database user per tenant")
+    def _():
+        seed.build("harbor", force=True)
+        if not db.ensure_reader("kestrel"):
+            return False, f"could not create the reader: {db.acl_state['error']}"
+        refused = []
+        for what, fn in [("a write", lambda: db.reader_graph("kestrel").query("CREATE (:Probe)")),
+                         ("another tenant's graph", lambda: db.reader_graph("kestrel", "harbor").ro_query("MATCH (n) RETURN count(n)"))]:
+            try:
+                fn()
+            except Exception as e:
+                refused.append(what if "no permissions" in str(e).lower() else f"{what} ({e})")
+        n = Graph("kestrel").read("MATCH (s:Service) RETURN count(s) AS n")[0]["n"]
+        return (refused == ["a write", "another tenant's graph"] and n > 0,
+                f"{db.reader_user('kestrel')} reads {n} services; FalkorDB refused {' and '.join(refused) or 'nothing'}")
+
+    @check("README numbers match what measured them")
+    def _():
+        rows = claims.check(live=True)
+        bad = [r["key"] for r in rows if not r["ok"]]
+        return not bad, f"{len(rows) - len(bad)}/{len(rows)} claims match" + (f"; drifted: {', '.join(bad)}" if bad else "")
+
     @check("break-it experiments move the verdict")
     def _():
         moved = [site.break_it(g, e["id"])["moved"] for e in site.EXPERIMENTS]
@@ -90,7 +129,7 @@ def main() -> int:
         if out.returncode:
             return False, out.stderr.strip()[-200:]
         top1 = json.loads(Path("/tmp/jc_eval.json").read_text())["phase1"]["top1"]["full + skeptic"]["all"]
-        m = re.search(r"\| \*\*Hypocenter \(judge \+ skeptic\)\*\* \|(?:[^|]*\|){5} \*\*([\d.]+)%\*\*", README.read_text())
+        m = re.search(r"\| \*\*Hypocenter \(judge \+ skeptic\)\*\* \|(?:[^|]*\|){5} \*\*([\d.]+)%\*\*", claims.strip(README.read_text()))
         want = float(m.group(1)) if m else None
         return want is not None and abs(top1 - want) < 0.05, f"seed 7, 150 scenarios: {top1}% top-1 (README: {want}%)"
 
@@ -103,6 +142,7 @@ def main() -> int:
 
     for name in tools_graphs():
         client().connection.execute_command("GRAPH.DELETE", name)
+    db.drop_readers()
     failed = [r for r in rows if not r[1]]
     print(f"\n{len(rows) - len(failed)}/{len(rows)} checks passed")
     return 1 if failed else 0

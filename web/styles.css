@@ -308,6 +308,16 @@ p { margin: 0; }
 .checks li > span { font-weight: 600; }
 .checks li.ok > span { color: var(--green); }
 .checks li.no > span { color: var(--accent); }
+.checks li.warn > span { color: var(--amber); }
+.checks.gate li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.checks.gate li:last-child { border-bottom: 0; }
+.checks.gate .cq { margin-top: 4px; }
+.gate-head { margin: 0 0 8px; font-size: 14px; padding: 6px 10px; border-left: 2px solid var(--line); background: var(--sunk); }
+.gate-head.ok { border-left-color: var(--green); }
+.gate-head.warn { border-left-color: var(--amber); }
+.gate-head.bad { border-left-color: var(--accent); }
+.gsweep { margin-top: 8px; }
+.gsweep summary { cursor: pointer; }
 .group, .other { font-size: 12.5px; padding: 5px 0; border-bottom: 1px solid var(--line); }
 .prec { border-left: 2px solid var(--blue); padding-left: 10px; margin-bottom: 12px; }
 .prec-head { font-size: 12.5px; }

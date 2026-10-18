@@ -36,7 +36,7 @@ def _tt(method: str) -> tuple[float, float]:
 
 
 PAGES = {"/": "landing.js", "/app": "main.js", "/oncall": "oncall.js", "/explore": "explore.js", "/break": "break.js",
-         "/replay": "replay.js", "/results": "results.js"}
+         "/replay": "replay.js", "/results": "results.js", "/preflight": "preflight.js"}
 
 
 def test_every_page_is_served_with_its_own_script_and_nothing_missing():
