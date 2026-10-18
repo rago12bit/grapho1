@@ -150,7 +150,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 102, "planted": "95.8–97.5%", "real": "285/360"}
+PROOF = {"tests": 112, "planted": "94.5–96.8%", "real": "285/360"}
 
 
 @app.get("/api/health")
@@ -321,7 +321,7 @@ def decide(tenant: str, action_id: str, body: Decision):
     g = _g(tenant)
     out = _guard(tools.decide_action, g, action_id, body.approve, body.who)
     if out["status"] == "executed":
-        a = g.read("""MATCH (a:Action {id: $id})-[:TARGETS]->(s:Service)
+        a = g.read("""MATCH (a:Action {id: $id})-[:TARGETS]->(s)
                       OPTIONAL MATCH (a)-[:FOR]->(i:Incident {source: 'alertmanager'})
                       RETURN a.kind AS kind, s.name AS target, a.change_id AS change_id, a.decided_at AS at,
                              count(i) AS live""", {"id": action_id})[0]

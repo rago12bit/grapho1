@@ -64,7 +64,7 @@ function render(inc, out) {
   const cc = out.claim_check;
   const ok = cc && cc.supported === cc.total && cc.verdict_consistent;
   const word = f.change_id || f.root_cause_service || "No cause found";
-  const kind = f.change_id ? "root cause" : f.root_cause_service ? "nothing changed: infrastructure" : "no cause found";
+  const kind = f.change_id ? "root cause" : top?.host ? "nothing changed: a failing host" : f.root_cause_service ? "nothing changed: infrastructure" : "no cause found";
   const shared = top?.change && (!f.change_id || f.change_id === top.change.id) ? (top.also_explains || []) : [];
   const steps = out.steps || [];
   const graphMs = steps.reduce((a, s) => a + (s.cypher || []).reduce((b, q) => b + q.ms, 0), 0);
@@ -191,7 +191,8 @@ function facts(r, top) {
   const act_ = top.recommended_action || {};
   const rows = [
     ["Reached via", chain(top.path, true)],
-    [c ? "Change" : "Failed first", c ? `<b>${esc(c.id)}</b> · ${esc(c.kind)} · ${esc(c.summary)}${c.author ? ` <span class="faint">by ${esc(c.author)}, ${top.minutes_before} min before</span>` : ""}`
+    top.host ? ["Shared host", `<b>${esc(top.host.node)}</b> (${esc(top.host.zone)}) runs ${top.host.services.map((x) => `<button class="svc-inline" data-svc="${esc(x)}">${esc(x)}</button>`).join(" and ")}, which failed ${top.host.spread_min} min apart <span class="faint">with nothing else in common</span>`]
+    : [c ? "Change" : "Failed first", c ? `<b>${esc(c.id)}</b> · ${esc(c.kind)} · ${esc(c.summary)}${c.author ? ` <span class="faint">by ${esc(c.author)}, ${top.minutes_before} min before</span>` : ""}`
       : `<b>${esc(top.service)}</b> <span class="faint">alerted ${top.minutes_before} min before the incident, no change on or under it</span>`],
     ["Spread", top.footprint.sequence.map((x) => `${esc(x.service)} <span class="faint">${hhmm(x.at).slice(0, 5)}</span>`).join(" → ") + (top.footprint.in_order ? ` <span class="ok">in order</span>` : ` <span class="warn">out of order</span>`)],
     ["Explains", `${top.footprint.explained.length} of ${top.footprint.observed} alerting services`],

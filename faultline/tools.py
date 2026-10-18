@@ -142,7 +142,7 @@ def similar_incidents(g: Graph, service: str, kind: str | None = None) -> list[d
 
 def who_owns(g: Graph, service: str) -> dict:
     rows = g.read("""
-        MATCH (s:Service {name: $svc})-[:OWNED_BY]->(t:Team)
+        MATCH (s)-[:OWNED_BY]->(t:Team) WHERE (s:Service OR s:Node) AND s.name = $svc
         OPTIONAL MATCH (p:Person)-[:MEMBER_OF]->(t)
         RETURN s.name AS service, t.name AS team,
                [x IN collect({handle: p.handle, name: p.name, on_call: p.on_call}) WHERE x.handle IS NOT NULL] AS people""",
@@ -350,7 +350,7 @@ def fix_track_record(g: Graph, service: str | None = None, kind: str | None = No
     """Procedural memory: how each kind of fix has done on each service. Counted at read time from executed
     actions and whether verify_fix saw the alerts clear (verified), never kept as counters that could drift."""
     rows = g.read("""
-        MATCH (a:Action {status: 'executed'})-[:TARGETS]->(s:Service)
+        MATCH (a:Action {status: 'executed'})-[:TARGETS]->(s)
         WHERE ($svc IS NULL OR s.name = $svc) AND ($kind IS NULL OR a.kind = $kind)
         OPTIONAL MATCH (a)-[:FOR]->(i:Incident)
         WITH a, s, collect(DISTINCT i.id) AS incs
@@ -395,6 +395,11 @@ def _recommend(g: Graph, cand: dict) -> dict:
 
 
 def _recommend_kind(g: Graph, cand: dict) -> dict:
+    if cand["type"] == "host":
+        h = cand["host"]
+        return {"kind": "page_owner", "target": h["node"],
+                "summary": f"Cordon and drain {h['node']} ({h['zone']}) so {' and '.join(h['services'])} reschedule elsewhere; "
+                           f"page the node's owner"}
     if cand["type"] == "signal":
         return {"kind": "page_owner", "target": cand["service"],
                 "summary": f"No change explains this. Page the {cand['service']} owner to check the infrastructure."}
@@ -474,6 +479,71 @@ def runbooks(g: Graph, service: str) -> list[dict]:
 
 
 CONF_SLOPE, CONF_MID = 12.0, 0.10
+
+
+HOST_WEIGHTS = {"co_location": 0.25, "simultaneity": 0.15, "footprint": 0.25, "alert_chain": 0.15, "earliness": 0.10,
+                "unchanged": 0.10}
+HOST_SPREAD_MIN = 5          # services failing from one host do so within minutes of each other
+
+
+def _host_suspects(g: Graph, signals: list[dict], alerts: list[dict], first_symptom_alert: int,
+                   power: dict[str, float], top_power: float) -> list[dict]:
+    """A machine as the cause. When two or more services each failed on their own (nothing below them was
+    alerting first, nothing changed on them), and none of them calls another, a node they share is a better
+    answer than either: one cause that explains both. Needs placement in the graph
+    ((Service)-[:DEPLOYED_AS]->(:Deployment)-[:HAS_POD]->(:Pod)-[:ON_NODE]->(:Node)); without it, nothing."""
+    if len(signals) < 2:
+        return []
+    by = {s["service"]: s for s in signals}
+    rows = g.read("""
+        MATCH (s:Service)-[:DEPLOYED_AS]->(:Deployment)-[:HAS_POD]->(:Pod)-[:ON_NODE]->(n:Node)
+        WHERE s.name IN $svcs
+        RETURN n.name AS node, n.zone AS zone, collect(DISTINCT s.name) AS services""", {"svcs": sorted(by)})
+    out = []
+    for r in rows:
+        hosted = sorted(r["services"])
+        if len(hosted) < 2:
+            continue
+        # one of them calling another is a chain, which the signal suspects already explain
+        if any(h2 in {d["service"] for d in dependencies(g, h1)} for h1 in hosted for h2 in hosted if h1 != h2):
+            continue
+        sus = [by[h] for h in hosted]
+        firsts = [x["first_alert"] for x in sus]
+        spread_min = (max(firsts) - min(firsts)) / 60
+        explained = sorted({e for x in sus for e in x["footprint"]["explained"]})
+        fp0 = sus[0]["footprint"]
+        cone = set(fp0["cone"])
+        seq = sorted((q for x in sus for q in x["footprint"]["sequence"]), key=lambda q: (q["at"], q["service"]))
+        seen, sequence = set(), []
+        for q in seq:
+            if q["service"] not in seen:
+                seen.add(q["service"])
+                sequence.append(q)
+        fp = {"explained": explained, "unexplained": sorted((set(fp0["explained"]) | set(fp0["unexplained"])) - set(explained)),
+              "observed": fp0["observed"], "coverage": round(len(explained) / fp0["observed"], 3) if fp0["observed"] else 0.0,
+              "cone": fp0["cone"], "cone_coverage": round(len(cone & set(explained)) / len(cone), 3) if cone else 0.0,
+              "sequence": sequence, "in_order": all(x["footprint"]["in_order"] for x in sus)}
+        factors = {
+            "co_location": round(len(hosted) / len(signals), 3),
+            "simultaneity": round(math.exp(-spread_min / HOST_SPREAD_MIN), 3),
+            "footprint": fp["cone_coverage"],
+            "alert_chain": max(x["factors"]["alert_chain"] for x in sus),
+            "earliness": 1.0 if min(firsts) <= first_symptom_alert else 0.3,
+            "unchanged": min(x["factors"]["unchanged"] for x in sus),
+        }
+        score = sum(HOST_WEIGHTS[k] * v for k, v in factors.items())
+        if top_power > 0:
+            factors["strength"] = round(max(math.log1p(power.get(h, 0.0)) for h in hosted) / math.log1p(top_power), 3)
+            score = (1 - STRENGTH_W) * score + STRENGTH_W * factors["strength"]
+        lead = min(sus, key=lambda x: (x["first_alert"], x["service"]))
+        out.append({
+            "type": "host", "service": r["node"], "change": None, "hops": min(x["hops"] for x in sus),
+            "path": lead["path"], "minutes_before": max(x["minutes_before"] for x in sus), "factors": factors,
+            "score": round(score, 3), "evidence_alerts": [a for x in sus for a in x["evidence_alerts"]],
+            "precedents": [], "footprint": fp, "first_alert": min(firsts),
+            "host": {"node": r["node"], "zone": r["zone"], "services": hosted, "spread_min": round(spread_min, 1)},
+        })
+    return out
 
 
 def confidence_from(top: float, gap: float) -> tuple[float, str]:
@@ -574,6 +644,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
             "evidence_alerts": chain_alerts, "precedents": prec_rows, "footprint": fp, "first_alert": first,
         })
 
+    suspects += _host_suspects(g, [s for s in suspects if s["type"] == "signal"], alerts, first_symptom_alert, power, top_power)
     _shape_precedent(g, inc, suspects, incident_id)
     # Ties go to whichever started first (a change's time, a silent failure's first alert), then by name, so
     # the same graph always gives the same answer whatever order the database returned rows in.
@@ -602,7 +673,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         "incident": inc, "dependency_count": len(deps), "suspects": suspects, "alert_cone": sorted(cone),
         "ruled_out": ruled_out, "confidence": confidence, "confidence_p": p_conf, "margin": margin,
         "other_faults": other_faults, "alerts": alerts,
-        "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS},
+        "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS, "host": HOST_WEIGHTS},
     }
 
 
@@ -615,16 +686,18 @@ def propose_action(g: Graph, incident_id: str, kind: str, target: str, summary: 
     if kind not in ("rollback", "revert_config", "disable_flag", "page_owner"):
         raise ValueError(f"unknown action kind {kind}")
     get_incident(g, incident_id)
+    if not g.read("MATCH (s) WHERE (s:Service OR s:Node) AND s.name = $t RETURN s.name AS n", {"t": target}):
+        raise KeyError(f"no service or node {target}")
     same = g.read("""
         MATCH (a:Action {status: 'proposed', kind: $kind})-[:FOR]->(:Incident {id: $inc}),
-              (a)-[:TARGETS]->(:Service {name: $target})
+              (a)-[:TARGETS]->({name: $target})
         RETURN a.id AS id, a.summary AS summary""", {"inc": incident_id, "kind": kind, "target": target})
     if same:  # re-running an investigation must not stack duplicate proposals
         return {"id": same[0]["id"], "kind": kind, "target": target, "summary": same[0]["summary"],
                 "status": "proposed", "already_proposed": True}
     aid = "ACT-" + uuid.uuid4().hex[:8].upper()
     g.write("""
-        MATCH (i:Incident {id: $inc}), (s:Service {name: $target})
+        MATCH (i:Incident {id: $inc}), (s) WHERE (s:Service OR s:Node) AND s.name = $target
         CREATE (a:Action {id: $id, kind: $kind, summary: $summary, reason: $reason, status: 'proposed',
                           at: $at, change_id: $change})
         CREATE (a)-[:FOR]->(i), (a)-[:TARGETS]->(s)
@@ -645,7 +718,7 @@ def propose_action(g: Graph, incident_id: str, kind: str, target: str, summary: 
 def list_actions(g: Graph, incident_id: str) -> list[dict]:
     return g.read("""
         MATCH (a:Action)-[:FOR]->(:Incident {id: $inc})
-        OPTIONAL MATCH (a)-[:TARGETS]->(s:Service)
+        OPTIONAL MATCH (a)-[:TARGETS]->(s)
         OPTIONAL MATCH (a)-[:FOR]->(all:Incident)
         WITH a, s, collect(DISTINCT all.id) AS covers
         RETURN a.id AS id, a.kind AS kind, a.summary AS summary, a.reason AS reason, a.status AS status,
@@ -658,7 +731,7 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
     """A human approves or rejects. Approval 'executes' the action in the simulated world: it writes the
     compensating change to the graph and marks the incident mitigated. Nothing outside the graph is touched."""
     rows = g.read("""
-        MATCH (a:Action {id: $id})-[:FOR]->(i:Incident), (a)-[:TARGETS]->(s:Service)
+        MATCH (a:Action {id: $id})-[:FOR]->(i:Incident), (a)-[:TARGETS]->(s)
         OPTIONAL MATCH (a)-[:REVERTS]->(c:Change)
         RETURN a.status AS status, a.kind AS kind, a.summary AS summary, i.id AS incident, s.name AS target,
                c.id AS change_id, c.version AS version, c.old AS old, c.key AS key""", {"id": action_id})
@@ -686,7 +759,7 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
             MATCH (a:Action {id: $id})-[:FOR]->(i:Incident) WHERE i.status = 'open'
             SET i.status = 'mitigated'""", {"id": action_id})
         g.write("""
-            MATCH (a:Action {id: $id})-[:TARGETS]->(s:Service)
+            MATCH (a:Action {id: $id})-[:TARGETS]->(s)
             CREATE (a)-[:CREATED]->(:Change {id: 'R-' + $id, kind: 'remediation', at: $at, summary: a.summary,
                                              risk: 'low'})-[:CHANGED]->(s)""", {"id": action_id, "at": at})
     return {"id": action_id, "status": "executed", "incident": a["incident"], "incidents": covered}
@@ -818,7 +891,8 @@ def record_suspicions(g: Graph, incident_id: str, ranking: dict) -> None:
         MATCH (i:Incident {id: $inc})
         OPTIONAL MATCH (c:Change {id: r.change})
         OPTIONAL MATCH (s:Service {name: r.service})
-        WITH i, r, CASE WHEN c IS NULL THEN s ELSE c END AS target
+        OPTIONAL MATCH (n:Node {name: r.service})
+        WITH i, r, coalesce(c, s, n) AS target
         CREATE (i)-[:SUSPECTED_CAUSE {rank: r.rank, score: r.score, coverage: r.coverage, confidence: $conf}]->(target)""",
             {"inc": incident_id, "rows": rows, "conf": ranking["confidence"]})
     sims = {}
@@ -891,6 +965,8 @@ def _challenges(lead: dict, ranking: dict, others: list[dict], groups: list[dict
 def _label(s: dict | None) -> str:
     if not s:
         return "nothing"
+    if s.get("type") == "host":
+        return f"{s['service']} (shared host)"
     return (s["change"] or {}).get("id") or f"{s['service']} (no change)"
 
 
@@ -1013,6 +1089,7 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
         MATCH (n) WHERE n.id IN $ids
         RETURN n.id AS id, labels(n)[0] AS label, n.at AS at""", {"ids": ids})} if ids else {}
     services = {r["s"] for r in g.read("MATCH (s:Service) RETURN s.name AS s")}
+    hosts = {r["s"] for r in g.read("MATCH (n:Node) RETURN n.name AS s")}
     start = get_incident(g, incident_id)["started"]
     times = {r["at"] for r in g.read("""
         MATCH (n) WHERE (n:Alert OR n:Change) AND n.at >= $a AND n.at <= $b RETURN n.at AS at""",
@@ -1039,8 +1116,8 @@ def verify_claims(g: Graph, incident_id: str, findings: dict, ranking: dict) -> 
             verdict.append(f"{cid} is not a change in the graph")
         elif svc and hit[0]["s"] != svc:
             verdict.append(f"{cid} changed {hit[0]['s']}, not {svc}")
-    if svc and svc not in services:
-        verdict.append(f"{svc} is not a service")
+    if svc and svc not in services | hosts:
+        verdict.append(f"{svc} is not a service or a node")
     top3 = [(_label(s), s["service"]) for s in ranking["suspects"][:3]]
     if svc and not any((cid and lab == cid) or (not cid and s == svc) for lab, s in top3):
         verdict.append("the blamed cause is not among the judge's top three suspects")
@@ -1388,6 +1465,35 @@ def endpoints(g: Graph, service: str, limit: int = 12) -> list[dict]:
         ORDER BY o.rps DESC LIMIT $n""", {"svc": service, "n": limit})
 
 
+def runtime(g: Graph, service: str) -> dict | None:
+    """How a service runs: its Deployment (replicas, CPU and memory requests and limits, probe), the image it
+    runs, the config it reads, and where its pods are scheduled, from the manifests (or the synthetic cluster)."""
+    rows = g.read("""
+        MATCH (:Service {name: $svc})-[:DEPLOYED_AS]->(d:Deployment)
+        OPTIONAL MATCH (d)-[:RUNS_IMAGE]->(i:Image)
+        OPTIONAL MATCH (d)-[r:READS]->(k:ConfigKey)
+        WITH d, i, collect(DISTINCT {key: k.name, value: r.value}) AS keys
+        OPTIONAL MATCH (d)-[:USES_CONFIG]->(cm:ConfigMap)
+        OPTIONAL MATCH (d)-[:USES_SECRET]->(sec:Secret)
+        WITH d, i, keys, collect(DISTINCT cm.name) AS config_maps, collect(DISTINCT sec.name) AS secrets
+        OPTIONAL MATCH (d)-[:HAS_POD]->(p:Pod)-[:ON_NODE]->(n:Node)
+        RETURN d.name AS deployment, d.replicas AS replicas, d.cpu_request AS cpu_request, d.cpu_limit AS cpu_limit,
+               d.mem_request_mi AS mem_request_mi, d.mem_limit_mi AS mem_limit_mi, d.probe AS probe, d.source AS source,
+               i.id AS image, [x IN keys WHERE x.key IS NOT NULL] AS config, config_maps, secrets,
+               collect(DISTINCT {pod: p.name, node: n.name, zone: n.zone}) AS pods""", {"svc": service})
+    if not rows:
+        return None
+    r = rows[0]
+    r["pods"] = [x for x in r["pods"] if x["pod"]]
+    if r["pods"]:
+        nodes = sorted({x["node"] for x in r["pods"]})
+        r["neighbours"] = g.read("""
+            MATCH (n:Node)<-[:ON_NODE]-(:Pod)<-[:HAS_POD]-(:Deployment)<-[:DEPLOYED_AS]-(s:Service)
+            WHERE n.name IN $nodes AND s.name <> $svc
+            RETURN n.name AS node, collect(DISTINCT s.name) AS services ORDER BY node""", {"nodes": nodes, "svc": service})
+    return r
+
+
 def log_patterns(g: Graph, service: str, limit: int = 8) -> list[dict]:
     """Error log patterns this service printed during incidents, the ones seen in the most incidents first."""
     return g.read("""
@@ -1423,6 +1529,7 @@ def service_card(g: Graph, service: str) -> dict:
         "betweenness": chokes.get(service), "domain": domain,
         "changes": recent, "history": similar_incidents(g, service), "runbooks": runbooks(g, service),
         "alerting_now": open_, "endpoints": endpoints(g, service), "log_patterns": log_patterns(g, service),
+        "runtime": runtime(g, service),
         "bot_commits": (g.read("MATCH (s:Service {name: $svc}) RETURN s.bot_commits AS n, s.bots AS b", {"svc": service})
                         or [{}])[0],
     }

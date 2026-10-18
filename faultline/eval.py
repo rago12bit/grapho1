@@ -9,6 +9,8 @@ overlap. Scenario kinds:
   silent  the same, but the cause never alerts itself (queues and databases often don't)
   infra   nothing changed; a dependency fails and the alerts climb from it
   shared  a deep change that also breaks a second service, which opens its own incident
+  host    nothing changed; a node degrades, and two services it runs (neither calling the other, sharing no other
+          node) fail together, their alerts climbing to the symptom along two branches
 Every scenario also gets distractors: a more recent change closer to the symptom (sometimes on the symptom
 itself) with no alerts below it, a change off the dependency path, and an older low-risk change on it.
 
@@ -27,10 +29,11 @@ from pathlib import Path
 
 from . import tools
 from .db import Graph
-from .seed import DAY, HOUR, KESTREL, MIN, NOW, RUNBOOKS_KESTREL, _write_indexes, _write_org, _write_runbooks
+from .seed import (DAY, HOUR, KESTREL, KESTREL_NODES, MIN, NOW, RUNBOOKS_KESTREL, _write_indexes, _write_org,
+                   _write_runbooks, _write_runtime, kestrel_runtime)
 
 TENANT = "evalbench"
-KINDS = ("deep", "silent", "infra", "shared")
+KINDS = ("deep", "silent", "infra", "shared", "host")
 RISKS = ["high", "high", "medium", "medium", "low"]
 
 
@@ -44,6 +47,11 @@ class World:
             self.down[a].append(b)
             self.up[b].append(a)
         self.n = 0
+        self.runtime = kestrel_runtime()
+        self.nodes = {d["service"]: {p["node"] for p in d["pods"]} for d in self.runtime}
+
+    def reaches(self, a: str, b: str) -> bool:
+        return any(p[-1] == b for p in self.paths_down(a, 6))
 
     def paths_down(self, start: str, max_len: int = 3) -> list[list[str]]:
         out, stack = [], [[start]]
@@ -60,8 +68,59 @@ class World:
         return f"{prefix}-{self.n}"
 
 
+def _distractors(w: World, sym: str, exclude: set[str], t_ref: int, start: int) -> list[dict]:
+    rng = w.rng
+    near = rng.choice([x for x in [sym] + w.down[sym] if x not in exclude] or [sym])
+    out = [{"id": w.uid("C"), "kind": rng.choice(["deploy", "flag"]), "service": near,
+            "at": rng.randint(t_ref - 40 * MIN, start - MIN), "author": None,
+            "summary": "distractor: close to the symptom", "risk": rng.choice(RISKS)}]
+    off = rng.choice(sorted(set(w.kind) - {sym, *(n for p in w.paths_down(sym, 5) for n in p)} or {"sendgrid"}))
+    out.append({"id": w.uid("C"), "kind": "deploy", "service": off, "at": start - rng.randint(2, 30) * MIN,
+                "author": None, "summary": "distractor: off the path", "risk": "high"})
+    old = rng.choice(w.down[sym])
+    out.append({"id": w.uid("C"), "kind": "deploy", "service": old, "at": start - rng.randint(70, 110) * MIN,
+                "author": None, "summary": "distractor: old and low risk", "risk": "low"})
+    return out
+
+
+def _plant_host(w: World, day: int, cause: tuple[str, str] | None = None) -> dict:
+    """A degrading node: two services it runs fail within minutes of each other and nothing changed."""
+    rng = w.rng
+    base = NOW - day * DAY
+    deployable = sorted(s for s, k in w.kind.items() if k == "service")
+    options = []
+    for sym in deployable:
+        below = sorted({n for p in w.paths_down(sym, 5) for n in p} - {sym})
+        for i, a in enumerate(below):
+            for b in below[i + 1:]:
+                shared = w.nodes.get(a, set()) & w.nodes.get(b, set())
+                if len(shared) == 1 and not w.reaches(a, b) and not w.reaches(b, a):
+                    node = next(iter(shared))
+                    if not cause or cause[0] == node:
+                        options.append((sym, a, b, node))
+    sym, a, b, node = rng.choice(options)
+    t0 = base - rng.randint(4, 45) * MIN
+    times = {a: t0, b: t0 + rng.randint(0, 2) * MIN}
+    for leaf in (a, b):
+        path = min((p for p in w.paths_down(sym, 5) if p[-1] == leaf), key=len)
+        t = times[leaf]
+        for svc in reversed(path[:-1]):
+            t += rng.randint(1, 3) * MIN
+            times[svc] = min(times.get(svc, t), t)
+    alerts = [{"id": w.uid("A"), "service": svc, "at": t, "severity": "page", "signal": "synthetic"}
+              for svc, t in sorted(times.items(), key=lambda x: x[1])]
+    start = times[sym]
+    inc = {"id": w.uid("INC"), "title": f"{sym} failing", "symptom": sym, "started": start, "status": "open",
+           "severity": "SEV2"}
+    return {"kind": "host", "incident": inc["id"], "linked": None, "truth": {"service": node, "change": None, "host": True},
+            "symptom": sym, "changes": _distractors(w, sym, {a, b}, t0, start), "alerts": alerts, "incidents": [inc],
+            "path": [sym, a]}
+
+
 def _plant(w: World, kind: str, day: int, cause: tuple[str, str] | None = None) -> dict:
     """One incident with a known cause. `cause` (service, change kind) replays a fault for the learning run."""
+    if kind == "host":
+        return _plant_host(w, day, cause)
     rng = w.rng
     base = NOW - day * DAY
     deployable = {s for s, k in w.kind.items() if k == "service"}
@@ -139,12 +198,14 @@ def _write(g: Graph, scenarios: list[dict]) -> None:
 def _hit(s: dict, truth: dict) -> bool:
     if truth["change"]:
         return (s["change"] or {}).get("id") == truth["change"]
+    if truth.get("host"):
+        return s["type"] == "host" and s["service"] == truth["service"]
     return s["type"] == "signal" and s["service"] == truth["service"]
 
 
 def _rescore(suspects: list[dict], drop: str | None) -> list[dict]:
     def score(s):
-        w = tools.WEIGHTS if s["type"] == "change" else tools.SIGNAL_WEIGHTS
+        w = tools.WEIGHTS if s["type"] == "change" else tools.HOST_WEIGHTS if s["type"] == "host" else tools.SIGNAL_WEIGHTS
         return sum(v * s["factors"].get(k, 0) for k, v in w.items() if k != drop)
     return sorted(suspects, key=score, reverse=True)
 
@@ -206,6 +267,7 @@ def run(n: int = 150, seed: int = 7, learning: bool = True) -> dict:
     _write_indexes(g)
     _write_org(g, KESTREL)
     _write_runbooks(g, RUNBOOKS_KESTREL)
+    _write_runtime(g, w.runtime, "synthetic", KESTREL_NODES, "platform")
     kinds = [KINDS[i % len(KINDS)] for i in range(n)]
     rng.shuffle(kinds)
     phase1 = [_plant(w, k, 2 + 2 * i) for i, k in enumerate(kinds)]

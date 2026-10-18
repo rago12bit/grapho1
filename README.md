@@ -26,10 +26,11 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
 4. **Memory changes the score, not just the display.** Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson` into the graph, and the next investigation scores precedent from them. A test deletes the memory and checks that the same change then scores lower.
 5. **A fault simulator checks every suspect.** For each one it asks "if this broke, which services would alert, and in what order?" and compares that with what actually alerted: "explains 3 of 3 alerting services, in the predicted order". Alerts the leader can't explain point to **independent faults**: in INC-302 the auth deploy explains 2 of the 7 alerting services under `mobile-bff`, and Faultline names the other two faults behind the rest (the pool change of INC-301/304, the search cluster of INC-303). A cause that never alerts itself (a queue, a database) still counts when everything above it did, and a change the failure climbed *past* is marked down.
 6. **Four agents, one graph, and a skeptic among them.** Triage, Investigator, Skeptic and Responder never pass anything to each other in code: each writes an `Episode` to the graph and the next one starts by reading it back, so an investigation can be resumed by another process or session. The **Skeptic** tries to knock the leader over before anyone acts: what doesn't it explain, did its alerts come in the right order, did the change land before the incident, is it clearly ahead? If a rival explains more and scores within reach, the verdict is overturned. Confidence comes from the **gap** to the runner-up, not the raw score. Verdicts stay in the graph as scored `SUSPECTED_CAUSE` and `SIMILAR_TO` edges, and the Responder attaches the team's `Runbook`.
-7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 95.8–97.5% top-1 and 100% top-3 on held-out seeds, against 64% for "blame the most recent change". When Faultline says **high** confidence it has been right every time. On **real telemetry** it runs on every RCAEval RE2 and RE3 case (360 failures in three systems) against RCAEval's own baseline code, run here on the same cases: 0.70 first on the 90 held-out Train Ticket cases, ahead of BARO (0.67) and behind NSigma (0.76), with a worse top five than both (see [Public data](#public-data-every-rcaeval-case-against-the-published-baselines)). All 360 failures are loaded into the app as three more companies.
+7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 94.5–96.8% top-1 and 99.8–100% top-3 on held-out seeds, against 50% for "blame the most recent change". When Faultline says **high** confidence it has been right 99.2–100% of the time. On **real telemetry** it runs on every RCAEval RE2 and RE3 case (360 failures in three systems) against RCAEval's own baseline code, run here on the same cases: 0.70 first on the 90 held-out Train Ticket cases, ahead of BARO (0.67) and behind NSigma (0.76), with a worse top five than both (see [Public data](#public-data-every-rcaeval-case-against-the-published-baselines)). All 360 failures are loaded into the app as three more companies.
 8. **Every claim is checked, every number is explained, and the agent can't act alone.** Every change id, incident id, service and clock time in a verdict is looked up in the graph, and what the claim *says* must match it ("C-5101 changed auth" fails: it changed payments-db; "D-5102 caused it" fails: it was ruled out; "payments alerted before payments-db" fails: the times say otherwise). The verdict must also hang together (the blamed change exists, changed the named service, and is among the judge's top suspects); claims Claude makes that the graph can't back are dropped from the evidence and shown as such. Each suspect shows its factor scores, its footprint and its path, and every step shows its Cypher. Free-form queries run through `GRAPH.RO_QUERY`, so the database itself refuses writes. The agent and the MCP server can only propose fixes; there is no approve tool.
 9. **The reasoning is a subgraph you can query.** Every suspect becomes a `Hypothesis` (standing, overturned or rejected) with `Evidence` for and against it, and each piece of evidence `CITES` the alerts, changes and past incidents it rests on. The skeptic's checks run against *every* hypothesis, so a rejected one says why it lost ("leaves auth unexplained; 0.33 behind D-5201"). For the hypothesis left standing, the alerts are linked into a **causal chain**: `(:Alert)-[:CAUSED_BY {lag_s, confidence}]->(:Alert)…->(:Change)`. The topology decides which links are possible and the alert timing picks among them, naming silent hops ("via api") and ending at the change, or at the service that failed on its own. One query answers "why did this alert fire?": `MATCH p = (:Alert {id: 'A-9102'})-[:CAUSED_BY*]->(root) RETURN p` gives A-9102 on mobile-bff ← A-9101 on auth ← D-5201.
-10. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
+10. **It knows where things run.** Every service has its `Deployment` (replicas, CPU and memory limits, image and tag, the config keys, ConfigMaps and Secrets it reads), from the projects' real Kubernetes manifests for Online Boutique, Sock Shop and Train Ticket (secret values never kept), and pods scheduled onto `Node`s in `Zone`s for Kestrel. Two things follow. When two services that don't call each other fail on their own within minutes, and share one node, the judge names the **node** (INC-305: `catalog` and `users` on `k8s-node-4`; without placement it reports two independent faults). And a CPU or memory alert cites the limit the manifest sets ("checkoutservice is capped at 0.2 CPU"). A config change points at the `ConfigKey` it sets and every deployment that reads it.
+11. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
 Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**, **03 Company Brain**.
@@ -87,7 +88,7 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 
 **Demo video:** `demo/` regenerates it from the running app. Put one voiceover MP3 per scene of `demo/narration.json` in `data/demo/audio/` (with a `durations.txt` of `<scene> <seconds>` lines), then run `node demo/record.mjs data/demo/audio data/demo/rec` (needs `playwright-core@1.64.1`) to record the real UI in time with the voice, and `demo/mix.py` in any container with ffmpeg to lay in the audio, burn in captions and write `data/demo/faultline-demo.mp4`.
 
-## Four incidents, four kinds of answer
+## Five incidents, five kinds of answer
 
 | Incident | What the graph shows | Verdict |
 |---|---|---|
@@ -95,6 +96,7 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 | **INC-302** 30% of mobile logins failing | An `auth` deploy one hop below `mobile-bff`, 6 minutes before, with a 401 spike on `auth`. A flag flip on `users` sits on the same path but `users` never alerted. INC-188 was an `auth` token-validation deploy too. Five other services below `mobile-bff` are alerting, but not through `auth`. | `D-5201`, roll back to 4.1.7. The other alerts belong to two **independent faults**: C-5101 (INC-301, INC-304) and `catalog-es` (INC-303). |
 | **INC-303** Search returns nothing | Nothing changed on `search`'s path. `catalog-es` went RED two minutes before `search` alerted. INC-240 was a node failure on the same cluster. | **No change caused this.** Page Discovery's on-call for `catalog-es`. |
 | **INC-304** Refund API timing out | Opened separately by the Payments team. The same pool change sits one hop below `payments`, with `payments-db` alerting. | **Same root cause as INC-301.** One revert, proposed once, covers both. |
+| **INC-305** Product and account pages failing | Nothing changed. `catalog` and `users` both failed on their own, a minute apart; neither calls the other, and the only thing they share is `k8s-node-4` (zone-b). | **A failing host**: cordon and drain `k8s-node-4`, page Platform. The causal chain ends at the `Node`. Without placement in the graph the same alerts read as two independent faults. |
 
 "No change on the path" is an answer, not a failure: in a graph, the absence of a path is evidence.
 
@@ -119,6 +121,9 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 (:Service)-[:EXPOSES]->(:Operation {rps, p50_ms, p99_ms, err})-[:CALLS {rps, p50_ms, p99_ms, err}]->(:Operation)
 (:Alert {strength})-[:ON_OPERATION {p90_before_ms, p90_after_ms, ratio}]->(:Operation)   # the endpoint that slowed
 (:LogPattern {template, new})-[:LOGGED_BY]->(:Service)   (:LogPattern)-[:SEEN_IN {count}]->(:Incident)
+(:Service)-[:DEPLOYED_AS]->(:Deployment {replicas, cpu_limit, mem_limit_mi, probe})-[:RUNS_IMAGE]->(:Image {repo, tag})
+(:Deployment)-[:READS {value}]->(:ConfigKey)<-[:SETS]-(:Change)   (:Deployment)-[:USES_CONFIG|USES_SECRET]->(:ConfigMap|:Secret)
+(:Deployment)-[:HAS_POD]->(:Pod)-[:ON_NODE]->(:Node)-[:IN_ZONE]->(:Zone)   (:Node)-[:OWNED_BY]->(:Team)
 ```
 
 The judge (`faultline/tools.py`, `rank_suspects`) does the multi-hop work:
@@ -150,34 +155,36 @@ docker compose run --rm app python -m faultline.eval              # 150 scenario
 docker compose run --rm app python -m faultline.eval --n 400 --seed 3
 ```
 
-The eval plants faults on Kestrel's real topology, one incident per scenario, spaced so their windows never overlap: **deep** (a change 1–3 hops below the symptom, alerts climbing to it), **silent** (the same, but the cause never alerts), **infra** (nothing changed; a dependency failed) and **shared** (a deep change that also breaks a second service, which opens its own incident). Every scenario carries distractors: a change close to the symptom (sometimes newer than the cause, sometimes older) with no alerts below it, a change off the path, and an old low-risk change on it. Top-1 accuracy, seed 7:
+The eval plants faults on Kestrel's real topology, one incident per scenario, spaced so their windows never overlap: **deep** (a change 1–3 hops below the symptom, alerts climbing to it), **silent** (the same, but the cause never alerts), **infra** (nothing changed; a dependency failed), **shared** (a deep change that also breaks a second service, which opens its own incident) and **host** (nothing changed; a node degrades and two services it runs, which share no other node and don't call each other, fail together). Every scenario carries distractors: a change close to the symptom (sometimes newer than the cause, sometimes older) with no alerts below it, a change off the path, and an old low-risk change on it. Top-1 accuracy, seed 7:
 
-| | deep (38) | silent (38) | infra (37) | shared (37) | **all (150)** | top-3 all |
-|---|---|---|---|---|---|---|
-| **Faultline (judge)** | 100.0% | 84.2% | 100.0% | 100.0% | **96.0%** | 100.0% |
-| **Faultline (judge + skeptic)** | 100.0% | 89.5% | 100.0% | 100.0% | **97.3%** | 100.0% |
-| no recency | 100.0% | 44.7% | 100.0% | 100.0% | **86.0%** | 100.0% |
-| no proximity | 100.0% | 86.8% | 100.0% | 100.0% | **96.7%** | 100.0% |
-| no alert_chain | 89.5% | 84.2% | 100.0% | 86.5% | **90.0%** | 100.0% |
-| no risk | 100.0% | 68.4% | 100.0% | 100.0% | **92.0%** | 100.0% |
-| no precedent | 100.0% | 84.2% | 100.0% | 100.0% | **96.0%** | 100.0% |
-| no footprint | 100.0% | 73.7% | 100.0% | 100.0% | **93.3%** | 100.0% |
-| nearest recent change | 7.9% | 2.6% | 0.0% | 24.3% | **8.7%** | 75.3% |
-| most recent change | 81.6% | 89.5% | 0.0% | 86.5% | **64.7%** | 75.3% |
+| | deep (30) | silent (30) | infra (30) | shared (30) | host (30) | **all (150)** | top-3 all |
+|---|---|---|---|---|---|---|---|
+| **Faultline (judge)** | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
+| **Faultline (judge + skeptic)** | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
+| no recency | 100.0% | 50.0% | 100.0% | 100.0% | 93.3% | **88.7%** | 98.7% |
+| no proximity | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
+| no alert_chain | 83.3% | 70.0% | 100.0% | 96.7% | 93.3% | **88.7%** | 98.7% |
+| no risk | 100.0% | 66.7% | 100.0% | 100.0% | 93.3% | **92.0%** | 98.7% |
+| no precedent | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
+| no footprint | 100.0% | 63.3% | 100.0% | 100.0% | 93.3% | **91.3%** | 98.7% |
+| nearest recent change | 20.0% | 3.3% | 0.0% | 30.0% | 0.0% | **10.7%** | 60.0% |
+| most recent change | 93.3% | 80.0% | 0.0% | 76.7% | 0.0% | **50.0%** | 60.0% |
 
-When it says… **high** confidence (60 cases): right 100.0%; **medium** confidence (56 cases): right 96.4%; **low** confidence (34 cases): right 94.1%.
+When it says… **high** confidence (42 cases): right 100.0%; **medium** confidence (87 cases): right 95.4%; **low** confidence (21 cases): right 71.4%.
 
 Linked incidents (shared scenarios): precision 1.0, recall 1.0.
 
-Learning: the same 150 faults planted again after the first round was resolved: top-1 96.0% → 97.3%. Without the precedent factor the second round scores 96.0%.
+Learning: the same 150 faults planted again after the first round was resolved: top-1 93.3% → 97.3%. Without the precedent factor the second round scores 95.3%.
 
-Held-out seeds (400 scenarios each), judge → judge + skeptic: 95.2% → 95.8% (seed 3), 95.8% → 96.8% (seed 11), 96.8% → 97.5% (seed 42); top-3 100% on all three; linked-incident precision and recall 1.0. Confidence on the held-out seeds: **high** was right 100% of the time, **medium** 97.6–99.4%, **low** 84.1–89.2%.
+Held-out seeds (400 scenarios each), judge → judge + skeptic: 94.2% → 94.5% (seed 3), 96.2% → 96.8% (seed 11), 96.2% → 96.5% (seed 42); top-3 99.8–100%; host faults 98.8–100%; linked-incident precision and recall 1.0. Confidence on the held-out seeds: **high** was right 99.2–100% of the time, **medium** 98.0–99.1%, **low** 74.6–83.8%. (Before the host kind existed the same seeds scored 95.8–97.5% on four kinds; adding a fifth reshuffles which faults each seed draws, and the silent ones, the weak spot, came out harder.)
+
+Without host suspects (`_host_suspects` returning nothing) every host scenario is wrong by construction: the judge blames one of the two services and reports the other as an independent fault, which is what Faultline did before the runtime layer existed. The host kind is planted exactly as the rule expects, so its score says the mechanism works, not how often real nodes fail this cleanly.
 
 How to read it honestly:
 - The scenario generator is mine, so this measures the judge against the failure patterns it was designed for, not against real outages. The weights were adjusted while looking at seed 7; the held-out seeds are the fairer number.
 - Risk labels are drawn at random for causes and distractors alike, so in this eval risk is noise and switching it off can help some kinds. In real change logs risky changes do break things more often.
 - Precedent does nothing on a first sighting (memory is empty). Its effect is the learning row: the same faults again after round one was resolved.
-- Silent causes are the weak spot (84–90% with the skeptic): with no alert of their own, a recent change one level up can still look better.
+- Silent causes are the weak spot (72–84% with the skeptic on the held-out seeds): with no alert of their own, a recent change one level up can still look better.
 - Confidence is conservative: "medium" and "low" verdicts are right more often than the labels suggest. It is still ordered correctly (high > medium > low), which is what an on-call engineer needs to know when to double-check.
 
 ## Public data: every RCAEval case, against the published baselines
@@ -286,6 +293,7 @@ There is deliberately no approve tool. An agent can propose a fix; only a person
 faultline/db.py          FalkorDB access, per-tenant graphs, query trace, read-only guard
 faultline/seed.py        the synthetic companies (deterministic)
 faultline/tools.py       graph tools, the judge, actions, memory
+faultline/manifests.py   the three systems' real Kubernetes manifests, boiled down (fixtures/manifests.json)
 faultline/reasoning.py   the argument as a subgraph: hypotheses, evidence, citations, the CAUSED_BY chain
 faultline/agent.py       the four agents (Claude or offline playbook), the case preview + question router
 faultline/eval.py        planted-fault accuracy eval with ablations, baselines and a learning run

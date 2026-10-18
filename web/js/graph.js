@@ -96,6 +96,7 @@ export function caseSpec(r, timeline) {
   const names = new Set([r.incident.symptom]);
   (r.suspects || []).slice(0, 3).forEach((s) => s.path.forEach((n) => names.add(n)));
   const top = r.suspects?.[0];
+  (top?.host?.services || []).forEach((x) => names.add(x));
   const alerting = [...new Set((timeline?.alerts || []).map((a) => a.service))];
   // A big incident (Train Ticket's reach 30+ services) would shrink every node to nothing: then keep the alerts
   // the leader explains and the roots of the independent faults, and leave the rest to the timeline.
@@ -185,7 +186,7 @@ function mark(r, timeline, full) {
   top.path.forEach((n) => cy.$id(n).removeClass("dim").addClass("lit"));
   if (full) {
     for (let i = 0; i < top.path.length - 1; i++) cy.$id(`${top.path[i]}->${top.path[i + 1]}`).removeClass("dim").addClass("path");
-    cy.$id(top.service).addClass("suspect");
+    (top.host?.services || [top.service]).forEach((x) => cy.$id(x).removeClass("dim").addClass("suspect"));
     reach(r);
     caused(r);
   }

@@ -188,6 +188,14 @@ def _step(name: str, args: dict, result: Any, queries: list[dict], error: str | 
 
 # --- offline playbook ---------------------------------------------------------------------------
 
+def _svc(s: dict | None) -> str | None:
+    """The service a suspect stands for in service-level lookups: for a shared host, the one of its services
+    that failed first."""
+    if not s:
+        return None
+    return s["path"][-1] if s["type"] == "host" else s["service"]
+
+
 def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
     inc = ranking["incident"]
     sus = ranking["suspects"]
@@ -253,6 +261,14 @@ def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
         if top.get("also_explains"):
             ids = ", ".join(o["id"] for o in top["also_explains"])
             summary += f" The same change also explains {ids}: one fix should clear {'both' if len(top['also_explains']) == 1 else 'all of them'}."
+    elif top["type"] == "host":
+        h = top["host"]
+        ev.insert(0, f"{' and '.join(h['services'])} share {h['node']} ({h['zone']}) and nothing else: neither calls the other, "
+                     f"nothing below either alerted first, and they started failing {h['spread_min']:g} min apart")
+        summary = (f"No deploy, config or flag change explains {inc['id']}, and no single service does: "
+                   f"{' and '.join(h['services'])} failed on their own, {h['spread_min']:g} min apart, and the one thing they "
+                   f"share is {h['node']} ({h['zone']}). Treat it as a failing host: {top['recommended_action']['summary']}; "
+                   f"{top['owner']['on_call']['name'] if top['owner'].get('on_call') else top['owner']['team']} ({top['owner']['team']}) is on call.")
     else:
         summary = (f"No deploy, config or flag change on {inc['symptom']}'s dependency path explains {inc['id']}. "
                    f"{top['service']} started alerting first, {top['minutes_before']:g} minutes before the incident, and the "
@@ -309,13 +325,13 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
                  incident_id=incident_id)["groups"]
     if top:
         run("investigator", "failure_paths", f"Shortest call paths from {inc['symptom']} down to {top['service']} (SPpaths).",
-            source=inc["symptom"], target=top["service"])
-        run("investigator", "similar_incidents", f"Look for resolved incidents caused on {top['service']}.", service=top["service"])
+            source=inc["symptom"], target=_svc(top))
+        run("investigator", "similar_incidents", f"Look for resolved incidents caused on {_svc(top)}.", service=_svc(top))
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = run("investigator", "search_memory",
                                      "Full-text search of past lessons, changes and alerts for the same symptoms.",
                                      query=words.split(":", 1)[-1])
-        run("investigator", "simulate_failure", f"Predict how a failure of {top['service']} spreads.", service=top["service"])
+        run("investigator", "simulate_failure", f"Predict how a failure of {_svc(top)} spreads.", service=_svc(top))
     run("investigator", "write_handoff", "Hand off to the responder through the graph.", incident_id=incident_id,
         summary=(f"Leading suspect {(top['change'] or {}).get('id') or top['service']} on {top['service']} "
                  f"(score {top['score']}, {ranking['confidence']} confidence), explains "
@@ -352,8 +368,8 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
             alert_id=sym_alert["id"])
     if act:
         run("responder", "who_owns", f"Find who owns {act['target']} and who is on call.", service=act["target"])
-        ranking["experts"] = run("responder", "experts", f"Who actually knows {act['target']}, from what they did.",
-                                 service=act["target"])
+        who = _svc(top) if top and top["type"] == "host" else act["target"]
+        ranking["experts"] = run("responder", "experts", f"Who actually knows {who}, from what they did.", service=who)
         ranking["chokepoints"] = run("responder", "single_points_of_failure",
                                      "Which services on the failure path carry the most traffic (betweenness)?", limit=24)
         ranking["domains"] = run("responder", "failure_domains",
@@ -625,8 +641,8 @@ def preview(tenant: str, incident_id: str) -> dict:
     ranking = judged(g, incident_id)
     top = ranking["suspects"][0] if ranking["suspects"] else None
     if top:
-        ranking["impact"] = tools.impact(g, top["service"], incident_id)
-        ranking["experts"] = tools.experts(g, top["service"])
+        ranking["impact"] = tools.impact(g, _svc(top), incident_id)
+        ranking["experts"] = tools.experts(g, _svc(top))
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = tools.search_memory(g, words.split(":", 1)[-1])
     ranking["reasoning"] = reasoning.build(g, ranking)
@@ -652,7 +668,7 @@ def investigate(tenant: str, incident_id: str) -> dict:
     g = Graph(tenant)
     top = out["ranking"]["suspects"][0] if out["ranking"]["suspects"] else None
     if top and "impact" not in out["ranking"]:
-        out["ranking"]["impact"] = tools.impact(g, top["service"], incident_id)
+        out["ranking"]["impact"] = tools.impact(g, _svc(top), incident_id)
     out["timeline"] = tools.timeline(g, incident_id)
     out["claim_check"] = check = tools.verify_claims(g, incident_id, out["findings"], out["ranking"])
     if out["mode"] == "claude":

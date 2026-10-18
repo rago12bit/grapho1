@@ -1,0 +1,1881 @@
+{
+ "sources": {
+  "boutique": "https://raw.githubusercontent.com/GoogleCloudPlatform/microservices-demo/main/release/kubernetes-manifests.yaml",
+  "sockshop": "https://raw.githubusercontent.com/microservices-demo/microservices-demo/master/deploy/kubernetes/complete-demo.yaml",
+  "trainticket": "https://raw.githubusercontent.com/FudanSELab/train-ticket/master/deployment/kubernetes-manifests/quickstart-k8s/yamls/deploy.yaml.sample"
+ },
+ "systems": {
+  "boutique": [
+   {
+    "deployment": "adservice",
+    "service": "adservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/adservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.2,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 180.0,
+    "mem_limit_mi": 300.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "9555"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     9555
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "cartservice",
+    "service": "cartservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/cartservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.2,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "REDIS_ADDR",
+      "value": "redis-cart:6379"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     7070
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "checkoutservice",
+    "service": "checkoutservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/checkoutservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "5050"
+     },
+     {
+      "key": "PRODUCT_CATALOG_SERVICE_ADDR",
+      "value": "productcatalogservice:3550"
+     },
+     {
+      "key": "SHIPPING_SERVICE_ADDR",
+      "value": "shippingservice:50051"
+     },
+     {
+      "key": "PAYMENT_SERVICE_ADDR",
+      "value": "paymentservice:50051"
+     },
+     {
+      "key": "EMAIL_SERVICE_ADDR",
+      "value": "emailservice:5000"
+     },
+     {
+      "key": "CURRENCY_SERVICE_ADDR",
+      "value": "currencyservice:7000"
+     },
+     {
+      "key": "CART_SERVICE_ADDR",
+      "value": "cartservice:7070"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     5050
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "currencyservice",
+    "service": "currencyservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/currencyservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "7000"
+     },
+     {
+      "key": "DISABLE_PROFILER",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     7000
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "emailservice",
+    "service": "emailservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/emailservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "8080"
+     },
+     {
+      "key": "DISABLE_PROFILER",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     8080
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "frontend",
+    "service": "frontend",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/frontend",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "8080"
+     },
+     {
+      "key": "PRODUCT_CATALOG_SERVICE_ADDR",
+      "value": "productcatalogservice:3550"
+     },
+     {
+      "key": "CURRENCY_SERVICE_ADDR",
+      "value": "currencyservice:7000"
+     },
+     {
+      "key": "CART_SERVICE_ADDR",
+      "value": "cartservice:7070"
+     },
+     {
+      "key": "RECOMMENDATION_SERVICE_ADDR",
+      "value": "recommendationservice:8080"
+     },
+     {
+      "key": "SHIPPING_SERVICE_ADDR",
+      "value": "shippingservice:50051"
+     },
+     {
+      "key": "CHECKOUT_SERVICE_ADDR",
+      "value": "checkoutservice:5050"
+     },
+     {
+      "key": "AD_SERVICE_ADDR",
+      "value": "adservice:9555"
+     },
+     {
+      "key": "SHOPPING_ASSISTANT_SERVICE_ADDR",
+      "value": "shoppingassistantservice:80"
+     },
+     {
+      "key": "ENABLE_PROFILER",
+      "value": "0"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     8080
+    ],
+    "probe": "httpGet"
+   },
+   {
+    "deployment": "loadgenerator",
+    "service": "loadgenerator",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/loadgenerator",
+    "tag": "v0.10.7",
+    "cpu_request": 0.3,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 256.0,
+    "mem_limit_mi": 512.0,
+    "env": [
+     {
+      "key": "FRONTEND_ADDR",
+      "value": "frontend:80"
+     },
+     {
+      "key": "USERS",
+      "value": "10"
+     },
+     {
+      "key": "RATE",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [],
+    "probe": null
+   },
+   {
+    "deployment": "paymentservice",
+    "service": "paymentservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/paymentservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "50051"
+     },
+     {
+      "key": "DISABLE_PROFILER",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     50051
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "productcatalogservice",
+    "service": "productcatalogservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/productcatalogservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "3550"
+     },
+     {
+      "key": "DISABLE_PROFILER",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     3550
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "recommendationservice",
+    "service": "recommendationservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/recommendationservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 220.0,
+    "mem_limit_mi": 450.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "8080"
+     },
+     {
+      "key": "PRODUCT_CATALOG_SERVICE_ADDR",
+      "value": "productcatalogservice:3550"
+     },
+     {
+      "key": "DISABLE_PROFILER",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     8080
+    ],
+    "probe": "grpc"
+   },
+   {
+    "deployment": "redis-cart",
+    "service": "redis",
+    "replicas": 1,
+    "image": "redis",
+    "tag": "alpine",
+    "cpu_request": 0.07,
+    "cpu_limit": 0.125,
+    "mem_request_mi": 200.0,
+    "mem_limit_mi": 256.0,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     6379
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "shippingservice",
+    "service": "shippingservice",
+    "replicas": 1,
+    "image": "us-central1-docker.pkg.dev/online-boutique-ci/microservices-demo/shippingservice",
+    "tag": "v0.10.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 64.0,
+    "mem_limit_mi": 128.0,
+    "env": [
+     {
+      "key": "PORT",
+      "value": "50051"
+     },
+     {
+      "key": "DISABLE_PROFILER",
+      "value": "1"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     50051
+    ],
+    "probe": "grpc"
+   }
+  ],
+  "sockshop": [
+   {
+    "deployment": "carts",
+    "service": "carts",
+    "replicas": 1,
+    "image": "weaveworksdemos/carts",
+    "tag": "0.4.8",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 200.0,
+    "mem_limit_mi": 500.0,
+    "env": [
+     {
+      "key": "JAVA_OPTS",
+      "value": "-Xms64m -Xmx128m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom -Dspring.zipkin.enabled=false"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "carts-db",
+    "service": "carts-db",
+    "replicas": 1,
+    "image": "mongo",
+    "tag": "latest",
+    "cpu_request": null,
+    "cpu_limit": null,
+    "mem_request_mi": null,
+    "mem_limit_mi": null,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     27017
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "catalogue",
+    "service": "catalogue",
+    "replicas": 1,
+    "image": "weaveworksdemos/catalogue",
+    "tag": "0.3.5",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 100.0,
+    "mem_limit_mi": 200.0,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": "httpGet"
+   },
+   {
+    "deployment": "catalogue-db",
+    "service": "catalogue-db",
+    "replicas": 1,
+    "image": "weaveworksdemos/catalogue-db",
+    "tag": "0.3.0",
+    "cpu_request": null,
+    "cpu_limit": null,
+    "mem_request_mi": null,
+    "mem_limit_mi": null,
+    "env": [
+     {
+      "key": "MYSQL_ROOT_PASSWORD",
+      "value": "<redacted>"
+     },
+     {
+      "key": "MYSQL_DATABASE",
+      "value": "socksdb"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     3306
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "front-end",
+    "service": "front-end",
+    "replicas": 1,
+    "image": "weaveworksdemos/front-end",
+    "tag": "0.3.12",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 1000.0,
+    "env": [
+     {
+      "key": "SESSION_REDIS",
+      "value": "true"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     8079
+    ],
+    "probe": "httpGet"
+   },
+   {
+    "deployment": "orders",
+    "service": "orders",
+    "replicas": 1,
+    "image": "weaveworksdemos/orders",
+    "tag": "0.4.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 500.0,
+    "env": [
+     {
+      "key": "JAVA_OPTS",
+      "value": "-Xms64m -Xmx128m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom -Dspring.zipkin.enabled=false"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "orders-db",
+    "service": "orders-db",
+    "replicas": 1,
+    "image": "mongo",
+    "tag": "latest",
+    "cpu_request": null,
+    "cpu_limit": null,
+    "mem_request_mi": null,
+    "mem_limit_mi": null,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     27017
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "payment",
+    "service": "payment",
+    "replicas": 1,
+    "image": "weaveworksdemos/payment",
+    "tag": "0.4.3",
+    "cpu_request": 0.099,
+    "cpu_limit": 0.2,
+    "mem_request_mi": 100.0,
+    "mem_limit_mi": 200.0,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": "httpGet"
+   },
+   {
+    "deployment": "queue-master",
+    "service": "queue-master",
+    "replicas": 1,
+    "image": "weaveworksdemos/queue-master",
+    "tag": "0.3.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 500.0,
+    "env": [
+     {
+      "key": "JAVA_OPTS",
+      "value": "-Xms64m -Xmx128m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom -Dspring.zipkin.enabled=false"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "rabbitmq",
+    "service": "rabbitmq",
+    "replicas": 1,
+    "image": "rabbitmq",
+    "tag": "3.6.8-management",
+    "cpu_request": null,
+    "cpu_limit": null,
+    "mem_request_mi": null,
+    "mem_limit_mi": null,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     15672,
+     5672
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "session-db",
+    "service": "session-db",
+    "replicas": 1,
+    "image": "redis",
+    "tag": "alpine",
+    "cpu_request": null,
+    "cpu_limit": null,
+    "mem_request_mi": null,
+    "mem_limit_mi": null,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     6379
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "shipping",
+    "service": "shipping",
+    "replicas": 1,
+    "image": "weaveworksdemos/shipping",
+    "tag": "0.4.8",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 500.0,
+    "env": [
+     {
+      "key": "ZIPKIN",
+      "value": "zipkin.jaeger.svc.cluster.local"
+     },
+     {
+      "key": "JAVA_OPTS",
+      "value": "-Xms64m -Xmx128m -XX:+UseG1GC -Djava.security.egd=file:/dev/urandom -Dspring.zipkin.enabled=false"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "user",
+    "service": "user",
+    "replicas": 1,
+    "image": "weaveworksdemos/user",
+    "tag": "0.4.7",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.3,
+    "mem_request_mi": 100.0,
+    "mem_limit_mi": 200.0,
+    "env": [
+     {
+      "key": "mongo",
+      "value": "user-db:27017"
+     }
+    ],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     80
+    ],
+    "probe": "httpGet"
+   },
+   {
+    "deployment": "user-db",
+    "service": "user-db",
+    "replicas": 1,
+    "image": "weaveworksdemos/user-db",
+    "tag": "0.3.0",
+    "cpu_request": null,
+    "cpu_limit": null,
+    "mem_request_mi": null,
+    "mem_limit_mi": null,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     27017
+    ],
+    "probe": null
+   }
+  ],
+  "trainticket": [
+   {
+    "deployment": "ts-admin-basic-info-service",
+    "service": "ts-admin-basic-info-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-admin-basic-info-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     18767
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-admin-order-service",
+    "service": "ts-admin-order-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-admin-order-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     16112
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-admin-route-service",
+    "service": "ts-admin-route-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-admin-route-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     16113
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-admin-travel-service",
+    "service": "ts-admin-travel-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-admin-travel-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     16114
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-admin-user-service",
+    "service": "ts-admin-user-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-admin-user-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     16115
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-assurance-service",
+    "service": "ts-assurance-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-assurance-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-assurance-mysql"
+    ],
+    "ports": [
+     18888
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-auth-service",
+    "service": "ts-auth-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-auth-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-auth-mysql"
+    ],
+    "ports": [
+     12340
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-avatar-service",
+    "service": "ts-avatar-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-avatar-service",
+    "tag": "0.2.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     17001
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-basic-service",
+    "service": "ts-basic-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-basic-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     15680
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-cancel-service",
+    "service": "ts-cancel-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-cancel-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     18885
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-config-service",
+    "service": "ts-config-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-config-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-config-mysql"
+    ],
+    "ports": [
+     15679
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-consign-price-service",
+    "service": "ts-consign-price-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-consign-price-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-consign-price-mysql"
+    ],
+    "ports": [
+     16110
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-consign-service",
+    "service": "ts-consign-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-consign-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-consign-mysql"
+    ],
+    "ports": [
+     16111
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-contacts-service",
+    "service": "ts-contacts-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-contacts-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-contacts-mysql"
+    ],
+    "ports": [
+     12347
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-delivery-service",
+    "service": "ts-delivery-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-delivery-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [
+     "ts-delivery-mysql"
+    ],
+    "ports": [
+     18808
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-execute-service",
+    "service": "ts-execute-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-execute-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     12386
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-food-delivery-service",
+    "service": "ts-food-delivery-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-food-delivery-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-food-delivery-mysql"
+    ],
+    "ports": [
+     18957
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-food-service",
+    "service": "ts-food-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-food-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [
+     "ts-food-mysql"
+    ],
+    "ports": [
+     18856
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-gateway-service",
+    "service": "ts-gateway-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-gateway-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     18888
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-inside-payment-service",
+    "service": "ts-inside-payment-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-inside-payment-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-inside-payment-mysql"
+    ],
+    "ports": [
+     18673
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-news-service",
+    "service": "ts-news-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-news-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     12862
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-notification-service",
+    "service": "ts-notification-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-notification-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [
+     "ts-notification-mysql"
+    ],
+    "ports": [
+     17853
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-order-other-service",
+    "service": "ts-order-other-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-order-other-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [
+     "ts-order-other-mysql"
+    ],
+    "ports": [
+     12032
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-order-service",
+    "service": "ts-order-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-order-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [
+     "ts-order-mysql"
+    ],
+    "ports": [
+     12031
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-payment-service",
+    "service": "ts-payment-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-payment-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-payment-mysql"
+    ],
+    "ports": [
+     19001
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-preserve-other-service",
+    "service": "ts-preserve-other-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-preserve-other-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [],
+    "ports": [
+     14569
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-preserve-service",
+    "service": "ts-preserve-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-preserve-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [],
+    "ports": [
+     14568
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-price-service",
+    "service": "ts-price-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-price-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-price-mysql"
+    ],
+    "ports": [
+     16579
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-rebook-service",
+    "service": "ts-rebook-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-rebook-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos",
+     "rabbitmq"
+    ],
+    "secrets": [],
+    "ports": [
+     18886
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-route-plan-service",
+    "service": "ts-route-plan-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-route-plan-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     14578
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-route-service",
+    "service": "ts-route-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-route-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-route-mysql"
+    ],
+    "ports": [
+     11178
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-seat-service",
+    "service": "ts-seat-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-seat-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     18898
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-security-service",
+    "service": "ts-security-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-security-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-security-mysql"
+    ],
+    "ports": [
+     11188
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-station-food-service",
+    "service": "ts-station-food-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-station-food-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-station-food-mysql"
+    ],
+    "ports": [
+     18855
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-station-service",
+    "service": "ts-station-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-station-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-station-mysql"
+    ],
+    "ports": [
+     12345
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-ticket-office-service",
+    "service": "ts-ticket-office-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-ticket-office-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-ticket-office-mysql"
+    ],
+    "ports": [
+     16108
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-train-food-service",
+    "service": "ts-train-food-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-train-food-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-train-food-mysql"
+    ],
+    "ports": [
+     19999
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-train-service",
+    "service": "ts-train-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-train-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-train-mysql"
+    ],
+    "ports": [
+     14567
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-travel-plan-service",
+    "service": "ts-travel-plan-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-travel-plan-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     14322
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-travel-service",
+    "service": "ts-travel-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-travel-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-travel-mysql"
+    ],
+    "ports": [
+     12346
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-travel2-service",
+    "service": "ts-travel2-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-travel2-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-travel2-mysql"
+    ],
+    "ports": [
+     16346
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-ui-dashboard",
+    "service": "ts-ui-dashboard",
+    "replicas": 1,
+    "image": "codewisdom/ts-ui-dashboard",
+    "tag": "1.0.1",
+    "cpu_request": 0.05,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 100.0,
+    "mem_limit_mi": 500.0,
+    "env": [],
+    "config_maps": [],
+    "secrets": [],
+    "ports": [
+     8080
+    ],
+    "probe": null
+   },
+   {
+    "deployment": "ts-user-service",
+    "service": "ts-user-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-user-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-user-mysql"
+    ],
+    "ports": [
+     12342
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-verification-code-service",
+    "service": "ts-verification-code-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-verification-code-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [],
+    "ports": [
+     15678
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-voucher-service",
+    "service": "ts-voucher-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-voucher-service",
+    "tag": "1.0.0",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-voucher-mysql"
+    ],
+    "ports": [
+     16101
+    ],
+    "probe": "tcpSocket"
+   },
+   {
+    "deployment": "ts-wait-order-service",
+    "service": "ts-wait-order-service",
+    "replicas": 1,
+    "image": "codewisdom/ts-wait-order-service",
+    "tag": "1.0.1",
+    "cpu_request": 0.1,
+    "cpu_limit": 0.5,
+    "mem_request_mi": 300.0,
+    "mem_limit_mi": 2000.0,
+    "env": [
+     {
+      "key": "NODE_IP",
+      "value": null
+     }
+    ],
+    "config_maps": [
+     "nacos"
+    ],
+    "secrets": [
+     "ts-wait-order-mysql"
+    ],
+    "ports": [
+     17525
+    ],
+    "probe": "tcpSocket"
+   }
+  ]
+ }
+}

@@ -165,6 +165,11 @@ def _planted_kestrel() -> tuple[list[dict], list[dict], list[dict]]:
         {"id": "A-9102", "service": "mobile-bff", "at": NOW - 20 * MIN, "severity": "page", "signal": "login failures 30%"},
         {"id": "A-9201", "service": "catalog-es", "at": NOW - 15 * MIN, "severity": "page", "signal": "cluster status RED, 2 of 6 shards unassigned"},
         {"id": "A-9202", "service": "search", "at": NOW - 13 * MIN, "severity": "page", "signal": "zero-result rate 64%"},
+        # INC-305: k8s-node-4 degrades (disk pressure). catalog and users, which only share that node, fail together.
+        {"id": "A-9301", "service": "catalog", "at": NOW - 186 * MIN, "severity": "page", "signal": "p99 latency 3.4s, pod restarts"},
+        {"id": "A-9302", "service": "users", "at": NOW - 185 * MIN, "severity": "page", "signal": "p99 latency 2.9s, 7% 5xx"},
+        {"id": "A-9303", "service": "api-gateway", "at": NOW - 183 * MIN, "severity": "page", "signal": "5xx 11% on /catalog and /me"},
+        {"id": "A-9304", "service": "web-frontend", "at": NOW - 181 * MIN, "severity": "warn", "signal": "product and account pages failing"},
     ]
     incidents = [
         {"id": "INC-301", "title": "Checkout p99 latency 8s and 12% errors", "symptom": "checkout",
@@ -176,6 +181,8 @@ def _planted_kestrel() -> tuple[list[dict], list[dict], list[dict]]:
         # Opened separately by the Payments team: the same pool change is behind it and INC-301.
         {"id": "INC-304", "title": "Refund API timing out", "symptom": "payments",
          "started": NOW - 40 * MIN, "status": "open", "severity": "SEV2"},
+        {"id": "INC-305", "title": "Product and account pages failing", "symptom": "web-frontend",
+         "started": NOW - 181 * MIN, "status": "open", "severity": "SEV2"},
     ]
     return changes, alerts, incidents
 
@@ -285,6 +292,93 @@ def _write_org(g: Graph, spec: dict) -> None:
         UNWIND $calls AS c
         MATCH (a:Service {name: c[0]}), (b:Service {name: c[1]})
         CREATE (a)-[:CALLS]->(b)""", {"calls": [list(c) for c in spec["calls"]]})
+
+
+# --- runtime: deployments, pods, nodes, zones, images, config ------------------------------------------------
+
+KESTREL_NODES = [("k8s-node-1", "zone-a"), ("k8s-node-2", "zone-a"), ("k8s-node-3", "zone-b"),
+                 ("k8s-node-4", "zone-b"), ("k8s-node-5", "zone-c"), ("k8s-node-6", "zone-c")]
+# INC-305's planted fault: k8s-node-4 degrades, and the two services it hosts that sit in unrelated branches
+# under the gateway fail together. Every other service keeps its pods off it.
+NODE4_TENANTS = ("catalog", "users")
+
+
+def kestrel_runtime() -> list[dict]:
+    """Where every Kestrel service runs: tier-1 services get 3 replicas, the rest 2, spread over distinct nodes
+    (the scheduler's anti-affinity), never on k8s-node-4 unless the service is one of NODE4_TENANTS."""
+    rng = random.Random(5)
+    others = [n for n, _ in KESTREL_NODES if n != "k8s-node-4"]
+    taken: set[str] = set()       # NODE4_TENANTS share k8s-node-4 and nothing else
+    out = []
+    for name, team, kind, tier, _ in KESTREL["services"]:
+        if kind == "external":
+            continue
+        reps = 3 if tier == 1 else 2
+        if name in NODE4_TENANTS:
+            rest = rng.sample([n for n in others if n not in taken], reps - 1)
+            taken |= set(rest)
+            nodes = ["k8s-node-4"] + rest
+        else:
+            nodes = rng.sample(others, reps)
+        out.append({"service": name, "deployment": name, "replicas": reps, "image": f"registry.kestrel.dev/{name}",
+                    "tag": "latest", "cpu_request": 0.25, "cpu_limit": 1.0 if tier == 1 else 0.5,
+                    "mem_request_mi": 256.0, "mem_limit_mi": 1024.0 if kind == "datastore" else 512.0,
+                    "env": [], "config_maps": [f"{team}-config"], "secrets": [], "ports": [8080], "probe": "httpGet",
+                    "pods": [{"name": f"{name}-{rng.randrange(16**5):05x}-{i}", "node": n} for i, n in enumerate(nodes)]})
+    return out
+
+
+def _write_runtime(g: Graph, deployments: list[dict], source: str, nodes: list[tuple[str, str]] | None = None,
+                   node_team: str | None = None) -> None:
+    """(Service)-[:DEPLOYED_AS]->(Deployment)-[:RUNS_IMAGE]->(Image), its config ((Deployment)-[:READS {value}]->
+    (ConfigKey), -[:USES_CONFIG]->(ConfigMap), -[:USES_SECRET]->(Secret)) and, where placement is known,
+    (Deployment)-[:HAS_POD]->(Pod)-[:ON_NODE]->(Node)-[:IN_ZONE]->(Zone)."""
+    present = {r["s"] for r in g.read("MATCH (s:Service) RETURN s.name AS s")}
+    deps = [d for d in deployments if d["service"] in present]
+    if not deps:
+        return
+    g.write("CREATE INDEX FOR (d:Deployment) ON (d.name)")
+    g.write("CREATE INDEX FOR (n:Node) ON (n.name)")
+    g.write("""
+        UNWIND $deps AS d MATCH (s:Service {name: d.service})
+        CREATE (s)-[:DEPLOYED_AS]->(x:Deployment {name: d.deployment, replicas: d.replicas, cpu_request: d.cpu_request,
+               cpu_limit: d.cpu_limit, mem_request_mi: d.mem_request_mi, mem_limit_mi: d.mem_limit_mi, probe: d.probe,
+               ports: d.ports, source: $src})
+        MERGE (i:Image {id: d.image + ':' + d.tag}) ON CREATE SET i.repo = d.image, i.tag = d.tag
+        CREATE (x)-[:RUNS_IMAGE]->(i)""", {"deps": deps, "src": source})
+    env = [{"d": d["deployment"], "key": e["key"], "value": e["value"]} for d in deps for e in d["env"]]
+    if env:
+        g.write("""
+            UNWIND $env AS e MATCH (x:Deployment {name: e.d})
+            MERGE (k:ConfigKey {name: e.key})
+            CREATE (x)-[:READS {value: e.value}]->(k)""", {"env": env})
+    for rel, label, key in (("USES_CONFIG", "ConfigMap", "config_maps"), ("USES_SECRET", "Secret", "secrets")):
+        rows = [{"d": d["deployment"], "n": n} for d in deps for n in d[key]]
+        if rows:
+            g.write(f"""
+                UNWIND $rows AS r MATCH (x:Deployment {{name: r.d}})
+                MERGE (c:{label} {{name: r.n}})
+                CREATE (x)-[:{rel}]->(c)""", {"rows": rows})
+    if nodes:
+        g.write("""
+            UNWIND $nodes AS n MERGE (z:Zone {name: n[1]})
+            CREATE (:Node {name: n[0], zone: n[1]})-[:IN_ZONE]->(z)""", {"nodes": [list(n) for n in nodes]})
+        if node_team:
+            g.write("MATCH (n:Node), (t:Team {id: $t}) CREATE (n)-[:OWNED_BY]->(t)", {"t": node_team})
+        pods = [{"d": d["deployment"], **p} for d in deps for p in d.get("pods") or []]
+        g.write("""
+            UNWIND $pods AS p MATCH (x:Deployment {name: p.d}), (n:Node {name: p.node})
+            CREATE (x)-[:HAS_POD]->(:Pod {name: p.name})-[:ON_NODE]->(n)""", {"pods": pods})
+
+
+def _link_config_changes(g: Graph) -> None:
+    """A config change sets a key; every deployment that reads that key is exposed to it."""
+    g.write("""
+        MATCH (c:Change {kind: 'config'})-[:CHANGED]->(s:Service)-[:DEPLOYED_AS]->(d:Deployment)
+        WHERE c.key IS NOT NULL
+        MERGE (k:ConfigKey {name: c.key})
+        MERGE (c)-[:SETS]->(k)
+        MERGE (d)-[:READS]->(k)""")
 
 
 def _write_changes(g: Graph, changes: list[dict]) -> None:
@@ -617,6 +711,8 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _write_incidents(g, incidents)
         _write_history(g, _history_kestrel())
         _write_runbooks(g, RUNBOOKS_KESTREL)
+        _write_runtime(g, kestrel_runtime(), "synthetic", KESTREL_NODES, "platform")
+        _link_config_changes(g)
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])
@@ -631,6 +727,8 @@ def build(tenant: str, *, force: bool = False) -> dict:
                               "started": NOW - 24 * MIN, "status": "open", "severity": "SEV2"}])
     elif tenant == "boutique" or tenant in RCAEVAL_TENANTS:
         _boutique(g) if tenant == "boutique" else _rcaeval_tenant(g, tenant)
+        from . import manifests
+        _write_runtime(g, manifests.load(tenant), manifests.SOURCES[tenant])
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])

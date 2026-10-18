@@ -27,7 +27,9 @@ def _cite_alerts(alerts: list[dict]) -> list[dict]:
 
 
 def _subject(s: dict) -> dict:
-    return {"label": "Change", "id": s["change"]["id"]} if s["change"] else {"label": "Service", "id": s["service"]}
+    if s["change"]:
+        return {"label": "Change", "id": s["change"]["id"]}
+    return {"label": "Node", "id": s["service"]} if s["type"] == "host" else {"label": "Service", "id": s["service"]}
 
 
 def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | None, leader: dict | None) -> tuple[list, list]:
@@ -56,7 +58,14 @@ def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | N
             cites = _cite_alerts(s["evidence_alerts"])
         add(c["passed"], "check", f"{c['check']}: {c['detail']}", cites)
 
-    f, w = s["factors"], ranking["weights"]["change" if s["change"] else "signal"]
+    f, w = s["factors"], ranking["weights"]["change" if s["change"] else s["type"] if s["type"] == "host" else "signal"]
+    if s["type"] == "host":
+        h = s["host"]
+        add(True, "host", f"{' and '.join(h['services'])} run on {h['node']} ({h['zone']}) and share nothing else: "
+                          f"neither calls the other", [_subject(s)] + [{"label": "Service", "id": x} for x in h["services"]],
+            round(w["co_location"] * f["co_location"], 3))
+        add(h["spread_min"] <= 5, "timing", f"they started failing {h['spread_min']:g} min apart", _cite_alerts(s["evidence_alerts"]),
+            round(w["simultaneity"] * f["simultaneity"], 3))
     contrib = lambda k: round(w[k] * f[k], 3)  # noqa: E731
     if s["change"]:
         ch = s["change"]
@@ -76,6 +85,13 @@ def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | N
     if s.get("from_below"):
         add(False, "order", f"something below {s['service']} was alerting first: the failure started deeper", [], None)
     tel = ranking.get("telemetry") or {}
+    lim = tel.get("limits", {}).get(s["service"])
+    sig = next((a["signal"] for a in ranking.get("alerts") or [] if a["service"] == s["service"]), "") or ""
+    if lim and (sig.startswith("cpu") and lim.get("cpu_limit") or sig.startswith("mem") and lim.get("mem_limit_mi")):
+        what = f"{lim['cpu_limit']:g} CPU" if sig.startswith("cpu") else f"{lim['mem_limit_mi']:g} MiB of memory"
+        add(True, "limits", f"{s['service']} is capped at {what} in its manifest ({lim['replicas']} replica"
+                            f"{'' if lim['replicas'] == 1 else 's'}), and its {sig.split(' ')[0]} is what alerted",
+            [{"label": "Deployment", "id": lim["deployment"]}])
     for h in tel.get("hot_ops", {}).get(s["service"], [])[:1]:
         add(True, "endpoint", f"{h['op']} on {s['service']} slowed at onset: p90 {h['before']:g} → {h['after']:g} ms ({h['ratio']:g}x)",
             [{"label": "Operation", "id": h["id"]}] + _cite_alerts([{"id": h["alert"]}]))
@@ -218,6 +234,20 @@ def causal_chain(g: Graph, ranking: dict) -> dict:
     for a, b in zip(path, path[1:]):
         down.setdefault(a, set()).add(b)
     conf = ranking.get("confidence_p") or 0.5
+    if lead["type"] == "host":
+        # each service the host runs failed on its own: its first alert points at the node, and what each set off
+        # chains up from there
+        links, seen = [], set()
+        for svc in lead["host"]["services"]:
+            first = min((a["at"] for a in alerts if a["service"] == svc), default=0)
+            for l in _chain({"service": svc, "change": None, "first_alert": first}, lead["footprint"]["explained"], alerts, down, conf):
+                if l["from"] in seen:
+                    continue
+                seen.add(l["from"])
+                if l["to_label"] == "Service" and l["to"] == svc:
+                    l = {**l, "to": lead["service"], "to_label": "Node", "to_service": lead["service"]}
+                links.append(l)
+        return {"links": links, "roots": [{"label": tools._label(lead), "service": lead["service"], "links": len(links)}]}
     links = _chain(lead, lead["footprint"]["explained"], alerts, down, conf)
     roots = [{"label": tools._label(lead), "service": lead["service"], "links": len(links)}]
     for s, explains in others:
@@ -245,7 +275,12 @@ def telemetry(g: Graph, ranking: dict) -> dict:
             RETURN svc.name AS service, l.id AS id, l.template AS template, l.new AS new, s.count AS count,
                    s.first_at AS first_at ORDER BY l.new DESC, s.count DESC""", {"inc": ranking["incident"]["id"]}):
         logs.setdefault(r["service"], []).append(r)
-    return {"hot_ops": hot, "logs": logs}
+    svcs = sorted({a["service"] for a in ranking.get("alerts") or []})
+    limits = {r["service"]: r for r in g.read("""
+        MATCH (s:Service)-[:DEPLOYED_AS]->(d:Deployment) WHERE s.name IN $s
+        RETURN s.name AS service, d.name AS deployment, d.replicas AS replicas, d.cpu_limit AS cpu_limit,
+               d.mem_limit_mi AS mem_limit_mi""", {"s": svcs})}
+    return {"hot_ops": hot, "logs": logs, "limits": limits}
 
 
 def build(g: Graph, ranking: dict) -> dict:
@@ -276,7 +311,8 @@ def write(g: Graph, incident_id: str, reasoning: dict) -> dict:
         WITH x, h
         OPTIONAL MATCH (c:Change {id: h.blames_id}) WHERE h.blames_label = 'Change'
         OPTIONAL MATCH (s:Service {name: h.blames_id}) WHERE h.blames_label = 'Service'
-        WITH x, coalesce(c, s) AS t WHERE t IS NOT NULL
+        OPTIONAL MATCH (n:Node {name: h.blames_id}) WHERE h.blames_label = 'Node'
+        WITH x, coalesce(c, s, n) AS t WHERE t IS NOT NULL
         CREATE (x)-[:BLAMES]->(t)""", {"inc": incident_id, "hyps": hyps})
     for rel in ("SUPPORTED_BY", "CONTRADICTED_BY"):
         rows = [e for e in ev if e["rel"] == rel]
@@ -286,14 +322,14 @@ def write(g: Graph, incident_id: str, reasoning: dict) -> dict:
                 CREATE (h)-[:{rel}]->(:Evidence {{id: e.id, kind: e.kind, text: e.text, weight: e.weight}})""", {"ev": rows})
     cites = [{"e": e["id"], **c} for e in ev for c in e["cites"]]
     for label, key in (("Alert", "id"), ("Change", "id"), ("Incident", "id"), ("Service", "name"), ("Operation", "id"),
-                       ("LogPattern", "id")):
+                       ("LogPattern", "id"), ("Node", "name"), ("Deployment", "name")):
         rows = [c for c in cites if c["label"] == label]
         if rows:
             g.write(f"""
                 UNWIND $c AS c MATCH (e:Evidence {{id: c.e}}), (t:{label} {{{key}: c.id}})
                 MERGE (e)-[:CITES]->(t)""", {"c": rows})
     links = reasoning["chain"]["links"]
-    for label, key in (("Alert", "id"), ("Change", "id"), ("Service", "name")):
+    for label, key in (("Alert", "id"), ("Change", "id"), ("Service", "name"), ("Node", "name")):
         rows = [l for l in links if l["to_label"] == label]
         if rows:
             g.write(f"""

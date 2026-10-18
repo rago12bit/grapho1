@@ -19,6 +19,7 @@ TRUE_CAUSES: dict[str, dict[str, str]] = {
         "A-9001": "C-5101", "A-9002": "C-5101", "A-9003": "C-5101", "A-9004": "C-5101",
         "A-9101": "D-5201", "A-9102": "D-5201",
         "A-9201": "infra:catalog-es", "A-9202": "infra:catalog-es",
+        "A-9301": "infra:k8s-node-4", "A-9302": "infra:k8s-node-4", "A-9303": "infra:k8s-node-4", "A-9304": "infra:k8s-node-4",
     },
     "harbor": {"A-1": "D-1"},
 }

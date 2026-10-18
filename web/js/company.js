@@ -73,6 +73,7 @@ async function card(name) {
         e.commits ? `${e.commits} commits to its code, last ${esc((e.last_commit || "").slice(0, 10))}` : ""].filter(Boolean).join(" · ")}</div><span class="num">${e.score}</span></li>`).join("")}</ul>
       ${c.bot_commits?.n ? `<p class="faint small">Plus ${c.bot_commits.n} commits by automation (${(c.bot_commits.b || []).map(esc).join(", ")}), kept apart.</p>` : ""}`
       : `<p class="faint small">Nobody on record.</p>`)}
+    ${c.runtime ? section(`Runtime · ${c.runtime.source === "synthetic" ? "synthetic cluster" : "from the project's manifests"}`, runtimeHtml(c.runtime)) : ""}
     ${c.endpoints?.length ? section(`Endpoints · from the traces`, `<ul class="eps">${c.endpoints.map((o) => `<li><div class="mono small">${esc(o.op)}</div>
       <div class="num faint tiny">${o.rps} req/s · p50 ${o.p50_ms} ms · p99 ${o.p99_ms} ms${o.err ? ` · ${Math.round(100 * o.err)}% errors` : ""}</div>
       ${o.calls.length ? `<div class="tiny faint">→ ${o.calls.map((d) => `<span class="mono">${esc(d.service)}</span> ${esc(d.op)} <span class="num">${d.rps}/s</span>`).join("; ")}</div>` : ""}</li>`).join("")}</ul>`) : ""}
@@ -83,6 +84,19 @@ async function card(name) {
     ${c.runbooks.length ? section("Runbooks", c.runbooks.map((r) => `<details class="rb"><summary><span class="mono">${esc(r.id)}</span> ${esc(r.title)}</summary><ol class="small">${(r.steps || []).map((s) => `<li>${esc(s)}</li>`).join("")}</ol></details>`).join("")) : ""}
     ${section("Graph queries behind this card", queries(c.traces, 5))}
   </div>`;
+}
+
+function runtimeHtml(r) {
+  const lim = [r.cpu_limit != null ? `CPU ${r.cpu_request ?? "?"}–${r.cpu_limit}` : "", r.mem_limit_mi != null ? `memory ${r.mem_request_mi ?? "?"}–${r.mem_limit_mi} MiB` : ""].filter(Boolean).join(" · ");
+  const nodes = [...new Set((r.pods || []).map((p) => `${p.node} (${p.zone})`))];
+  return `<dl class="facts tight">
+    <dt class="label">Image</dt><dd class="mono small">${esc(r.image || "–")}</dd>
+    <dt class="label">Replicas</dt><dd>${r.replicas}${r.probe ? ` · ${esc(r.probe)} readiness probe` : " · no readiness probe"}</dd>
+    <dt class="label">Requests–limits</dt><dd class="num">${esc(lim || "none set")}</dd>
+    ${nodes.length ? `<dt class="label">Runs on</dt><dd class="mono small">${nodes.map(esc).join(", ")}</dd>` : ""}
+    ${r.config.length ? `<dt class="label">Reads</dt><dd class="mono tiny">${r.config.slice(0, 8).map((k) => `${esc(k.key)}${k.value != null ? `=${esc(String(k.value).slice(0, 40))}` : ""}`).join("<br>")}${r.config.length > 8 ? `<br>+ ${r.config.length - 8} more` : ""}</dd>` : ""}
+    ${r.config_maps.length || r.secrets.length ? `<dt class="label">Config from</dt><dd class="small">${[...r.config_maps.map((x) => `ConfigMap ${esc(x)}`), ...r.secrets.map((x) => `Secret ${esc(x)}`)].join(", ")}</dd>` : ""}
+  </dl>${(r.neighbours || []).length ? `<p class="faint small">Shares nodes with ${r.neighbours.map((n) => `${esc(n.node)}: ${n.services.map(esc).join(", ")}`).join("; ")}.</p>` : ""}`;
 }
 
 export function wireCompany() {
