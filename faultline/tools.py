@@ -942,13 +942,19 @@ def list_actions(g: Graph, incident_id: str) -> list[dict]:
         MATCH (a:Action)-[:FOR]->(:Incident {id: $inc})
         OPTIONAL MATCH (a)-[:TARGETS]->(s)
         OPTIONAL MATCH (a)-[:FOR]->(all:Incident)
-        WITH a, s, collect(DISTINCT all.id) AS covers
+        OPTIONAL MATCH (cr:ChangeRequest)-[:FOR]->(a)
+        OPTIONAL MATCH (a)-[:APPROVED_UNDER]->(sa:StandingApproval)
+        WITH a, s, cr, sa, collect(DISTINCT all.id) AS covers
         RETURN a.id AS id, a.kind AS kind, a.summary AS summary, a.reason AS reason, a.status AS status,
                a.at AS at, a.decided_by AS decided_by, s.name AS target, a.change_id AS change_id, covers,
-               a.verified AS verified, a.verification AS verification, a.preview AS preview
+               a.verified AS verified, a.verification AS verification, a.preview AS preview,
+               a.applied AS applied, a.applied_detail AS applied_detail, sa.id AS standing,
+               CASE WHEN cr IS NULL THEN null ELSE {id: cr.id, branch: cr.branch, path: cr.path, title: cr.title,
+                    diff: cr.diff, body: cr.body, status: cr.status} END AS change_request
         ORDER BY a.at""", {"inc": incident_id})
     for r in rows:
         r["preview"] = json.loads(r["preview"]) if r["preview"] else None
+        r["covers"] = sorted(r["covers"])
     return rows
 
 
@@ -968,17 +974,23 @@ def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
     covered = [r["id"] for r in g.read(
         "MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id", {"id": action_id})]
     at = clock(g, covered)
+    # The decision is one conditional write: FalkorDB runs a graph's writes one at a time, so of any number of
+    # people (or retries) deciding at once, exactly one finds the action still proposed. The rest are refused.
+    won = g.write("""
+        MATCH (a:Action {id: $id}) WHERE a.status = 'proposed'
+        SET a.status = $status, a.decided_by = $who, a.decided_at = $at
+        RETURN a.id AS id""", {"id": action_id, "status": "executed" if approve else "rejected", "who": who, "at": at})
+    if not won:
+        now_ = g.read("MATCH (a:Action {id: $id}) RETURN a.status AS s", {"id": action_id})[0]["s"]
+        raise ValueError(f"{action_id} is already {now_}")
     if not approve:
-        g.write("MATCH (a:Action {id: $id}) SET a.status = 'rejected', a.decided_by = $who, a.decided_at = $at",
-                {"id": action_id, "who": who, "at": at})
         return {"id": action_id, "status": "rejected"}
     g.write("""
         MATCH (a:Action {id: $id})
-        SET a.status = 'executed', a.decided_by = $who, a.decided_at = $at
-        WITH a
         OPTIONAL MATCH (p:Person {handle: $who})
         FOREACH (_ IN CASE WHEN p IS NULL THEN [] ELSE [1] END | MERGE (p)-[:APPROVED]->(a))""",
-            {"id": action_id, "who": who, "at": at})
+            {"id": action_id, "who": who})
+    change_request(g, action_id)
     if a["kind"] != "page_owner":
         g.write("""
             MATCH (a:Action {id: $id})-[:FOR]->(i:Incident) WHERE i.status = 'open'
@@ -1876,6 +1888,72 @@ def verify_fix(g: Graph, action_id: str) -> dict:
             g.write("MATCH (i:Incident {id: $id}) WHERE i.status = 'mitigated' SET i.status = 'open'", {"id": r["incident"]})
     return {"action": action_id, "verified": ok, "summary": summary, "incidents": results,
             "predicted": sorted(predicted) if prediction else None}
+
+
+# --- the fix as a change request, and checking it landed ---------------------------------------------------
+
+def change_request(g: Graph, action_id: str) -> dict | None:
+    """The approved fix written as the change a team would merge: a branch, the file it touches, the diff and a
+    description citing the incident, the gate and the proof. (:ChangeRequest)-[:FOR]->(:Action). Paging an owner
+    is not a code change, so it has none. Opened in the simulated world only: nothing outside the graph is touched."""
+    rows = g.read("""
+        MATCH (a:Action {id: $id})-[:TARGETS]->(s)
+        OPTIONAL MATCH (a)-[:REVERTS]->(c:Change)
+        OPTIONAL MATCH (a)-[:FOR]->(i:Incident)
+        RETURN a.kind AS kind, a.summary AS summary, a.preview_verdict AS proof, s.name AS svc, c.id AS cid,
+               c.version AS version, c.key AS key, c.old AS old, c.new AS new, c.at AS at, collect(i.id) AS incidents""",
+                  {"id": action_id})
+    if not rows or rows[0]["kind"] == "page_owner" or not rows[0]["cid"]:
+        return None
+    r = rows[0]
+    svc = r["svc"]
+    if r["kind"] == "rollback":
+        prev = g.read("""
+            MATCH (c:Change {kind: 'deploy'})-[:CHANGED]->(:Service {name: $svc})
+            WHERE c.at < $at AND c.version IS NOT NULL RETURN c.version AS v ORDER BY c.at DESC LIMIT 1""",
+                      {"svc": svc, "at": r["at"]})
+        key, frm, to = "image", f"{svc}:{r['version']}", f"{svc}:{prev[0]['v'] if prev else 'previous'}"
+        path = f"deploy/{svc}.yaml"
+    elif r["kind"] == "revert_config":
+        key, frm, to, path = r["key"] or "config", str(r["new"]), str(r["old"]), f"config/{svc}.yaml"
+    else:
+        key, frm, to, path = r["key"] or "flag", "true", "false", f"flags/{svc}.yaml"
+    cr = {"id": "CR-" + action_id.split("-", 1)[1], "branch": f"hypocenter/{action_id.lower()}", "path": path,
+          "key": key, "from": frm, "to": to, "title": r["summary"],
+          "diff": f"--- a/{path}\n+++ b/{path}\n-  {key}: {frm}\n+  {key}: {to}",
+          "body": f"Reverts {r['cid']} for {', '.join(sorted(r['incidents']))}. Proved on a GRAPH.COPY before approval "
+                  f"({r['proof'] or 'no proof'}). Opened by Hypocenter after a person approved {action_id}."}
+    g.write("""
+        MATCH (a:Action {id: $id})
+        CREATE (cr:ChangeRequest {id: $cr.id, branch: $cr.branch, path: $cr.path, key: $cr.key, from: $cr.from,
+                                  to: $cr.to, title: $cr.title, diff: $cr.diff, body: $cr.body, status: 'opened',
+                                  service: $svc, at: a.decided_at})-[:FOR]->(a)""", {"id": action_id, "cr": cr, "svc": svc})
+    return cr
+
+
+def verify_applied(g: Graph, action_id: str) -> dict:
+    """The second channel. Alerts clearing says whether the fix worked; this says whether it landed at all: the
+    deployer's own report of what is running on the service, compared with what the change request asked for.
+    APPLIED (the report matches), NOT_APPLIED (it reports something else), UNKNOWN (no report since approval).
+    A fix can be APPLIED and still not work: that is a wrong fix, not a failed deploy."""
+    rows = g.read("""
+        MATCH (cr:ChangeRequest)-[:FOR]->(a:Action {id: $id})
+        OPTIONAL MATCH (r:Rollout {service: cr.service, key: cr.key}) WHERE r.at >= a.decided_at
+        WITH cr, r ORDER BY r.at DESC
+        RETURN cr.id AS cr, cr.service AS service, cr.key AS key, cr.to AS want, collect(r)[0] AS report""", {"id": action_id})
+    if not rows:
+        return {"action": action_id, "state": "UNKNOWN", "detail": "no change request: nothing was deployed"}
+    r = rows[0]
+    rep = r["report"]
+    got = rep.properties.get("value") if rep is not None and hasattr(rep, "properties") else None
+    state = "UNKNOWN" if rep is None else "APPLIED" if got == r["want"] else "NOT_APPLIED"
+    detail = {"APPLIED": f"the deployer reports {r['service']} {r['key']} = {got}, as {r['cr']} asked",
+              "NOT_APPLIED": f"the deployer reports {r['service']} {r['key']} = {got}, not {r['want']}",
+              "UNKNOWN": f"no report from the deployer on {r['service']} since approval"}[state]
+    g.write("MATCH (a:Action {id: $id}) SET a.applied = $state, a.applied_detail = $detail",
+            {"id": action_id, "state": state, "detail": detail})
+    g.write("MATCH (cr:ChangeRequest {id: $cr}) SET cr.status = $s", {"cr": r["cr"], "s": state.lower()})
+    return {"action": action_id, "state": state, "detail": detail, "change_request": r["cr"]}
 
 
 # --- who knows a service ---------------------------------------------------------------------------

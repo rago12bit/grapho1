@@ -10,7 +10,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from . import preflight, public_postmortems, reasoning, tools
+from . import paging, preflight, public_postmortems, reasoning, tools
 from .db import Graph, Trace
 
 MODEL = "claude-opus-5-5"
@@ -872,6 +872,10 @@ def investigate(tenant: str, incident_id: str) -> dict:
         g, incident_id, out["mode"], out["ranking"], out.get("answer") or "", len(out["steps"]))
     out["gate"] = checked
     out["gate_written"] = tools.record_gate(g, out["investigation_id"], checked)
+    # A standing approval that covers the proposed fix approves it here, inside its terms, or records why not.
+    proposed = [a for a in tools.list_actions(g, incident_id) if a["status"] == "proposed"]
+    if proposed:
+        out["standing"] = paging.try_standing(g, proposed[-1]["id"], checked) | {"action": proposed[-1]["id"]}
     return out
 
 

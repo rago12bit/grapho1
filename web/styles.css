@@ -526,3 +526,7 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 /* moving between pages cross-fades instead of flashing */
 @view-transition { navigation: auto; }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .28s; }
+
+.crq { margin: 6px 0; }
+.crq summary { cursor: pointer; }
+.crq pre { margin: 6px 0; }

@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://16-4-94-72.sslip.io"><img alt="live demo" src="https://img.shields.io/badge/live%20demo-16--4--94--72.sslip.io-ff6b4a"></a>
   <a href="docs/judge-check-clean-clone.txt"><img alt="make judge-check: passes on a fresh clone" src="https://img.shields.io/badge/make%20judge--check-passes%20on%20a%20fresh%20clone-2ea44f"></a>
-  <a href="#reproduce-it"><img alt="tests: 232 passing" src="https://img.shields.io/badge/tests-232%20passing-2ea44f"></a>
+  <a href="#reproduce-it"><img alt="tests: 242 passing" src="https://img.shields.io/badge/tests-242%20passing-2ea44f"></a>
   <a href="docs/mutants.txt"><img alt="mutants: 28 of 28 caught" src="https://img.shields.io/badge/mutants-28%20of%2028%20caught-2ea44f"></a>
   <a href="#proof-at-a-glance"><img alt="RCAEval: 360 real failures" src="https://img.shields.io/badge/RCAEval-360%20real%20failures-ff6b4a"></a>
   <a href="#falkordb-feature-map"><img alt="FalkorDB v4.14.10, 8 of 8 algorithms" src="https://img.shields.io/badge/FalkorDB-v4.14.10%20%C2%B7%208%2F8%20algorithms-ff6b4a"></a>
@@ -310,7 +310,7 @@ The Python package is still called `faultline` (the project's working name); eve
 | Command | What it checks | Time |
 |---|---|---|
 | `make judge-check` | build, start, every test, then the product on scratch graphs: verdicts, depth, unknowns, fix proofs, the evidence gate, the pre-deploy check, the read-only user per tenant, the README's numbers, Break it, the planted eval, isolation | ~2 min |
-| `docker compose run --rm app pytest -q` | the <!-- claim:tests -->232<!-- /claim --> tests, against a real FalkorDB on separate test graphs | ~1 min |
+| `docker compose run --rm app pytest -q` | the <!-- claim:tests -->242<!-- /claim --> tests, against a real FalkorDB on separate test graphs | ~1 min |
 | `make mutants` | 28 safeguards broken one at a time on a scratch copy; a test must catch each | ~2 min |
 | CI ([.github/workflows/ci.yml](.github/workflows/ci.yml), GitHub Actions) | on every push: the tests against a real FalkorDB, then `make claims` | ~3 min |
 | `make claims` | every number tagged in this README against the file that measured it (`faultline/claims.py`; the live ones run in `tests/test_claims.py`) | seconds |

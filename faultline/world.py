@@ -42,14 +42,33 @@ TRUE_CAUSES["boutique"] = _boutique_truth()
 TRUE_CAUSES["sockshop"] = _rcaeval_truth("sockshop")
 TRUE_CAUSES["trainticket"] = _rcaeval_truth("trainticket")
 RECOVERY_S = 4 * MIN   # monitoring reports recovery a few minutes after a correct fix
+ROLLOUT_S = 1 * MIN    # the deployer reports what is running a minute after a change is merged
+FAIL_ROLLOUT: set[str] = set()   # services whose next rollout fails (tests use it: the deploy never lands)
 
 
-def apply_fix(g: Graph, tenant: str, kind: str, target: str, change_id: str | None, at: int | None = None) -> list[str]:
+def roll_out(g: Graph, action_id: str, at: int | None = None) -> bool:
+    """The deployer: merge the action's change request and report what the service now runs, as a deploy system
+    would (a (:Rollout) report). A service in FAIL_ROLLOUT keeps running what it ran before."""
+    cr = g.read("""MATCH (cr:ChangeRequest)-[:FOR]->(:Action {id: $id})
+                   RETURN cr.service AS svc, cr.key AS key, cr.from AS frm, cr.to AS to""", {"id": action_id})
+    if not cr:
+        return False
+    c = cr[0]
+    landed = c["svc"] not in FAIL_ROLLOUT
+    g.write("""CREATE (:Rollout {service: $svc, key: $key, value: $value, at: $at, source: 'deployer'})""",
+            {"svc": c["svc"], "key": c["key"], "value": c["to"] if landed else c["frm"], "at": (at or NOW) + ROLLOUT_S})
+    return landed
+
+
+def apply_fix(g: Graph, tenant: str, kind: str, target: str, change_id: str | None, at: int | None = None,
+              action_id: str | None = None) -> list[str]:
     """Apply an approved fix to the simulated system. Returns the alert ids that recover.
 
-    A revert, rollback or flag change fixes the alerts that change really caused. Paging an owner fixes an
-    infrastructure failure on that service (the owner repairs it). Anything else changes nothing."""
+    A revert, rollback or flag change fixes the alerts that change really caused, if its rollout lands. Paging an
+    owner fixes an infrastructure failure on that service (the owner repairs it). Anything else changes nothing."""
     truth = TRUE_CAUSES.get(tenant, {})
+    if action_id and kind != "page_owner" and not roll_out(g, action_id, at):
+        return []                        # the deploy never landed, so nothing recovers
     if kind in ("rollback", "revert_config", "disable_flag"):
         fixed = [a for a, cause in truth.items() if change_id and cause == change_id]
     elif kind == "page_owner":

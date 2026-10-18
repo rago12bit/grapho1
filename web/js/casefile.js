@@ -427,9 +427,12 @@ export function renderActions(inc) {
         <div class="ak label">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}${(a.covers || []).length > 1 ? ` · covers ${a.covers.map(esc).join(", ")}` : ""}</div>
         <div class="s">${esc(a.summary)}</div>${a.status === "proposed" ? recordFor(a) : ""}${proofHtml(a)}
         ${a.status === "proposed" ? `<div class="btns"><button class="btn solid hot" data-a="${esc(a.id)}" data-ok="1">Approve fix</button><button class="btn quiet" data-a="${esc(a.id)}" data-ok="0">Reject</button></div>
-            <p class="faint small">Approving applies it to the simulated system only. Then Hypocenter checks the alerts in the graph to see whether it worked.</p>`
+            <p class="faint small">Approving opens it as a change request in the simulated system only, then checks it twice from the graph: did it land (the deployer's report) and did it work (the alerts). Two people approving at once still run it once.</p>`
           : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · applied to the simulated system" : ""}</div>
-            ${a.verified === true ? `<div class="verify ok">✓ Verified: ${esc(a.verification)}</div>` : a.verified === false ? `<div class="verify no">✗ Did not work: ${esc(a.verification)}. The incident is open again.</div>` : a.verification ? `<div class="verify wait">… ${esc(a.verification)}</div>` : ""}`}
+            ${a.standing ? `<div class="small ok">Approved under standing approval ${esc(a.standing)}: the owner was told, nobody was paged.</div>` : ""}
+            ${crHtml(a.change_request)}
+            ${a.applied ? `<div class="verify ${a.applied === "APPLIED" ? "ok" : a.applied === "NOT_APPLIED" ? "no" : "wait"}">${a.applied === "APPLIED" ? "✓" : a.applied === "NOT_APPLIED" ? "✗" : "…"} Landed (${esc(a.applied)}): ${esc(a.applied_detail)}</div>` : ""}
+            ${a.verified === true ? `<div class="verify ok">✓ Worked: ${esc(a.verification)}</div>` : a.verified === false ? `<div class="verify no">✗ Did not work: ${esc(a.verification)}. The incident is open again.</div>` : a.verification ? `<div class="verify wait">… ${esc(a.verification)}</div>` : ""}`}
       </div>`).join(""), pending ? `<span class="label warn">needs your approval</span>` : "")
       : inc.status !== "resolved" ? section("Proposed fixes", `<p class="faint small">The responder agent proposes the fix. Run the agents to get one.</p>`) : ""}
     ${inc.status !== "resolved" && (executed || f) ? section("Close it and teach the graph", `
@@ -457,6 +460,14 @@ export function renderActions(inc) {
     act.refreshBoard?.();
     act.refreshMemory?.();
   });
+}
+
+/** The approved fix as the change a team would merge: branch, diff, and why. Checked twice afterwards: did it land
+ *  (the deployer's report) and did it work (the alerts). */
+function crHtml(cr) {
+  if (!cr) return "";
+  return `<details class="crq"><summary class="small"><b class="mono">${esc(cr.id)}</b> ${esc(cr.title)} <span class="mono faint">${esc(cr.branch)}</span></summary>
+    <pre class="cypher">${esc(cr.diff)}</pre><div class="faint small">${esc(cr.body)}</div></details>`;
 }
 
 function recordFor(a) {

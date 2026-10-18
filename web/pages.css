@@ -201,3 +201,8 @@
 .pf-side { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 @media (max-width: 960px) { .pf-grid { grid-template-columns: 1fr; } .pf-form { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .pf-form .f { grid-template-columns: 1fr; } .pf-reasons li { grid-template-columns: 1fr; gap: 4px; } }
+
+.pc-chain { margin: 10px 0 0; padding-left: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; }
+.sa-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.sa-form select, .sa-form input { background: var(--bg-2); color: var(--ink); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 8px; font: 13px var(--sans); }
+.sa-form input { width: 64px; }

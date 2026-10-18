@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, learn, postmortem, preflight, public_postmortems, reasoning, results, seed, site, tools, upload, world
+from . import agent, bench, ingest, learn, paging, postmortem, preflight, public_postmortems, reasoning, results, seed, site, tools, upload, world
 from .db import Graph, ensure_reader, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -40,7 +40,8 @@ INGEST_TOKEN = os.environ.get("FAULTLINE_INGEST_TOKEN", "")
 # route suffix -> (requests, per seconds), per client address
 LIMITS = [("/investigate", 20, 60), ("/investigate/stream", 20, 60), ("/upload", 4, 600), ("/bench", 2, 60), ("/reset", 2, 300), ("/ask", 30, 60),
           ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300), ("/run", 30, 60),
-          ("/preflight", 30, 60)]
+          ("/preflight", 30, 60), ("/page", 20, 60), ("/ack", 30, 60), ("/escalate", 20, 60), ("/pages/tick", 30, 60),
+          ("/standing", 10, 60), ("/revoke", 10, 60)]
 _hits: dict[tuple[str, str], deque] = {}
 
 
@@ -156,7 +157,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 232, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 242, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -346,9 +347,17 @@ def investigate(tenant: str, incident_id: str):
     _guard(tools.get_incident, _g(tenant), incident_id)
     try:
         with ingest.exclusive(tenant, incident_id):
-            return agent.investigate(tenant, incident_id)
+            return _after_investigation(tenant, agent.investigate(tenant, incident_id))
     except ingest.Busy as e:
         raise HTTPException(409, str(e))
+
+
+def _after_investigation(tenant: str, out: dict) -> dict:
+    """A fix approved under a standing approval is applied and verified like any other approval."""
+    st = out.get("standing") or {}
+    if st.get("fired"):
+        out["standing"] |= _apply_and_verify(Graph(tenant), tenant, st["action"])
+    return out
 
 
 def _brief(st: dict) -> dict:
@@ -380,7 +389,7 @@ async def investigate_stream(tenant: str, incident_id: str, pace_ms: int = 0):
         token = agent.STEP_SINK.set(sink)
         try:
             with ingest.exclusive(tenant, incident_id):
-                q.put(("done", agent.investigate(tenant, incident_id)))
+                q.put(("done", _after_investigation(tenant, agent.investigate(tenant, incident_id))))
         except ingest.Busy as e:
             q.put(("error", {"detail": str(e)}))
         except Exception as e:  # reported to the watcher, not swallowed
@@ -449,9 +458,17 @@ def decide(tenant: str, action_id: str, body: Decision):
                     {"id": action_id})
             out["verification"] = {"action": action_id, "verified": None, "summary": "waiting for monitoring"}
         else:
-            world.apply_fix(g, tenant, a["kind"], a["target"], a["change_id"], a["at"])
-            out["verification"] = tools.verify_fix(g, action_id)
+            out |= _apply_and_verify(g, tenant, action_id)
     return out
+
+
+def _apply_and_verify(g: Graph, tenant: str, action_id: str) -> dict:
+    """After approval, in the simulated world: the change request rolls out, monitoring reports, and the fix is
+    checked twice from the graph: did it land (the deployer's report) and did it work (the alerts)."""
+    a = g.read("""MATCH (a:Action {id: $id})-[:TARGETS]->(s)
+                  RETURN a.kind AS kind, s.name AS target, a.change_id AS change_id, a.decided_at AS at""", {"id": action_id})[0]
+    world.apply_fix(g, tenant, a["kind"], a["target"], a["change_id"], a["at"], action_id)
+    return {"applied": tools.verify_applied(g, action_id), "verification": tools.verify_fix(g, action_id)}
 
 
 @app.post("/api/{tenant}/ask")
@@ -538,7 +555,52 @@ def engine():
 
 @app.get("/api/{tenant}/oncall")
 def oncall(tenant: str):
-    return site.oncall(_g(tenant))
+    g = _g(tenant)
+    return {**site.oncall(g), "paging": paging.pages(g), "standing": paging.standing(g), "escalate_s": paging.ESCALATE_S}
+
+
+class Who(BaseModel):
+    who: str = Field(default="on-call", max_length=60)
+
+
+class StandingIn(BaseModel):
+    kind: str = Field(pattern="^(rollback|revert_config|disable_flag|page_owner)$")
+    service: str = Field(min_length=1, max_length=80)
+    uses: int = Field(default=3, ge=1, le=paging.MAX_USES)
+    days: int = Field(default=30, ge=1, le=paging.MAX_DAYS)
+    who: str = Field(default="on-call", max_length=60)
+
+
+@app.post("/api/{tenant}/incidents/{incident_id}/page")
+def page_incident(tenant: str, incident_id: str):
+    """Page the on-call person of the team that owns what the judge blames."""
+    return _guard(paging.page, _g(tenant), incident_id)
+
+
+@app.post("/api/{tenant}/pages/{page_id}/ack")
+def ack_page(tenant: str, page_id: str, body: Who):
+    return _guard(paging.acknowledge, _g(tenant), page_id, body.who)
+
+
+@app.post("/api/{tenant}/pages/{page_id}/escalate")
+def escalate_page(tenant: str, page_id: str):
+    return _guard(paging.escalate, _g(tenant), page_id, "escalated by hand")
+
+
+@app.post("/api/{tenant}/pages/tick")
+def pages_tick(tenant: str):
+    """Escalate every page left unacknowledged past the timeout (the on-call page calls this as it polls)."""
+    return {"escalated": paging.escalate_overdue(_g(tenant))}
+
+
+@app.post("/api/{tenant}/standing")
+def grant_standing(tenant: str, body: StandingIn):
+    return _guard(paging.grant_standing, _g(tenant), body.kind, body.service, body.who, body.uses, body.days)
+
+
+@app.post("/api/{tenant}/standing/{sid}/revoke")
+def revoke_standing(tenant: str, sid: str, body: Who):
+    return _guard(paging.revoke_standing, _g(tenant), sid, body.who)
 
 
 @app.get("/api/{tenant}/explore")
