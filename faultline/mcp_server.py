@@ -64,6 +64,16 @@ def why(alert_id: str) -> str:
     return _call("why", alert_id=alert_id)
 
 
+@server.tool(description="The commits a deploy shipped, ranked: which one to look at first.")
+def commits_in(change_id: str, incident_id: str | None = None) -> str:
+    return _call("commits_in", change_id=change_id, incident_id=incident_id)
+
+
+@server.tool(description="Per team: deploys per week, change failure rate, time to restore, lead time.")
+def delivery_metrics() -> str:
+    return _call("delivery_metrics")
+
+
 @server.tool(description="Services a service depends on, with hop counts.")
 def dependencies(service: str, max_hops: int = 5) -> str:
     return _call("dependencies", service=service, max_hops=max_hops)

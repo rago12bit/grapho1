@@ -33,6 +33,11 @@ function renderShell() {
       <div class="t1"><b>${esc(t.team)}</b><span class="faint small">${plural(t.people, "person", "people")}</span></div>
       <div class="small">on call: ${t.on_call.map(esc).join(", ") || "<span class='faint'>nobody</span>"}</div>
       <div class="mono tiny faint">${t.services.map(esc).join(" · ")}</div></button></li>`).join("")}</ul>`)}
+    ${org.delivery?.some((d) => d.deploys) ? section("Delivery · from the graph", `<table class="dtab"><thead><tr><th>team</th><th>deploys/wk</th><th>change failure</th><th>restore</th><th>lead time</th></tr></thead><tbody>
+      ${org.delivery.filter((d) => d.deploys || d.deploys_90d).map((d) => `<tr><td>${esc(d.team)}</td><td class="num">${d.per_week}</td>
+        <td class="num ${d.change_failure_rate > 0.05 ? "warn" : ""}">${d.change_failure_rate == null ? "–" : `${Math.round(100 * d.change_failure_rate)}% <span class="faint">(${d.failed}/${d.deploys_90d})</span>`}</td>
+        <td class="num">${d.restore_min == null ? "–" : `${d.restore_min} min`}</td><td class="num">${d.lead_min == null ? "–" : `${d.lead_min} min`}</td></tr>`).join("")}</tbody></table>
+      <p class="faint small">Deploys per week over 14 days; change failure rate and time to restore over 90 days of solved incidents; lead time from first commit to deploy.</p>`) : ""}
     ${section("Chokepoints · betweenness", `<ul class="choke">${org.chokepoints.filter((c) => c.betweenness > 0).map((c) => `<li><button data-svc="${esc(c.service)}">
       <span class="mono">${esc(c.service)}</span><span class="meter"><i style="width:${Math.round(100 * c.betweenness / maxB)}%"></i></span><span class="num faint">${c.betweenness}</span></button></li>`).join("")}</ul>
       <p class="faint small">The share of call paths that run through a service. A fault there cuts the most traffic.</p>`)}
@@ -74,6 +79,9 @@ async function card(name) {
       ${c.bot_commits?.n ? `<p class="faint small">Plus ${c.bot_commits.n} commits by automation (${(c.bot_commits.b || []).map(esc).join(", ")}), kept apart.</p>` : ""}`
       : `<p class="faint small">Nobody on record.</p>`)}
     ${c.runtime ? section(`Runtime · ${c.runtime.source === "synthetic" ? "synthetic cluster" : "from the project's manifests"}`, runtimeHtml(c.runtime)) : ""}
+    ${c.releases?.length ? section(`Releases that changed it · from the project's git history`, `<ul class="eps">${c.releases.map((r) => `<li><div><b class="mono">${esc(r.tag)}</b>
+      <span class="faint small">${ago(r.at)} · ${plural(r.files, "file")} (${r.code_files} code) · <span class="num">+${r.additions} −${r.deletions}</span></span></div>
+      ${r.commits.map((m) => `<div class="tiny"><span class="mono faint">${esc(m.sha.slice(0, 7))}</span> ${esc(m.message)} <span class="faint">${esc(m.author)}${m.bot ? " (bot)" : ""}</span></div>`).join("")}</li>`).join("")}</ul>`) : ""}
     ${c.endpoints?.length ? section(`Endpoints · from the traces`, `<ul class="eps">${c.endpoints.map((o) => `<li><div class="mono small">${esc(o.op)}</div>
       <div class="num faint tiny">${o.rps} req/s · p50 ${o.p50_ms} ms · p99 ${o.p99_ms} ms${o.err ? ` · ${Math.round(100 * o.err)}% errors` : ""}</div>
       ${o.calls.length ? `<div class="tiny faint">→ ${o.calls.map((d) => `<span class="mono">${esc(d.service)}</span> ${esc(d.op)} <span class="num">${d.rps}/s</span>`).join("; ")}</div>` : ""}</li>`).join("")}</ul>`) : ""}

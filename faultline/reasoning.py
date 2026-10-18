@@ -67,6 +67,14 @@ def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | N
         add(h["spread_min"] <= 5, "timing", f"they started failing {h['spread_min']:g} min apart", _cite_alerts(s["evidence_alerts"]),
             round(w["simultaneity"] * f["simultaneity"], 3))
     contrib = lambda k: round(w[k] * f[k], 3)  # noqa: E731
+    if s["change"] and s["change"]["kind"] == "deploy":
+        shipped = (ranking.get("commits") or {}).get(s["change"]["id"])
+        if shipped and shipped["best"] and len(shipped["commits"]) > 1:
+            b = shipped["best"]
+            add(True, "commit", f"of the {len(shipped['commits'])} commits {s['change']['id']} shipped, {b['sha'][:7]} "
+                                f"\u201c{b['message']}\u201d changed the most request-path code ({b['code_lines']} lines)"
+                                + (f" and shares {', '.join(b['shared_words'][:3])} with the incident" if b["shared_words"] else ""),
+                [{"label": "Commit", "id": b["sha"]}])
     if s["change"]:
         ch = s["change"]
         if s["minutes_before"] < 0:
@@ -285,6 +293,8 @@ def telemetry(g: Graph, ranking: dict) -> dict:
 
 def build(g: Graph, ranking: dict) -> dict:
     ranking["telemetry"] = telemetry(g, ranking)
+    ranking["commits"] = {s["change"]["id"]: tools.commits_in(g, s["change"]["id"], ranking["incident"]["id"])
+                          for s in (ranking.get("suspects") or [])[:5] if s["change"] and s["change"]["kind"] == "deploy"}
     return {"hypotheses": hypotheses(ranking), "chain": causal_chain(g, ranking), "telemetry": ranking["telemetry"]}
 
 
@@ -322,7 +332,7 @@ def write(g: Graph, incident_id: str, reasoning: dict) -> dict:
                 CREATE (h)-[:{rel}]->(:Evidence {{id: e.id, kind: e.kind, text: e.text, weight: e.weight}})""", {"ev": rows})
     cites = [{"e": e["id"], **c} for e in ev for c in e["cites"]]
     for label, key in (("Alert", "id"), ("Change", "id"), ("Incident", "id"), ("Service", "name"), ("Operation", "id"),
-                       ("LogPattern", "id"), ("Node", "name"), ("Deployment", "name")):
+                       ("LogPattern", "id"), ("Node", "name"), ("Deployment", "name"), ("Commit", "sha")):
         rows = [c for c in cites if c["label"] == label]
         if rows:
             g.write(f"""

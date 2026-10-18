@@ -99,6 +99,13 @@ TOOL_SPECS: list[dict] = [
         "clearly ahead? If another suspect explains more and scores within 0.15, it takes over. Returns the verdict "
         "(upheld / upheld with doubts / overturned), each check, the final leader and a calibrated confidence."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "commits_in", "description": (
+        "The commits a deploy shipped, ranked by how much request-path code each changed and how many words it shares "
+        "with the incident (alerts, error logs, the deploy summary). Use it to say which commit inside a blamed deploy "
+        "to look at first."),
+     "input_schema": _obj({"change_id": S, "incident_id": S}, ["change_id"])},
+    {"name": "delivery_metrics", "description": "Per team: deploys per week, change failure rate, time to restore and lead time, from the graph.",
+     "input_schema": _obj({}, [])},
     {"name": "record_argument", "description": (
         "Write the judge's argument into the graph: every suspect as a Hypothesis (standing / overturned / rejected), "
         "the Evidence for and against each (the skeptic's checks run against all of them), each piece citing the "
@@ -133,6 +140,8 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
         "simulate_failure": lambda service: tools.simulate_failure(g, service),
         "challenge_leader": lambda incident_id: tools.challenge_leader(g, incident_id),
         "record_argument": lambda incident_id: record_argument(g, incident_id),
+        "commits_in": lambda change_id, incident_id=None: tools.commits_in(g, change_id, incident_id),
+        "delivery_metrics": lambda: tools.delivery_metrics(g),
         "argument": lambda incident_id: reasoning.argument(g, incident_id),
         "why": lambda alert_id: reasoning.why(g, alert_id),
         "experts": lambda service: tools.experts(g, service),
@@ -327,6 +336,9 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
         run("investigator", "failure_paths", f"Shortest call paths from {inc['symptom']} down to {top['service']} (SPpaths).",
             source=inc["symptom"], target=_svc(top))
         run("investigator", "similar_incidents", f"Look for resolved incidents caused on {_svc(top)}.", service=_svc(top))
+        if top["change"] and top["change"]["kind"] == "deploy":
+            run("investigator", "commits_in", f"Which of the commits {top['change']['id']} shipped to look at first.",
+                change_id=top["change"]["id"], incident_id=incident_id)
         words = (top["change"] or {}).get("summary") or f"{top['service']} " + " ".join(a["signal"] for a in top["evidence_alerts"][:2])
         ranking["memory_hits"] = run("investigator", "search_memory",
                                      "Full-text search of past lessons, changes and alerts for the same symptoms.",
@@ -506,7 +518,7 @@ people involved. The clock is frozen at {_hhmm(tools.now())} on 17 Oct 2026; tim
 
 ROLE_TOOLS = {
     "triage": ["get_incident", "past_investigations", "dependencies", "changes_near", "alerts_near", "write_handoff"],
-    "investigator": ["read_handoff", "rank_suspects", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
+    "investigator": ["read_handoff", "rank_suspects", "commits_in", "alert_clusters", "failure_paths", "alerts_near", "paths_between",
                      "similar_incidents", "shape_matches", "search_memory", "simulate_failure", "run_cypher",
                      "write_handoff"],
     "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",
@@ -534,7 +546,7 @@ ROLE_BRIEF = {
 ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "failure_paths", "similar_incidents",
              "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
              "failure_domains", "alert_clusters", "runbooks", "experts", "search_memory", "shape_matches",
-             "argument", "why", "run_cypher"]
+             "argument", "why", "commits_in", "delivery_metrics", "run_cypher"]
 
 
 def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,

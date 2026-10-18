@@ -431,3 +431,7 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .eps li { padding: 5px 0; border-bottom: 1px dashed var(--line); }
 .eps li .mono { word-break: break-all; }
 .tenants sup.real { font-size: 8.5px; letter-spacing: .04em; color: var(--green); margin-left: 3px; text-transform: uppercase; vertical-align: super; }
+.dtab { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.dtab th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11px; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+.dtab td { padding: 4px; border-bottom: 1px dashed var(--line); }
+.dtab td.warn { color: var(--amber); }

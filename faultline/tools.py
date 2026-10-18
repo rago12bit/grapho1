@@ -1437,7 +1437,7 @@ def company(g: Graph) -> dict:
         t["services"] = sorted(t["services"])
         t["on_call"] = [x for x in t["on_call"] if x]
     return {"teams": teams, "chokepoints": single_points_of_failure(g, 6), "domains": failure_domains(g),
-            "critical": critical_services(g, 6)}
+            "critical": critical_services(g, 6), "delivery": delivery_metrics(g)}
 
 
 def timeline(g: Graph, incident_id: str) -> dict:
@@ -1463,6 +1463,93 @@ def endpoints(g: Graph, service: str, limit: int = 12) -> list[dict]:
         RETURN o.id AS id, o.name AS op, o.rps AS rps, o.p50_ms AS p50_ms, o.p99_ms AS p99_ms, o.err AS err,
                collect(CASE WHEN d IS NULL THEN NULL ELSE {service: d.service, op: d.name, rps: c.rps, p99_ms: c.p99_ms} END)[..6] AS calls
         ORDER BY o.rps DESC LIMIT $n""", {"svc": service, "n": limit})
+
+
+_WORD = re.compile(r"[a-z][a-z0-9]{3,}")
+COMMON = {"with", "from", "into", "that", "this", "your", "when", "test", "tests", "docs", "bump", "main"}
+
+
+def _words(text: str) -> set[str]:
+    return {w for w in _WORD.findall((text or "").lower()) if w not in COMMON}
+
+
+def commits_in(g: Graph, change_id: str, incident_id: str | None = None) -> dict:
+    """Which commit inside a deploy most likely did it. Each commit the deploy shipped is ranked by how much
+    request-path code it changed (docs, tests and dependency files don't count), and by how many words it
+    shares with what the incident shows (the deploy's own summary, the alerts, new error logs). A heuristic,
+    and labelled as one: it orders the review, it doesn't convict."""
+    rows = g.read("""
+        MATCH (ch:Change {id: $id})-[:SHIPS]->(c:Commit)
+        RETURN c.sha AS sha, c.message AS message, c.files AS files, c.additions AS additions,
+               c.deletions AS deletions, c.code_lines AS code_lines, c.author AS author, c.at AS at,
+               ch.summary AS summary ORDER BY c.at""", {"id": change_id})
+    if not rows:
+        return {"change": change_id, "commits": [], "best": None}
+    context = _words(rows[0]["summary"])
+    if incident_id:
+        inc = get_incident(g, incident_id)
+        sym = inc["symptom"]
+        area = [sym] + [d["service"] for d in dependencies(g, sym)]
+        for a in alerts_near(g, area, inc["started"]):
+            context |= _words(a["signal"])
+        for lp in g.read("MATCH (l:LogPattern)-[:SEEN_IN]->(:Incident {id: $i}) RETURN l.template AS t", {"i": incident_id}):
+            context |= _words(lp["t"])
+    top_code = max((r["code_lines"] or 0) for r in rows) or 1
+    for r in rows:
+        words = _words(r["message"] + " " + " ".join(r["files"] or []))
+        r["shared_words"] = sorted(words & context)
+        r["code_share"] = round((r["code_lines"] or 0) / top_code, 3)
+        r["overlap"] = round(len(words & context) / max(1, min(len(words), len(context))), 3)
+        r["suspicion"] = round(0.6 * r["code_share"] + 0.4 * r["overlap"], 3)
+        del r["summary"]
+    rows.sort(key=lambda r: (-r["suspicion"], r["at"]))
+    return {"change": change_id, "commits": rows, "best": rows[0]}
+
+
+def delivery_metrics(g: Graph, days: int = 14, history_days: int = 90) -> list[dict]:
+    """Delivery metrics per team, all from the graph: deploys per week (last `days`), change failure rate (of the
+    deploys in the last `history_days`, those a resolved incident names as its root cause), time to restore
+    (resolved incidents on the team's services, same window) and lead time (first commit to deploy, where
+    commits are in the graph)."""
+    since, long_since = now() - days * 86400, now() - history_days * 86400
+    rows = g.read("""
+        MATCH (t:Team)<-[:OWNED_BY]-(s:Service)
+        OPTIONAL MATCH (d:Change {kind: 'deploy'})-[:CHANGED]->(s) WHERE d.at >= $long
+        WITH t, collect(DISTINCT d) AS all_deploys
+        WITH t, all_deploys, [d IN all_deploys WHERE d.at >= $since] AS deploys
+        OPTIONAL MATCH (i:Incident {status: 'resolved'})-[:ROOT_CAUSE]->(bad:Change {kind: 'deploy'}) WHERE bad IN all_deploys
+        WITH t, deploys, size(all_deploys) AS n_long, count(DISTINCT bad) AS failed
+        OPTIONAL MATCH (r:Incident {status: 'resolved'})-[:ROOT_CAUSE]->(:Change)-[:CHANGED]->(:Service)-[:OWNED_BY]->(t)
+        WHERE r.started >= $long
+        WITH t, deploys, n_long, failed, collect(DISTINCT r) AS restored
+        UNWIND (CASE WHEN size(deploys) = 0 THEN [null] ELSE deploys END) AS d
+        OPTIONAL MATCH (d)-[:SHIPS]->(c:Commit)
+        WITH t, deploys, n_long, failed, restored, d, min(c.at) AS first_commit
+        WITH t, size(deploys) AS n, n_long, failed, restored,
+             avg(CASE WHEN first_commit IS NULL THEN null ELSE d.at - first_commit END) AS lead_s
+        RETURN t.name AS team, n AS deploys, n_long AS deploys_90d, failed,
+               [x IN restored | x.resolved - x.started] AS restore_s, lead_s
+        ORDER BY team""", {"since": since, "long": long_since})
+    out = []
+    for r in rows:
+        rs = [x for x in r.pop("restore_s") if x is not None]
+        out.append({**r, "per_week": round(r["deploys"] * 7 / days, 1),
+                    "change_failure_rate": round(r["failed"] / r["deploys_90d"], 3) if r["deploys_90d"] else None,
+                    "restore_min": round(sum(rs) / len(rs) / 60, 1) if rs else None,
+                    "lead_min": round(r.pop("lead_s") / 60, 1) if r.get("lead_s") is not None else None})
+    return out
+
+
+def releases(g: Graph, service: str, limit: int = 6) -> list[dict]:
+    """The releases that changed this service, newest first: how many files and lines, and the commits whose
+    messages name it."""
+    return g.read("""
+        MATCH (v:Version)-[c:CHANGED]->(:Service {name: $svc})
+        OPTIONAL MATCH (v)-[:INCLUDES]->(m:Commit)-[:MENTIONS]->(:Service {name: $svc})
+        WITH v, c, [x IN collect(m {.sha, .message, .author, .bot}) WHERE x.sha IS NOT NULL][..4] AS commits
+        RETURN v.tag AS tag, v.at AS at, c.files AS files, c.code_files AS code_files, c.additions AS additions,
+               c.deletions AS deletions, commits
+        ORDER BY v.at DESC LIMIT $n""", {"svc": service, "n": limit})
 
 
 def runtime(g: Graph, service: str) -> dict | None:
@@ -1529,7 +1616,7 @@ def service_card(g: Graph, service: str) -> dict:
         "betweenness": chokes.get(service), "domain": domain,
         "changes": recent, "history": similar_incidents(g, service), "runbooks": runbooks(g, service),
         "alerting_now": open_, "endpoints": endpoints(g, service), "log_patterns": log_patterns(g, service),
-        "runtime": runtime(g, service),
+        "runtime": runtime(g, service), "releases": releases(g, service),
         "bot_commits": (g.read("MATCH (s:Service {name: $svc}) RETURN s.bot_commits AS n, s.bots AS b", {"svc": service})
                         or [{}])[0],
     }

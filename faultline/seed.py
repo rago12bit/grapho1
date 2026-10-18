@@ -133,6 +133,49 @@ def _changes_kestrel(rng: random.Random) -> list[dict]:
     return out
 
 
+# The commits behind Kestrel's planted deploys: one changes request-path code, the rest are docs, tests and
+# chores, so "which commit in this deploy did it?" has a real answer.
+PLANTED_COMMITS = {
+    "D-5201": [
+        ("validate tokens against the rotating JWKS cache", ["auth/jwt/validator.go", "auth/jwks/cache.go"], 300, 40),
+        ("table tests for expired and rotated keys", ["auth/jwt/validator_test.go"], 120, 0),
+        ("docs: JWKS rotation runbook", ["docs/jwks-rotation.md"], 30, 0),
+    ],
+    "D-5102": [
+        ("move promo banner copy to the CMS", ["cart/web/banner.tmpl", "cart/cms/client.go"], 45, 30),
+        ("bump CMS client to 2.3.1", ["go.mod", "go.sum"], 4, 4),
+    ],
+    "D-5103": [
+        ("export ranking feature v7", ["catalog/ranking/export.py"], 140, 60),
+        ("tests for v7 export", ["catalog/ranking/test_export.py"], 80, 0),
+    ],
+}
+
+
+def kestrel_commits(changes: list[dict]) -> list[dict]:
+    """1-3 commits behind every deploy, in the hour before it; the planted ones above, generic ones elsewhere."""
+    import re as _re
+    rng = random.Random(9)
+    out = []
+    for c in changes:
+        if c["kind"] != "deploy":
+            continue
+        planted = PLANTED_COMMITS.get(c["id"])
+        rows = planted or [(rng.choice(["refactor handler error paths", "add request metrics", "tidy logging",
+                                        "dependency bumps", "fix flaky test", "copy changes"]),
+                            [f"{c['service']}/{rng.choice(['handlers', 'api', 'internal', 'docs', 'tests'])}/"
+                             f"{rng.choice(['main', 'routes', 'client', 'README'])}.{rng.choice(['go', 'py', 'md'])}"],
+                            rng.randint(2, 120), rng.randint(0, 40)) for _ in range(rng.randint(1, 3))]
+        for k, (msg, files, add, dele) in enumerate(rows):
+            code = [f for f in files if not _re.search(r"(^|/)(docs?|tests?)/|_test\.|test_|\.md$|go\.(mod|sum)$", f)]
+            import hashlib
+            out.append({"change": c["id"], "service": c["service"], "sha": hashlib.sha1(f"{c['id']}/{k}".encode()).hexdigest()[:10],
+                        "message": f"{c['service']}: {msg}", "files": files, "additions": add, "deletions": dele,
+                        "code_lines": (add + dele) if code else 0, "author": c.get("author"),
+                        "at": c["at"] - (len(rows) - k) * 9 * MIN})
+    return out
+
+
 def _planted_kestrel() -> tuple[list[dict], list[dict], list[dict]]:
     """Changes, alerts and incidents with known answers. Times are relative to NOW."""
     changes = [
@@ -409,6 +452,9 @@ def _write_incidents(g: Graph, incidents: list[dict]) -> None:
 
 
 # Who approved each past fix: the on-call or senior engineer of the team that owned the broken service.
+# How long each past incident took to resolve, in minutes.
+RESTORE_MIN = {"INC-212": 95, "INC-188": 40, "INC-240": 70, "INC-197": 55, "INC-221": 30, "INC-230": 120,
+               "INC-251": 25, "INC-260": 45}
 APPROVERS = {"INC-212": "marta", "INC-188": "sam", "INC-240": "kenji", "INC-197": "ravi", "INC-221": "ade",
              "INC-230": "lin", "INC-251": "jo", "INC-260": "priya"}
 
@@ -418,7 +464,8 @@ def _write_history(g: Graph, history: list[dict]) -> None:
     for h in history:
         started = h.get("started") or NOW - h["days_ago"] * DAY
         rows.append({**h, "started": started, "cause_id": f"H-{h['id']}",
-                     "cause_at": h.get("cause_at") or started - 20 * MIN, "resolved": started + 50 * MIN,
+                     "cause_at": h.get("cause_at") or started - 20 * MIN,
+                     "resolved": started + RESTORE_MIN.get(h["id"], 50) * MIN,
                      "approver": h.get("approver") or APPROVERS.get(h["id"])})
     g.write("""
         UNWIND $rows AS h
@@ -706,7 +753,10 @@ def build(tenant: str, *, force: bool = False) -> dict:
         rng = random.Random(7)
         _write_org(g, KESTREL)
         changes, alerts, incidents = _planted_kestrel()
-        _write_changes(g, _changes_kestrel(rng) + changes)
+        every = _changes_kestrel(rng) + changes
+        _write_changes(g, every)
+        from . import delivery
+        delivery.write_commits(g, kestrel_commits(every))
         _write_alerts(g, alerts)
         _write_incidents(g, incidents)
         _write_history(g, _history_kestrel())
@@ -727,8 +777,10 @@ def build(tenant: str, *, force: bool = False) -> dict:
                               "started": NOW - 24 * MIN, "status": "open", "severity": "SEV2"}])
     elif tenant == "boutique" or tenant in RCAEVAL_TENANTS:
         _boutique(g) if tenant == "boutique" else _rcaeval_tenant(g, tenant)
-        from . import manifests
+        from . import delivery, manifests
         _write_runtime(g, manifests.load(tenant), manifests.SOURCES[tenant])
+        if tenant == "boutique":
+            delivery.write_boutique(g)
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])
