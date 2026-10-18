@@ -104,6 +104,12 @@ TOOL_SPECS: list[dict] = [
         "with the incident (alerts, error logs, the deploy summary). Use it to say which commit inside a blamed deploy "
         "to look at first."),
      "input_schema": _obj({"change_id": S, "incident_id": S}, ["change_id"])},
+    {"name": "journeys_hit", "description": "The user journeys (and their SLOs) that need any of these services: what customers can't do while they are failing.",
+     "input_schema": _obj({"services": {"type": "array", "items": S}}, ["services"])},
+    {"name": "slo_status", "description": "Each journey's SLO and how much of its 30-day error budget the incidents that broke it used.",
+     "input_schema": _obj({}, [])},
+    {"name": "on_call_at", "description": "Who was on call for a team at a given epoch time (from the shift rota, not who is on call now).",
+     "input_schema": _obj({"team": S, "at": {"type": "integer"}}, ["team", "at"])},
     {"name": "delivery_metrics", "description": "Per team: deploys per week, change failure rate, time to restore and lead time, from the graph.",
      "input_schema": _obj({}, [])},
     {"name": "record_argument", "description": (
@@ -142,6 +148,9 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
         "record_argument": lambda incident_id: record_argument(g, incident_id),
         "commits_in": lambda change_id, incident_id=None: tools.commits_in(g, change_id, incident_id),
         "delivery_metrics": lambda: tools.delivery_metrics(g),
+        "journeys_hit": lambda services: tools.journeys_hit(g, services),
+        "slo_status": lambda: tools.slo_status(g),
+        "on_call_at": lambda team, at: tools.on_call_at(g, team, at),
         "argument": lambda incident_id: reasoning.argument(g, incident_id),
         "why": lambda alert_id: reasoning.why(g, alert_id),
         "experts": lambda service: tools.experts(g, service),
@@ -257,6 +266,11 @@ def _narrate(ranking: dict, books: list[dict] | None = None) -> dict:
             f"{', '.join(d['teams'])} ({len(set(d['services']) & set(fp['explained']))} alerting)" for d in doms))
     for b in (books or [])[:1]:
         ev.append(f"Runbook {b['id']} “{b['title']}”: " + "; ".join(b["steps"][:3]))
+    burning = [j for j in (ranking.get("impact") or {}).get("journeys") or [] if j.get("burned_share")]
+    if burning:
+        ev.append("User journeys hit: " + "; ".join(
+            f"{j['journey']} (SLO {100 * j['slo']:g}%: {round(100 * j['burned_share'])}% of its 30-day error budget so far)"
+            for j in burning[:3]))
     rec = (top.get("recommended_action") or {}).get("track_record")
     if rec:
         ev.append("Fix track record: " + rec["note"])
@@ -523,7 +537,7 @@ ROLE_TOOLS = {
                      "write_handoff"],
     "skeptic": ["read_handoff", "challenge_leader", "alert_clusters", "alerts_near", "paths_between", "record_argument",
                 "write_handoff"],
-    "responder": ["read_handoff", "argument", "why", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
+    "responder": ["read_handoff", "argument", "why", "journeys_hit", "on_call_at", "who_owns", "experts", "runbooks", "blast_radius", "single_points_of_failure",
                   "failure_domains", "propose_action", "submit_findings"],
 }
 ROLE_BRIEF = {
@@ -546,7 +560,7 @@ ROLE_BRIEF = {
 ASK_TOOLS = ["get_incident", "rank_suspects", "dependencies", "paths_between", "failure_paths", "similar_incidents",
              "who_owns", "blast_radius", "simulate_failure", "critical_services", "single_points_of_failure",
              "failure_domains", "alert_clusters", "runbooks", "experts", "search_memory", "shape_matches",
-             "argument", "why", "commits_in", "delivery_metrics", "run_cypher"]
+             "argument", "why", "commits_in", "delivery_metrics", "journeys_hit", "slo_status", "on_call_at", "run_cypher"]
 
 
 def run_claude(tenant: str, prompt: str, incident_id: str | None, role: str | None = None,

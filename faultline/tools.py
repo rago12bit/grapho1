@@ -1476,6 +1476,76 @@ def shape_matches(g: Graph, incident_id: str, k: int = 4) -> dict:
 
 # --- blast radius, per affected service ----------------------------------------------------------------
 
+SLO_WINDOW_DAYS = 30
+
+
+def journeys_hit(g: Graph, services: list[str], started: int | None = None, until: int | None = None) -> list[dict]:
+    """The user journeys that need any of `services`, busiest first; for a journey with an SLO, how much of its
+    30-day error budget this incident has used so far (minutes the journey was failing over the minutes it may)."""
+    rows = g.read("""
+        MATCH (j:Journey)-[:USES]->(s:Service) WHERE s.name IN $svcs
+        WITH j, collect(DISTINCT s.name) AS hit
+        MATCH (j)-[:USES]->(all:Service)
+        RETURN j.name AS journey, j.slo AS slo, j.rps AS rps, j.source AS source, hit, count(DISTINCT all) AS uses
+        ORDER BY j.rps DESC""", {"svcs": services})
+    for r in rows:
+        r["hit"] = sorted(r["hit"])
+        if r["slo"] and started:
+            budget = (1 - r["slo"]) * SLO_WINDOW_DAYS * 24 * 60
+            burned = max(0.0, ((until or now()) - started) / 60)
+            r["budget_min"] = round(budget, 1)
+            r["burned_min"] = round(burned, 1)
+            r["burned_share"] = round(burned / budget, 3) if budget else None
+    return rows
+
+
+def on_call_at(g: Graph, team: str, at: int) -> dict | None:
+    """Who was on call for a team at a given time, from the shift graph (not who is on call now)."""
+    rows = g.read("""
+        MATCH (p:Person)-[:ON_SHIFT]->(s:OnCallShift)-[:COVERS]->(t:Team {name: $team})
+        WHERE s.from <= $at AND $at < s.to
+        RETURN p.handle AS handle, p.name AS name, s.from AS from, s.to AS to ORDER BY s.from DESC LIMIT 1""",
+                  {"team": team, "at": at})
+    return rows[0] if rows else None
+
+
+def _cause_services(g: Graph, incident: dict) -> list[str]:
+    """Where an incident's failure was: the root cause it was closed with, or for an open one the judge's
+    current leader (a shared host stands for the services it runs)."""
+    if incident["status"] == "resolved":
+        rows = g.read("""MATCH (:Incident {id: $id})-[:ROOT_CAUSE]->(:Change)-[:CHANGED]->(s:Service)
+                         RETURN s.name AS s""", {"id": incident["id"]})
+        return [r["s"] for r in rows]
+    sus = rank_suspects(g, incident["id"], limit=1)["suspects"]
+    if not sus:
+        return []
+    return sus[0]["host"]["services"] if sus[0]["type"] == "host" else [sus[0]["service"]]
+
+
+def slo_status(g: Graph) -> list[dict]:
+    """Each journey with an SLO, its 30-day error budget, and what the incidents that broke it used. An incident
+    counts against a journey when the journey needs the service the failure was in (not merely the service
+    where it was noticed), for as long as it lasted: an upper bound, since not every request failed."""
+    journeys = g.read("""
+        MATCH (j:Journey)-[:USES]->(s:Service) WHERE j.slo IS NOT NULL
+        RETURN j.name AS journey, j.slo AS slo, j.rps AS rps, collect(s.name) AS uses ORDER BY j.rps DESC""")
+    if not journeys:
+        return []
+    since = now() - SLO_WINDOW_DAYS * 86400
+    incs = g.read("""MATCH (i:Incident) WHERE i.started >= $since
+                     RETURN i.id AS id, i.status AS status, i.started AS started, i.resolved AS resolved""", {"since": since})
+    causes = {i["id"]: set(_cause_services(g, i)) for i in incs}
+    out = []
+    for j in journeys:
+        hit = [i for i in incs if causes[i["id"]] & set(j["uses"])]
+        budget = (1 - j["slo"]) * SLO_WINDOW_DAYS * 24 * 60
+        used = sum(((i["resolved"] or now()) - i["started"]) / 60 for i in hit)
+        out.append({"journey": j["journey"], "slo": j["slo"], "rps": j["rps"], "budget_min": round(budget, 1),
+                    "used_min": round(used, 1), "remaining_share": round(max(0.0, 1 - used / budget), 3),
+                    "incidents": [{"id": i["id"], "status": i["status"]} for i in sorted(hit, key=lambda x: x["started"])]})
+    return out
+
+
 def impact(g: Graph, service: str, incident_id: str | None = None, limit: int = 6) -> dict:
     """Who a failure of `service` reaches, one block per affected caller: the call path that carries the failure
     up to it, whether it faces the internet, who owns it and who is on call, and whether it is alerting now."""
@@ -1490,12 +1560,18 @@ def impact(g: Graph, service: str, incident_id: str | None = None, limit: int = 
                size([(x:Service)-[:CALLS]->(u) | x]) AS callers
         ORDER BY exposed DESC, hops""", {"svc": service})
     alerting = set()
+    started = resolved = None
     if incident_id:
         inc = get_incident(g, incident_id)
+        started = inc["started"]
+        resolved = (g.read("MATCH (i:Incident {id: $id}) RETURN i.resolved AS r", {"id": incident_id}) or [{}])[0].get("r")
         alerting = {a["service"] for a in alerts_near(g, [r["service"] for r in rows], inc["started"])}
+        for r in rows:
+            then = on_call_at(g, r["team"], started)
+            r["on_call_then"] = then["name"] if then else None
     blocks = [{**r, "path": list(reversed(r["path"])), "alerting": r["service"] in alerting} for r in rows]
     return {"service": service, "affected": len(rows), "exposed": sum(1 for r in rows if r["exposed"]),
-            "blocks": blocks[:limit]}
+            "blocks": blocks[:limit], "journeys": journeys_hit(g, [service], started, resolved)}
 
 
 def company(g: Graph) -> dict:
@@ -1512,7 +1588,7 @@ def company(g: Graph) -> dict:
         t["services"] = sorted(t["services"])
         t["on_call"] = [x for x in t["on_call"] if x]
     return {"teams": teams, "chokepoints": single_points_of_failure(g, 6), "domains": failure_domains(g),
-            "critical": critical_services(g, 6), "delivery": delivery_metrics(g)}
+            "critical": critical_services(g, 6), "delivery": delivery_metrics(g), "slo": slo_status(g)}
 
 
 def timeline(g: Graph, incident_id: str) -> dict:

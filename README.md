@@ -40,7 +40,8 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
     | Train Ticket (26) | 21 | 21 | 0.096 → 0.075 |
 
     Small gains in top-1 and clearly better calibration: when the learned model says 0.9 it is right about 0.9 of the time (the Memory tab shows the calibration bins). Services that alert in every incident and are rarely the cause (Online Boutique's `redis`) get a low track record and stop crowding the top. One cost found and not hidden: on Train Ticket the skeptic, whose takeover margin was set for hand scores, overturns four learned leaders and brings 21 down to 19. The RCAEval numbers above are the judge without any history (each case is its own graph); this is what history adds.
-13. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
+13. **Impact in customers' terms, and who was on call then.** `Journey` nodes say what a customer does and which services it needs. Train Ticket's 14 and Online Boutique's 11 come from the traces (each request entering the system and everything its calls reach; a client span that names an uninstrumented service, like `hipstershop.CartService/GetCart`, adds it and its datastore), with no SLO invented. Kestrel's six carry SLOs, so a case file says "checkout: 38 of 43.2 minutes of its 30-day error budget gone", and the Company tab keeps a 30-day budget per journey that charges an incident only to journeys needing the service the failure was *in*, not where it was noticed. A weekly on-call rota (`OnCallShift`) answers who was on call when it started, not just now.
+14. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
 Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**, **03 Company Brain**.
@@ -135,6 +136,8 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 (:Deployment)-[:READS {value}]->(:ConfigKey)<-[:SETS]-(:Change)   (:Deployment)-[:USES_CONFIG|USES_SECRET]->(:ConfigMap|:Secret)
 (:Deployment)-[:HAS_POD]->(:Pod)-[:ON_NODE]->(:Node)-[:IN_ZONE]->(:Zone)   (:Node)-[:OWNED_BY]->(:Team)
 (:Change {kind: 'deploy'})-[:SHIPS]->(:Commit {sha, message, code_lines})-[:TOUCHED]->(:Service)   (:Person)-[:AUTHORED]->(:Commit)
+(:Journey {slo, rps})-[:USES]->(:Service)   (:Journey)-[:STARTS_AT]->(:Operation)
+(:Person)-[:ON_SHIFT]->(:OnCallShift {from, to})-[:COVERS]->(:Team)
 (:Feedback {verdict, by, note})-[:ABOUT]->(:Incident)   (:Model {kind, weights, enabled, evaluation})   # learned from outcomes
 (:Version {tag})-[:INCLUDES]->(:Commit)-[:MENTIONS]->(:Service)   (:Version)-[:CHANGED {files, additions}]->(:Service)   (:Image)-[:BUILT_FROM]->(:Version)
 ```

@@ -33,6 +33,11 @@ function renderShell() {
       <div class="t1"><b>${esc(t.team)}</b><span class="faint small">${plural(t.people, "person", "people")}</span></div>
       <div class="small">on call: ${t.on_call.map(esc).join(", ") || "<span class='faint'>nobody</span>"}</div>
       <div class="mono tiny faint">${t.services.map(esc).join(" · ")}</div></button></li>`).join("")}</ul>`)}
+    ${org.slo?.length ? section("SLOs · 30-day error budget", `<ul class="journeys">${org.slo.map((j) => `<li>
+      <div><b>${esc(j.journey)}</b> <span class="label faint">SLO ${(100 * j.slo).toFixed(j.slo >= 0.999 ? 2 : 1)}%</span> <span class="num faint">${j.used_min} of ${j.budget_min} min used</span></div>
+      <div class="meter ${j.remaining_share <= 0 ? "bad-meter" : j.remaining_share < 0.5 ? "warn-meter" : "ok-meter"}"><i style="width:${Math.round(100 * (1 - j.remaining_share))}%"></i></div>
+      <div class="tiny faint">${j.incidents.length ? j.incidents.map((i) => `${esc(i.id)}${i.status === "resolved" ? "" : " (open)"}`).join(", ") : "no incidents"}</div></li>`).join("")}</ul>
+      <p class="faint small">An incident counts against a journey when the journey needs the service the failure was in, for as long as it lasted (an upper bound).</p>`) : ""}
     ${org.delivery?.some((d) => d.deploys) ? section("Delivery · from the graph", `<table class="dtab"><thead><tr><th>team</th><th>deploys/wk</th><th>change failure</th><th>restore</th><th>lead time</th></tr></thead><tbody>
       ${org.delivery.filter((d) => d.deploys || d.deploys_90d).map((d) => `<tr><td>${esc(d.team)}</td><td class="num">${d.per_week}</td>
         <td class="num ${d.change_failure_rate > 0.05 ? "warn" : ""}">${d.change_failure_rate == null ? "–" : `${Math.round(100 * d.change_failure_rate)}% <span class="faint">(${d.failed}/${d.deploys_90d})</span>`}</td>

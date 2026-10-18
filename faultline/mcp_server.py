@@ -74,6 +74,16 @@ def delivery_metrics() -> str:
     return _call("delivery_metrics")
 
 
+@server.tool(description="User journeys (and SLOs) that need any of these services.")
+def journeys_hit(services: list[str]) -> str:
+    return _call("journeys_hit", services=services)
+
+
+@server.tool(description="Each journey's SLO and the 30-day error budget its incidents used.")
+def slo_status() -> str:
+    return _call("slo_status")
+
+
 @server.tool(description="Services a service depends on, with hop counts.")
 def dependencies(service: str, max_hops: int = 5) -> str:
     return _call("dependencies", service=service, max_hops=max_hops)

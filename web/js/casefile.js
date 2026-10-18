@@ -227,12 +227,22 @@ function impactHtml(r) {
       <dl class="facts tight">
         <dt class="label">Reached via</dt><dd>${chain(b.path, false)}</dd>
         <dt class="label">Distance</dt><dd>${plural(b.hops, "hop")} above ${esc(im.service)} · tier ${esc(b.tier)}</dd>
-        <dt class="label">Owners</dt><dd>${esc(b.team)}${b.on_call ? ` · on call ${esc(b.on_call)}` : ""}</dd>
+        <dt class="label">Owners</dt><dd>${esc(b.team)}${b.on_call ? ` · on call ${esc(b.on_call)}` : ""}${b.on_call_then && b.on_call_then !== b.on_call ? ` <span class="faint">(${esc(b.on_call_then)} was on call when it started)</span>` : ""}</dd>
         <dt class="label">Callers</dt><dd>${b.callers} upstream</dd>
       </dl>
     </div>`).join("");
-  return section(`Blast radius · ${plural(im.affected, "service")} reached`, blocks,
+  return journeysHtml(im) + section(`Blast radius · ${plural(im.affected, "service")} reached`, blocks,
     `<span class="label ${im.exposed ? "warn" : "faint"}">${im.exposed} internet-facing</span>`);
+}
+
+function journeysHtml(im) {
+  const js = im.journeys || [];
+  if (!js.length) return "";
+  return section(`User journeys hit · ${js.length}`, `<ul class="journeys">${js.slice(0, 8).map((j) => `<li>
+      <div><b>${esc(j.journey)}</b> <span class="num faint">${j.rps} req/s</span>${j.slo ? ` <span class="label faint">SLO ${(100 * j.slo).toFixed(j.slo >= 0.999 ? 2 : 1)}%</span>` : ""}</div>
+      ${j.burned_share != null ? `<div class="meter ${j.burned_share >= 1 ? "bad-meter" : j.burned_share >= 0.5 ? "warn-meter" : "ok-meter"}"><i style="width:${Math.min(100, Math.round(100 * j.burned_share))}%"></i></div>
+        <div class="tiny faint">${j.burned_min} of ${j.budget_min} min of the 30-day error budget, if every request failed since it started</div>` : `<div class="tiny faint">needs ${esc(j.hit.join(", "))} · ${j.uses} services in all${j.source === "traces" ? " · from the traces" : ""}</div>`}
+    </li>`).join("")}</ul>`, `<span class="label faint">${esc(im.service)} failing</span>`);
 }
 
 function timelineHtml(t, r) {

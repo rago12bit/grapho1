@@ -414,6 +414,93 @@ def _write_runtime(g: Graph, deployments: list[dict], source: str, nodes: list[t
             CREATE (x)-[:HAS_POD]->(:Pod {name: p.name})-[:ON_NODE]->(n)""", {"pods": pods})
 
 
+# --- people's shifts, user journeys and SLOs --------------------------------------------------------------------
+
+# Kestrel's journeys: what a customer does, the services it needs, and the SLO it is held to (availability over
+# 30 days). Synthetic, like everything at Kestrel.
+KESTREL_JOURNEYS = [
+    ("checkout", 0.999, 42.0, ["web-frontend", "api-gateway", "checkout", "cart", "pricing", "inventory", "payments",
+                               "payments-db", "fraud-scoring", "feature-store", "ledger", "ledger-db", "stripe-api"]),
+    ("sign-in", 0.9995, 120.0, ["web-frontend", "mobile-bff", "api-gateway", "auth", "users", "users-db", "session-redis"]),
+    ("search", 0.995, 310.0, ["web-frontend", "api-gateway", "search", "catalog", "catalog-es"]),
+    ("account", 0.999, 55.0, ["web-frontend", "mobile-bff", "api-gateway", "users", "users-db"]),
+    ("refunds", 0.999, 3.5, ["payments", "payments-db", "ledger", "ledger-db"]),
+    ("order emails", 0.99, 40.0, ["checkout", "notifications", "events-kafka", "sendgrid"]),
+]
+SHIFT_WEEKS = 8
+
+
+def _write_journeys(g: Graph, journeys: list[tuple]) -> None:
+    g.write("""
+        UNWIND $j AS j
+        CREATE (x:Journey {name: j[0], slo: j[1], rps: j[2], source: 'synthetic'})
+        WITH x, j UNWIND j[3] AS svc MATCH (s:Service {name: svc}) CREATE (x)-[:USES]->(s)""",
+            {"j": [list(x) for x in journeys]})
+
+
+def derive_journeys(g: Graph, min_rps: float = 0.05) -> int:
+    """Journeys from the traces: every operation nothing else calls (a request entering the system) with real
+    traffic is one, and it uses every service its calls reach. When a single entry operation fronts everything
+    (Online Boutique's frontend), its direct downstream calls are the journeys instead. No SLO is invented."""
+    roots = g.read("""
+        MATCH (o:Operation) WHERE NOT ()-[:CALLS]->(o) AND o.rps >= $min
+        OPTIONAL MATCH (s:Service {name: o.service})
+        RETURN o.id AS id, o.service AS service, o.name AS name, o.rps AS rps, s.internet_exposed AS exposed
+        ORDER BY o.rps DESC""", {"min": min_rps})
+    out = []
+    for r in roots:
+        if r["exposed"]:
+            # the internet-facing entry point names one catch-all operation: its own calls are the journeys
+            out += g.read("""
+                MATCH (:Operation {id: $id})-[c:CALLS]->(o:Operation) WHERE c.rps >= $min
+                RETURN o.id AS id, o.service AS service, o.name AS name, c.rps AS rps ORDER BY c.rps DESC""",
+                          {"id": r["id"], "min": min_rps})
+        else:
+            out.append(r)
+    roots = out
+    services = [x["s"] for x in g.read("MATCH (s:Service) RETURN s.name AS s")]
+    for r in roots:
+        # a client span names the service it calls ("hipstershop.CartService/GetCart"): that service, and what it
+        # calls, are part of the journey even where the traces stop
+        named = [x for x in services if x.replace("-", "").lower() in r["name"].replace("-", "").lower().split("/")[0]]
+        g.write("""
+            MATCH (o:Operation {id: $id})
+            CREATE (j:Journey {name: $name, rps: $rps, slo: null, source: 'traces'})-[:STARTS_AT]->(o)
+            WITH j, o
+            OPTIONAL MATCH (o)-[:CALLS*1..8]->(d:Operation)
+            WITH j, o, collect(DISTINCT d.service) AS below
+            WITH j, below + [o.service] AS svcs
+            UNWIND svcs AS svc MATCH (s:Service {name: svc}) MERGE (j)-[:USES]->(s)""",
+                {"id": r["id"], "name": f"{r['service']}: {r['name']}"[:120], "rps": r["rps"]})
+        if named:
+            g.write("""
+                MATCH (j:Journey {name: $name})
+                UNWIND $named AS n MATCH (s:Service {name: n})
+                MERGE (j)-[:USES]->(s)
+                WITH j, s OPTIONAL MATCH (s)-[:CALLS*1..3]->(d:Service)
+                WITH j, collect(DISTINCT d) AS ds
+                UNWIND ds AS d MERGE (j)-[:USES]->(d)""", {"name": f"{r['service']}: {r['name']}"[:120], "named": named})
+    return len(roots)
+
+
+def _write_shifts(g: Graph) -> None:
+    """Weekly on-call rotations for the last SHIFT_WEEKS weeks: each team's members take turns, ending with the
+    person on call now. (:Person)-[:ON_SHIFT]->(:OnCallShift {from, to})-[:COVERS]->(:Team)."""
+    week = 7 * DAY
+    start_now = NOW - (NOW - int(datetime(2026, 10, 12, 9, 0, tzinfo=timezone.utc).timestamp())) % week
+    rows = []
+    for team in KESTREL["teams"]:
+        people = [h for h, _, t, _ in KESTREL["people"] if t == team]
+        now_on = next(h for h, _, t, oc in KESTREL["people"] if t == team and oc)
+        order = [now_on] + [h for h in people if h != now_on]
+        for k in range(SHIFT_WEEKS):
+            rows.append({"team": team, "who": order[k % len(order)], "from": start_now - k * week,
+                         "to": start_now - (k - 1) * week})
+    g.write("""
+        UNWIND $r AS r MATCH (p:Person {handle: r.who}), (t:Team {id: r.team})
+        CREATE (p)-[:ON_SHIFT]->(:OnCallShift {from: r.from, to: r.to})-[:COVERS]->(t)""", {"r": rows})
+
+
 def _link_config_changes(g: Graph) -> None:
     """A config change sets a key; every deployment that reads that key is exposed to it."""
     g.write("""
@@ -763,6 +850,8 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _write_runbooks(g, RUNBOOKS_KESTREL)
         _write_runtime(g, kestrel_runtime(), "synthetic", KESTREL_NODES, "platform")
         _link_config_changes(g)
+        _write_journeys(g, KESTREL_JOURNEYS)
+        _write_shifts(g)
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])
@@ -779,6 +868,7 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _boutique(g) if tenant == "boutique" else _rcaeval_tenant(g, tenant)
         from . import delivery, manifests
         _write_runtime(g, manifests.load(tenant), manifests.SOURCES[tenant])
+        derive_journeys(g)
         if tenant == "boutique":
             delivery.write_boutique(g)
         # learn the silent-failure weights from this company's solved incidents (enabled only if they hold up in
