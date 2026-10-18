@@ -78,11 +78,11 @@ Kestrel Pay and Harbor Freight are synthetic. **Online Boutique, Sock Shop and T
 docker compose up -d --build
 ```
 
-- UI: http://localhost:8090
+- Overview: http://localhost:8090 · incident room: http://localhost:8090/app
 - FalkorDB browser: http://localhost:3003 (graph `faultline_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
 
-The graphs are built on first start. **Reset** in the header rebuilds them. **Guided demo** (or http://localhost:8090/?demo=1) plays the whole story on the live app with captions.
+The graphs are built on first start. **Reset** in the header rebuilds them. **Guided demo** (or http://localhost:8090/app?demo=1) plays the whole story on the live app with captions.
 
 ### The app
 

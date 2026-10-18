@@ -1,58 +1,60 @@
-/* Faultline: a case file on warm paper-dark. Square corners, hairline rules, serif for verdicts, mono for facts. */
+/* Faultline: a case file on near-black. Hairline rules, a heavy display face for verdicts, mono for facts. */
 :root {
-  --bg: #15140f;
-  --panel: #1a1913;
-  --sunk: #100f0b;
-  --line: #2b2920;
-  --line-2: #3a372c;
-  --text: #ece7d9;
-  --muted: #a9a391;
-  --dim: #716c5d;
-  --accent: #ef6a55;
-  --accent-soft: rgba(239, 106, 85, .1);
-  --cream: #ece7d9;
-  --amber: #e2b04a;
-  --green: #6fbf8a;
-  --blue: #8fb3d9;
+  --bg: #09090b;
+  --panel: #111114;
+  --sunk: #060607;
+  --line: #222228;
+  --line-2: #2e2e36;
+  --text: #f4f4f5;
+  --muted: #a1a1aa;
+  --dim: #71717a;
+  --accent: #ff6b4a;
+  --accent-soft: rgba(255, 107, 74, .1);
+  --cream: #f4f4f5;
+  --amber: #ffb347;
+  --green: #6ee7b7;
+  --blue: #93c5fd;
+  --grad: linear-gradient(92deg, #ff6b4a, #ffb347);
+  --radius: 14px;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  --serif: "Newsreader", Georgia, "Times New Roman", serif;
-  --on-cream: #15140f;
-  --on-cream-line: rgba(21, 20, 15, .3);
-  --on-accent: #1a0f0c;
-  --accent-line: rgba(239, 106, 85, .45);
-  --green-line: rgba(111, 191, 138, .4);
-  --green-soft: rgba(111, 191, 138, .08);
-  --amber-soft: rgba(226, 176, 74, .08);
-  --overlay: rgba(21, 20, 15, .93);
-  --symptom-bg: #211510;
-  --node-bg: #15140f;
-  --node-line: #3a372c;
-  --node-text: #a9a391;
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: "Inter Tight", "Inter", system-ui, sans-serif;   /* the display face: verdicts, headings, big numbers */
+  --on-cream: #09090b;
+  --on-cream-line: rgba(9, 9, 11, .3);
+  --on-accent: #1a0d07;
+  --accent-line: rgba(255, 107, 74, .45);
+  --green-line: rgba(110, 231, 183, .4);
+  --green-soft: rgba(110, 231, 183, .07);
+  --amber-soft: rgba(255, 179, 71, .07);
+  --overlay: rgba(9, 9, 11, .93);
+  --symptom-bg: #24110b;
+  --node-bg: #111114;
+  --node-line: #2e2e36;
+  --node-text: #a1a1aa;
   color-scheme: dark;
 }
 
-/* Light: warm paper and dark ink. The OS decides unless the header toggle picked one (data-theme). */
+/* Light: white and dark ink. The OS decides unless the header toggle picked one (data-theme). */
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --bg: #f6f2e8; --panel: #efe9db; --sunk: #e8e1d0; --line: #ddd5c2; --line-2: #c4b9a1;
-    --text: #1d1b16; --muted: #565144; --dim: #7a735f; --accent: #b83a26; --accent-soft: rgba(184, 58, 38, .08);
+    --bg: #fafafa; --panel: #f4f4f5; --sunk: #ececee; --line: #e4e4e7; --line-2: #d4d4d8;
+    --text: #18181b; --muted: #52525b; --dim: #71717a; --accent: #c2410c; --accent-soft: rgba(184, 58, 38, .08);
     --cream: #1d1b16; --amber: #8a5d00; --green: #2b7448; --blue: #2c5b8a;
-    --on-cream: #f6f2e8; --on-cream-line: rgba(246, 242, 232, .35); --on-accent: #fff8f0;
+    --on-cream: #fafafa; --on-cream-line: rgba(250, 250, 250, .35); --on-accent: #fff8f0;
     --accent-line: rgba(184, 58, 38, .4); --green-line: rgba(43, 116, 72, .35); --green-soft: rgba(43, 116, 72, .07);
-    --amber-soft: rgba(138, 93, 0, .07); --overlay: rgba(246, 242, 232, .94); --symptom-bg: #f7dcd4;
-    --node-bg: #fbf8f1; --node-line: #c4b9a1; --node-text: #565144;
+    --amber-soft: rgba(138, 93, 0, .07); --overlay: rgba(250, 250, 250, .94); --symptom-bg: #fde4d8;
+    --node-bg: #ffffff; --node-line: #d4d4d8; --node-text: #52525b; --grad: linear-gradient(92deg, #c2410c, #b45309); --radius: 14px;
     color-scheme: light;
   }
 }
 :root[data-theme="light"] {
-  --bg: #f6f2e8; --panel: #efe9db; --sunk: #e8e1d0; --line: #ddd5c2; --line-2: #c4b9a1;
-  --text: #1d1b16; --muted: #565144; --dim: #7a735f; --accent: #b83a26; --accent-soft: rgba(184, 58, 38, .08);
+  --bg: #fafafa; --panel: #f4f4f5; --sunk: #ececee; --line: #e4e4e7; --line-2: #d4d4d8;
+  --text: #18181b; --muted: #52525b; --dim: #71717a; --accent: #c2410c; --accent-soft: rgba(184, 58, 38, .08);
   --cream: #1d1b16; --amber: #8a5d00; --green: #2b7448; --blue: #2c5b8a;
-  --on-cream: #f6f2e8; --on-cream-line: rgba(246, 242, 232, .35); --on-accent: #fff8f0;
+  --on-cream: #fafafa; --on-cream-line: rgba(250, 250, 250, .35); --on-accent: #fff8f0;
   --accent-line: rgba(184, 58, 38, .4); --green-line: rgba(43, 116, 72, .35); --green-soft: rgba(43, 116, 72, .07);
-  --amber-soft: rgba(138, 93, 0, .07); --overlay: rgba(246, 242, 232, .94); --symptom-bg: #f7dcd4;
-  --node-bg: #fbf8f1; --node-line: #c4b9a1; --node-text: #565144;
+  --amber-soft: rgba(138, 93, 0, .07); --overlay: rgba(250, 250, 250, .94); --symptom-bg: #fde4d8;
+  --node-bg: #ffffff; --node-line: #d4d4d8; --node-text: #52525b; --grad: linear-gradient(92deg, #c2410c, #b45309); --radius: 14px;
   color-scheme: light;
 }
 
@@ -464,3 +466,21 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .fixproof.bad { border-left-color: var(--accent); }
 .label.bad { color: var(--accent); }
 .start .loop { margin: 6px 0 12px; padding-left: 20px; display: grid; gap: 5px; font-size: 14px; }
+
+/* ---- modern dark layer: pill controls, rounded case panels, heavy display type (same look as the landing page) */
+.btn { border-radius: 999px; padding: 6px 14px; transition: border-color .15s, background .15s, transform .15s; }
+.btn.solid:hover { background: #fff; border-color: #fff; }
+.btn.solid.hot { background: var(--grad); border: 0; padding: 7px 15px; }
+.top { background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(12px); }
+@media (min-width: 1101px) { .top { height: 56px; } .layout { height: calc(100vh - 56px); } }
+.top .name { font-weight: 800; letter-spacing: -.02em; font-size: 17px; }
+.db, .proof { border: 1px solid var(--line-2); border-radius: 999px; padding: 3px 10px; }
+.tenants button[aria-current="true"], .tab[aria-selected="true"] { border-bottom-color: var(--accent); }
+.start h1 { font-weight: 800; letter-spacing: -.03em; font-size: 38px; line-height: 1.02; }
+.verdict-word { font-weight: 800; letter-spacing: -.035em; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.headline { font-family: var(--sans); font-weight: 500; letter-spacing: -.01em; }
+.tile .n { font-weight: 800; letter-spacing: -.03em; }
+.bench-big .serif { font-weight: 800; letter-spacing: -.03em; }
+.lesson { font-style: normal; font-family: var(--sans); }
+.hyp { border-radius: var(--radius); }
+.hyp { padding: 10px 14px; }

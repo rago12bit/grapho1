@@ -37,7 +37,7 @@ await page.addInitScript(() => {
     window.addEventListener("mouseup", () => { c.style.transform = "translate(-50%,-50%)"; });
   });
 });
-await page.goto(APP);
+await page.goto(`${APP}/app`);
 await page.waitForSelector("#incident-list button");
 await sleep(800);
 

@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 145, "planted": "94.5–96.8%", "real": "288/360"}
+PROOF = {"tests": 148, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -493,5 +493,10 @@ app.mount("/static", StaticFiles(directory=WEB), name="static")
 
 
 @app.get("/")
+def landing():
+    return FileResponse(WEB / "landing.html")
+
+
+@app.get("/app")
 def index():
     return FileResponse(WEB / "index.html")

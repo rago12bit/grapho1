@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Faultline</title>
+  <meta name="description" content="An on-call agent whose reasoning lives in a FalkorDB graph: it traces the outage, argues every suspect, proves the fix on a copy of the graph, and checks it worked.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/landing.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+</head>
+<body>
+  <header class="nav">
+    <a class="brand" href="/"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg><span>Faultline</span></a>
+    <nav class="links" aria-label="Sections">
+      <a href="/app">Incident room</a>
+      <a href="#loop">How it works</a>
+      <a href="#results">Results</a>
+      <a href="#brain">Company brain</a>
+      <a href="#run">Run it</a>
+    </nav>
+    <span class="status"><i></i><span id="db">FalkorDB · connecting</span></span>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="kicker"><i class="dot"></i> 13:40 UTC · SEV1 · 30% of mobile logins failing</p>
+        <h1>What broke.<br>Why we think so.<br><span class="grad">Will the fix work?</span></h1>
+        <p class="lede">Faultline is an on-call agent whose reasoning lives in a FalkorDB graph. It follows the failure down the call graph to the change that started it, keeps every suspect as a hypothesis with evidence for and against, and proves the fix on a copy of the graph before anyone approves it.</p>
+        <div class="ctas">
+          <a class="btn primary" href="/app?tenant=kestrel&amp;incident=INC-302">Open INC-302 <span aria-hidden="true">→</span></a>
+          <a class="btn ghost" href="/app?demo=1">Play the guided demo</a>
+        </div>
+      </div>
+      <div class="hero-art" aria-label="A failure climbing a service graph, hop by hop, from a deploy to the symptom">
+        <canvas id="chain"></canvas>
+        <p class="art-cap mono" id="art-cap">auth ← D-5201 · +240 s</p>
+      </div>
+    </section>
+
+    <section class="proof" aria-label="Measured results">
+      <article>
+        <p class="eyebrow">Real outages</p>
+        <p class="big">0.81</p>
+        <p class="what">of 360 real RCAEval failures named first, across Online Boutique, Sock Shop and Train Ticket.</p>
+        <p class="vs">RCAEval's own code on the same cases: NSigma 0.78 · BARO 0.28</p>
+      </article>
+      <article>
+        <p class="eyebrow">Fix, proved first</p>
+        <p class="big">4/4</p>
+        <p class="what">planted fixes cleared exactly the alerts the graph copy predicted. The decoy rollback was shown to clear nothing, before approval.</p>
+        <p class="vs">GRAPH.COPY · CAUSED_BY · the judge asked again</p>
+      </article>
+      <article>
+        <p class="eyebrow">At size</p>
+        <p class="big">69<small>ms</small></p>
+        <p class="what">per verdict on a 3,000-service graph (211k nodes, 252k edges), naming 197 of 198 planted causes first.</p>
+        <p class="vs">python -m faultline.scale · docs/scale.md</p>
+      </article>
+      <p class="source mono">Measured, not claimed: <code>make eval</code> reproduces every number · on held-out Train Ticket NSigma ranks better (0.76 vs 0.71), and we say so.</p>
+    </section>
+
+    <section class="strip" aria-label="FalkorDB features used during an investigation">
+      <div class="track mono">
+        <span>algo.WCC</span><span>algo.SPpaths</span><span>algo.betweenness</span><span>algo.labelPropagation</span><span>algo.pageRank</span>
+        <span>GRAPH.COPY</span><span>GRAPH.RO_QUERY</span><span>vecf32 vector index</span><span>full-text index</span><span>CALLS*1..5</span><span>CAUSED_BY*</span>
+        <span>algo.WCC</span><span>algo.SPpaths</span><span>algo.betweenness</span><span>algo.labelPropagation</span><span>algo.pageRank</span>
+        <span>GRAPH.COPY</span><span>GRAPH.RO_QUERY</span><span>vecf32 vector index</span><span>full-text index</span><span>CALLS*1..5</span><span>CAUSED_BY*</span>
+      </div>
+    </section>
+
+    <section class="loop" id="loop">
+      <div class="sec-head">
+        <p class="eyebrow">One loop, every step in the graph</p>
+        <h2>Trace it, argue it, prove the fix, check it worked.</h2>
+      </div>
+      <div class="steps">
+        <article class="step" data-step="0">
+          <p class="num mono">01 · Trace</p>
+          <h3>Follow the failure down, not the most recent deploy.</h3>
+          <p>A change is a suspect only if every service between it and the symptom started alerting after it landed, in order. Alerts with nothing changed below them compete too: a failing cluster, a failing node.</p>
+          <pre class="cypher"><code>MATCH p = (s:Service {name: $symptom})-[:CALLS*1..5]->(d:Service)
+WITH d, min(length(p)) AS hops
+MATCH (c:Change)-[:CHANGED]->(d)
+WHERE c.at >= $from AND c.at <= $to
+RETURN c.id, d.name, hops</code></pre>
+        </article>
+        <article class="step" data-step="1">
+          <p class="num mono">02 · Argue</p>
+          <h3>Every suspect becomes a hypothesis you can query.</h3>
+          <p>Evidence for and against each one, every piece citing the alert, change, commit or past incident it rests on. The alerts are linked by cause, so "why did this fire?" is one query.</p>
+          <pre class="cypher"><code>MATCH p = (a:Alert {id: 'A-9102'})-[:CAUSED_BY*1..12]->(root)
+WHERE NOT (root)-[:CAUSED_BY]->()
+RETURN [n IN nodes(p) | coalesce(n.id, n.name)]
+// A-9102 → A-9101 → D-5201</code></pre>
+        </article>
+        <article class="step" data-step="2">
+          <p class="num mono">03 · Prove</p>
+          <h3>Try the fix on a copy of the graph first.</h3>
+          <p>Copy the graph, clear every alert whose causal chain ends at what the fix removes, ask the judge again. The card says what the fix clears, what it leaves, and what explains the rest.</p>
+          <pre class="cypher"><code>GRAPH.COPY faultline_kestrel proof_7c1e
+MATCH (a:Alert)-[:CAUSED_BY*1..12]->(:Change {id: 'D-5201'})
+RETURN a.id
+// clears auth, mobile-bff · leaves C-5101 (INC-301), catalog-es (INC-303)</code></pre>
+        </article>
+        <article class="step" data-step="3">
+          <p class="num mono">04 · Verify and remember</p>
+          <h3>A person approves; the alerts decide if it worked.</h3>
+          <p>The outcome is checked against the proof. Root cause, lesson, the fix's track record and a person's "not the cause" go back into the graph, and each company's weights are refitted on its own solved incidents.</p>
+          <pre class="cypher"><code>MATCH (i:Incident {id: 'INC-302'}), (c:Change {id: 'D-5201'})
+MERGE (i)-[:ROOT_CAUSE]->(c)
+CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson})
+// verification: "As predicted on the graph copy."</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section class="results" id="results">
+      <div class="sec-head">
+        <p class="eyebrow">Published evaluation</p>
+        <h2>All 360 RCAEval failures, against the published methods run on the same cases.</h2>
+        <p class="sub">RCAEval's own baseline code in its own image; our BARO run reproduces the paper's numbers exactly. Train Ticket was held out of development.</p>
+      </div>
+      <div class="charts">
+        <figure class="chart">
+          <figcaption>Right service first (AC@1), all 360 cases</figcaption>
+          <div class="bars" data-bars='[["Faultline",0.81,1],["NSigma",0.78],["CIRCA · 240 cases",0.71],["Earliest alert",0.51],["BARO",0.28]]'></div>
+        </figure>
+        <figure class="chart">
+          <figcaption>Held-out Train Ticket, 90 cases: AC@1 · Avg@5</figcaption>
+          <div class="bars pair" data-bars='[["Faultline",0.71,1,0.75],["NSigma",0.76,0,0.83],["BARO",0.67,0,0.80],["TraceRCA · published",0.66,0,0.77]]'></div>
+          <p class="note">NSigma ranks better here. In 20 of our 26 misses the cause alerted but ranked below fifth among 68 services: the next thing to fix.</p>
+        </figure>
+      </div>
+    </section>
+
+    <section class="brain" id="brain">
+      <div class="sec-head">
+        <p class="eyebrow">A company brain, not a log search</p>
+        <h2>Who owns it, who was on call, what it breaks for customers.</h2>
+      </div>
+      <div class="cards">
+        <article><h3>Owners and experts</h3><p>CODEOWNERS and commit history, people ranked by the fixes they approved and the changes they made.</p></article>
+        <article><h3>On call, then and now</h3><p>A weekly rota in the graph answers who was on call when it started, not just who is now.</p></article>
+        <article><h3>Journeys and SLOs</h3><p>Each journey's 30-day error budget, charged only to the journeys that need the service that broke, not every service that noticed.</p></article>
+        <article><h3>Where it runs</h3><p>Real Kubernetes manifests: replicas, limits, images, config keys. Two services failing on one node point at the node.</p></article>
+        <article><h3>Deploy to commit</h3><p>Every deploy ships its commits; the investigator names the one to read first. Real releases for Online Boutique.</p></article>
+        <article><h3>Learns from you</h3><p>"Not the cause" takes a suspect out at once and becomes a training label for the next fit.</p></article>
+      </div>
+    </section>
+
+    <section class="run" id="run">
+      <div class="sec-head">
+        <p class="eyebrow">Run it, query it, check it</p>
+        <h2>One command for the app, one for every number.</h2>
+      </div>
+      <div class="cmds">
+        <div><p class="mono label">The app</p><pre><code>docker compose up -d --build
+open http://localhost:8090</code></pre></div>
+        <div><p class="mono label">Every RCAEval number</p><pre><code>make eval        # data, signals, Faultline, baselines
+make eval-quick  # re-score in under a minute</code></pre></div>
+        <div><p class="mono label">From any MCP client</p><pre><code>claude mcp add faultline -- docker compose \
+  exec -T app python -m faultline.mcp_server</code></pre></div>
+      </div>
+      <a class="btn primary big" href="/app">Open the incident room <span aria-hidden="true">→</span></a>
+    </section>
+  </main>
+
+  <footer class="foot mono">Faultline · built on FalkorDB for Graph Hacks 2026 · real data from RCAEval (MIT) and the projects' own repositories · Kestrel Pay is synthetic</footer>
+  <script src="/static/js/landing.js"></script>
+</body>
+</html>

@@ -189,9 +189,12 @@ function wire() {
 
 (async function boot() {
   wire();
+  const q = new URLSearchParams(location.search);   // links from the landing page: ?tenant=…&incident=…, ?demo=1
   try { state.tenant = localStorage.getItem("faultline.tenant") || "kestrel"; } catch {}
+  if (q.get("tenant")) state.tenant = q.get("tenant");
   await health();
   setInterval(health, 5000);
   try { await switchTenant(state.tenant); } catch { await switchTenant("kestrel"); }
-  if (new URLSearchParams(location.search).get("demo") === "1") setTimeout(play, 1200);
+  if (q.get("incident")) await act.openIncident(q.get("incident")).catch(() => {});
+  if (q.get("demo") === "1") setTimeout(play, 1200);
 })();
