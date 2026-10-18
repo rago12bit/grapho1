@@ -49,6 +49,16 @@ def rank_suspects(incident_id: str) -> str:
     return _call("rank_suspects", incident_id=incident_id)
 
 
+@server.tool(description="The same incident judged with the search capped at 1, 2, ... 5 hops below the symptom: what a one-hop look blames, and the depth from which the verdict stops changing.")
+def depth_sweep(incident_id: str) -> str:
+    return _call("depth_sweep", incident_id=incident_id)
+
+
+@server.tool(description="Look a name up anywhere in the graph, with near service names. Nothing found means it isn't modelled, not that it is safe.")
+def find_named(name: str) -> str:
+    return _call("find_named", name=name)
+
+
 @server.tool(description="Skeptic review of the leading suspect: what it doesn't explain, order, timing, margin. May overturn it. Returns the verdict, each check and a calibrated confidence.")
 def challenge_leader(incident_id: str) -> str:
     return _call("challenge_leader", incident_id=incident_id)

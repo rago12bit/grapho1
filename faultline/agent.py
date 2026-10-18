@@ -41,6 +41,14 @@ TOOL_SPECS: list[dict] = [
         "also_explains (other open incidents with the same cause), owners, recommended actions, and changes ruled "
         "out as off-path."),
      "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "depth_sweep", "description": (
+        "The same incident judged with the search capped at 1, 2, ... 5 hops below the symptom: what a one-hop look "
+        "blames, and the depth from which the verdict stops changing (settles_at)."),
+     "input_schema": _obj({"incident_id": S}, ["incident_id"])},
+    {"name": "find_named", "description": (
+        "Look a name up anywhere in the graph, with near service names. If nothing is found, say the thing isn't "
+        "modelled; never treat a missing node as safe."),
+     "input_schema": _obj({"name": S}, ["name"])},
     {"name": "dependencies", "description": "Services a service calls, directly or transitively, with hop counts.",
      "input_schema": _obj({"service": S, "max_hops": {"type": "integer", "minimum": 1, "maximum": 5}}, ["service"])},
     {"name": "changes_near", "description": "Deploys, config and flag changes on the given services in the 2 hours before an incident started.",
@@ -175,6 +183,8 @@ def _dispatch(g: Graph, run_id: str | None = None, role: str | None = None) -> d
             tools.write_handoff(g, incident_id, role or "investigator", summary, data, run_id),
         "get_incident": lambda incident_id: tools.get_incident(g, incident_id),
         "rank_suspects": lambda incident_id: tools.rank_suspects(g, incident_id),
+        "find_named": lambda name: tools.find_named(g, name),
+        "depth_sweep": lambda incident_id: tools.depth_sweep(g, incident_id),
         "dependencies": lambda service, max_hops=tools.MAX_HOPS: tools.dependencies(g, service, max_hops),
         "changes_near": lambda incident_id, services: tools.changes_near(g, services, _start(g, incident_id)),
         "alerts_near": lambda incident_id, services: tools.alerts_near(g, services, _start(g, incident_id)),
@@ -472,17 +482,48 @@ def ask_offline(tenant: str, question: str) -> dict:
             res, q, err = call_tool(tenant, route, args)
             answer = " ".join(f"Domain {d['domain']} ({', '.join(d['teams'])}): {', '.join(d['services'])}." for d in res or [])
         else:
+            named = _NAMED_GROUP.get(route)
+            asked = (m.group(named) or "").strip("?") if named else ""
+            if not mentioned and asked and asked.lower() not in _ASK_FILLER:
+                return _not_in_graph(tenant, asked)
             svc = mentioned[-1] if mentioned else (None if route in ("similar_incidents", "runbooks", "simulate_failure", "experts") else m.group(2))
             if not svc:
                 continue
             args = {"service": svc}
             res, q, err = call_tool(tenant, route, args)
             answer = _summarize(route, svc, res, err)
+            if route in ("blast_radius", "simulate_failure") and not err and answer.startswith("Nothing in the graph calls") \
+                    and Graph(tenant).read("MATCH (s:Service {name: $s}) RETURN s.internet_exposed AS e", {"s": svc})[0]["e"]:
+                answer = (f"Nothing else in the graph calls {svc}: it is an internet-facing entry point, so if it fails "
+                          "its users are hit directly, and no other modelled service goes down with it.")
         return {"mode": "offline", "steps": [_step(route, args, res, q, err)], "answer": answer, "findings": None}
     return {"mode": "offline", "steps": [], "findings": None, "answer": (
         "Offline mode understands: an incident id (\"investigate INC-301\"), \"who owns payments\", "
         "\"what breaks if ledger-db goes down\", \"has payments-db failed before\", \"most critical services\". "
         "Set ANTHROPIC_API_KEY for free-form questions.")}
+
+
+# which group of each route's pattern holds the thing asked about, and words that are never a name
+_NAMED_GROUP = {"experts": 2, "who_owns": 2, "simulate_failure": 3, "blast_radius": 2}
+_ASK_FILLER = {"it", "this", "that", "down", "fails", "the", "a", "service"}
+
+
+def _not_in_graph(tenant: str, name: str) -> dict:
+    """The question names something the graph has no node for: say so, rather than answer from nowhere."""
+    res, q, err = call_tool(tenant, "find_named", {"name": name})
+    if res and res["found"]:
+        f = res["found"][0]
+        on = f" on {f['service']}" if f.get("service") else ""
+        answer = (f"{f['name']} is in the graph as a {f['label']}{on}, not a service, so there is no call path to follow "
+                  f"from it." + (f" Ask about {f['service']} instead." if on else ""))
+    else:
+        answer = (f"Nothing in the graph is called {name}. That means it isn't modelled, not that it is safe: "
+                  "with no node, there is no dependency to follow and no owner or blast radius to read, so the graph has "
+                  "nothing to answer from.")
+        if res and res["near"]:
+            answer += " Closest service names: " + ", ".join(res["near"]) + "."
+    return {"mode": "offline", "steps": [_step("find_named", {"name": name}, res, q, err)], "answer": answer,
+            "findings": None, "not_in_graph": not (res and res["found"])}
 
 
 def _summarize(route: str, svc: str, res: Any, err: str | None) -> str:
@@ -492,6 +533,9 @@ def _summarize(route: str, svc: str, res: Any, err: str | None) -> str:
         oc = res.get("on_call")
         return f"{svc} is owned by {res['team']}. On call: {oc['name'] if oc else 'nobody listed'}. Members: " + \
             ", ".join(p["name"] for p in res["people"]) + "."
+    if route in ("blast_radius", "simulate_failure") and not (res.get("callers") if route == "blast_radius" else res.get("waves")):
+        return (f"Nothing in the graph calls {svc}. That can mean nothing depends on it, or that its callers aren't "
+                "modelled; the graph can't tell those apart, so read this as unknown rather than safe.")
     if route == "blast_radius":
         return (f"If {svc} fails, {len(res['callers'])} services are affected: "
                 + ", ".join(f"{c['service']} ({c['hops']} hop{'s' if c['hops'] != 1 else ''})" for c in res["callers"])

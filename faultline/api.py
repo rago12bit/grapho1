@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 167, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 175, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -512,6 +512,21 @@ def explore(tenant: str, labels: str = "", limit: int = site.EXPLORE_LIMIT):
 @app.get("/api/{tenant}/nodes/{key}")
 def node(tenant: str, key: int):
     return _guard(site.node, _g(tenant), key)
+
+
+@app.get("/api/{tenant}/incidents/{incident_id}/depth")
+def incident_depth(tenant: str, incident_id: str):
+    """The same incident judged at depth 1 to 5: what a one-hop look blames, and where the verdict settles."""
+    g = _g(tenant)
+    try:
+        return tools.depth_sweep(g, incident_id)
+    except KeyError as e:
+        raise HTTPException(404, str(e))
+
+
+@app.get("/api/{tenant}/depth")
+def tenant_depth(tenant: str):
+    return site.depth_report(_g(tenant))
 
 
 @app.get("/api/experiments")

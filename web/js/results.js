@@ -152,6 +152,29 @@ async function proofs() {
   btn.disabled = false; btn.textContent = "Run them again";
 }
 
+// the same incident at each depth, and a question about a service the graph doesn't have
+async function depth() {
+  try {
+    const r = await api("/api/kestrel/depth");
+    const inc = r.incidents.find((x) => x.incident === "INC-301");
+    $("#depthtbl").innerHTML = inc.depths.map((d) => `<div class="dr ${d.right ? "ok" : "bad"}"><span class="d">depth ${d.depth}</span>
+      <div><b>${esc(d.leader)}</b> <span class="faint">· ${esc(d.confidence)}</span><span class="p">${esc(d.path.join(" → "))}</span></div>
+      <span class="m">${d.services_searched} services<br>${d.right ? '<span class="ok-mark">right</span>' : '<span class="bad-mark">wrong</span>'}</span></div>`).join("");
+    const first = inc.depths[0];
+    $("#depthnote").textContent = `At one hop the judge sees only ${first.services_searched} services and blames ${first.leader}, with ${first.confidence} confidence: a victim.`
+      + ` From depth ${inc.settles_at} it finds ${inc.final}, ${inc.depths.at(-1).hops} hops down, and stays there.`;
+    $("#depthbars").innerHTML = Object.entries(r.right_at).map(([d, n]) => `<div class="hb ${+d === 1 ? "warn" : "me"}"><span class="n">depth ${d}</span>
+      <span class="r"><i data-w="${(100 * n / r.scored).toFixed(1)}%"></i></span><span class="val">${n}/${r.scored}</span></div>`).join("");
+    grow($("#depthbars"));
+  } catch (e) { $("#depthtbl").innerHTML = `<p class="empty">${esc(e.message)}</p>`; }
+  try {
+    const a = await api("/api/kestrel/ask", { method: "POST", body: JSON.stringify({ question: $("#unq").textContent }),
+      headers: { "content-type": "application/json" } });
+    $("#unanswer").textContent = a.answer;
+    $("#uncypher").textContent = (a.steps[0]?.cypher || []).map((q) => q.cypher.trim()).join("\n\n");
+  } catch (e) { $("#unanswer").textContent = e.message; }
+}
+
 // the section nav follows the page
 function toc() {
   const links = $$("#toc a");
@@ -173,4 +196,5 @@ function toc() {
   });
   $("#runproofs").onclick = proofs;
   new IntersectionObserver(([x], o) => { if (x.isIntersecting) { o.disconnect(); proofs(); } }, { rootMargin: "200px" }).observe($("#proofs"));
+  new IntersectionObserver(([x], o) => { if (x.isIntersecting) { o.disconnect(); depth(); } }, { rootMargin: "200px" }).observe($("#depth"));
 })();

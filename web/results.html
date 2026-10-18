@@ -20,7 +20,7 @@
     <div class="kpis" id="kpis"></div>
     <nav class="toc" id="toc" aria-label="Sections">
       <a href="#real">Real outages</a><a href="#held">Held out</a><a href="#planted">Planted faults</a><a href="#learning">Learning</a>
-      <a href="#scale">Scale</a><a href="#proofs">Fix proofs</a><a href="#limits">Limits</a><a href="#reproduce">Reproduce</a>
+      <a href="#scale">Scale</a><a href="#proofs">Fix proofs</a><a href="#depth">Depth</a><a href="#limits">Limits</a><a href="#reproduce">Reproduce</a>
     </nav>
 
     <section class="rs" id="real">
@@ -87,8 +87,25 @@
       <a class="card pad linkcard" href="/break"><div><p class="kick" style="margin:0">Break it</p><b id="breakline">Seven one-line changes, each judged on a GRAPH.COPY.</b></div><span>Open →</span></a>
     </section>
 
+    <section class="rs" id="depth">
+      <div class="rs-head"><p class="kick">07 · Depth, and what isn't there</p><h2>The same question at one hop, then at five. And a question about nothing.</h2>
+        <p>A one-hop look is what a join could do: the symptom's direct dependencies. The cause is often further down. Each
+          row below is the judge run live with the search capped at that depth, checked against the cause the seed planted.</p></div>
+      <div class="two">
+        <div class="card pad"><h3 class="h3">INC-301 · checkout slow, judged at each depth</h3><div id="depthtbl" class="depthtbl"><p class="faint">Runs when you reach this section.</p></div>
+          <p class="note" id="depthnote"></p></div>
+        <div class="card pad"><h3 class="h3">Every open Kestrel incident, right at each depth</h3><div class="hbars" id="depthbars"></div>
+          <p class="note">On the RCAEval systems the front end calls nearly every service directly, so one hop already reaches the
+            cause and depth doesn't change their accuracy. It matters in a layered company like Kestrel, where it is the
+            difference between blaming a victim and finding the change.</p></div>
+      </div>
+      <div class="card pad" style="margin-top:16px"><h3 class="h3">Ask about something that isn't in the graph</h3>
+        <p class="faint mono" style="font-size:12px;margin:-8px 0 12px" id="unq">what breaks if billing-svc goes down?</p>
+        <p id="unanswer" class="unanswer"></p><pre class="code" id="uncypher"></pre></div>
+    </section>
+
     <section class="rs" id="limits">
-      <div class="rs-head"><p class="kick">07 · Limits</p><h2>What these numbers don't say.</h2></div>
+      <div class="rs-head"><p class="kick">08 · Limits</p><h2>What these numbers don't say.</h2></div>
       <ul class="limits">
         <li>It is <b>not the most accurate ranker</b> on held-out Train Ticket: NSigma is, on both AC@1 and Avg@5.</li>
         <li>270 of the 360 RCAEval cases were used to develop v2 and v3; read those as seen. The 90 held-out cases are the honest test.</li>
@@ -100,7 +117,7 @@
     </section>
 
     <section class="rs" id="reproduce">
-      <div class="rs-head"><p class="kick">08 · Reproduce</p><h2>Don't trust this page. Run it.</h2></div>
+      <div class="rs-head"><p class="kick">09 · Reproduce</p><h2>Don't trust this page. Run it.</h2></div>
       <div class="three">
         <div class="card"><div class="card-h"><h3>Every RCAEval number</h3></div><pre class="code" style="border:0;background:transparent">make eval        # data, signals, Hypocenter, baselines
 make eval-quick  # re-score in under a minute</pre></div>

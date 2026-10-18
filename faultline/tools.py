@@ -187,6 +187,22 @@ def critical_services(g: Graph, limit: int = 10) -> list[dict]:
     return rows[:limit]
 
 
+def find_named(g: Graph, name: str, limit: int = 5) -> dict:
+    """Look a name up across the whole graph (any node whose name or id matches), plus near names.
+
+    An empty result is an answer in itself: nothing in the graph is called that, which means it isn't modelled,
+    not that it is safe."""
+    exact = g.read("""
+        MATCH (n) WHERE toLower(n.name) = toLower($x) OR toLower(n.id) = toLower($x)
+        OPTIONAL MATCH (n)-[:CHANGED|FIRED_ON]->(s:Service)
+        RETURN labels(n)[0] AS label, coalesce(n.name, n.id) AS name, s.name AS service LIMIT 5""", {"x": name})
+    stem = re.split(r"[-_]", name.lower())[0]
+    near = g.read("""
+        MATCH (s:Service) WHERE toLower(s.name) CONTAINS $stem OR $stem CONTAINS toLower(s.name)
+        RETURN s.name AS name ORDER BY name LIMIT $n""", {"stem": stem, "n": limit}) if len(stem) >= 3 else []
+    return {"name": name, "found": exact, "near": [r["name"] for r in near]}
+
+
 def run_cypher(g: Graph, query: str) -> list[dict]:
     """Read-only escape hatch for questions the fixed tools don't cover. Capped and time-limited."""
     assert_read_only(query)
@@ -641,14 +657,16 @@ def confidence_from(top: float, gap: float) -> tuple[float, str]:
     return p, "high" if p >= 0.85 else "medium" if p >= 0.6 else "low"
 
 
-def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
+def rank_suspects(g: Graph, incident_id: str, limit: int = 6, depth: int = MAX_HOPS) -> dict:
     """Score every change on the symptom's dependency path, plus alerting dependencies with no change.
 
     Returns the ranked suspects with a per-factor breakdown, the path each one travels to the symptom,
-    and the changes ruled out because nothing connects them to the symptom."""
+    and the changes ruled out because nothing connects them to the symptom. `depth` caps how many CALLS hops
+    below the symptom the search may go (see depth_sweep)."""
     inc = get_incident(g, incident_id)
     sym, start = inc["symptom"], inc["started"]
-    deps = dependencies(g, sym)
+    depth = max(1, min(int(depth), MAX_HOPS))
+    deps = dependencies(g, sym, depth)
     hops = {sym: 0, **{d["service"]: d["hops"] for d in deps}}
     on_path = list(hops)
     changes = changes_near(g, on_path, start)
@@ -660,7 +678,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
     suspects: list[dict] = []
     for c in changes:
         svc = c["service"]
-        paths = paths_between(g, sym, svc)
+        paths = [p for p in paths_between(g, sym, svc) if len(p) - 1 <= depth]
         best = max(((_alert_chain(p, alerts, c["at"]), p) for p in paths), key=lambda x: (x[0][0], -len(x[1])))
         (chain, chain_alerts), path = best
         below_first = _from_below(g, svc, cone, alerts, c["at"])
@@ -709,7 +727,7 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         recent = _recency((start - last) / 60) if last is not None else 0.0
         if recent >= 0.5:
             continue
-        paths = paths_between(g, sym, svc) if svc != sym else [[sym]]
+        paths = [p for p in paths_between(g, sym, svc) if len(p) - 1 <= depth] if svc != sym else [[sym]]
         if not paths:
             continue
         best = max(((_alert_chain(p, alerts, first - 1), p) for p in paths), key=lambda x: (x[0][0], -len(x[1])))
@@ -769,7 +787,8 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
 
     path_set = set(on_path)
     ruled_out = [
-        {**c, "reason": f"{c['service']} is not on {sym}'s dependency path"}
+        {**c, "reason": f"{c['service']} is not on {sym}'s dependency path"
+                        + (f" within {depth} hop{'s' if depth > 1 else ''}" if depth < MAX_HOPS else "")}
         for c in all_changes_near(g, start) if c["service"] not in path_set
     ]
     top = suspects[0] if suspects else None
@@ -779,8 +798,31 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         "incident": inc, "dependency_count": len(deps), "suspects": suspects, "alert_cone": sorted(cone),
         "ruled_out": ruled_out, "confidence": confidence, "confidence_p": p_conf, "margin": margin,
         "other_faults": other_faults, "alerts": alerts,
-        "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS, "host": HOST_WEIGHTS},
+        "weights": {"change": WEIGHTS, "signal": SIGNAL_WEIGHTS, "host": HOST_WEIGHTS}, "depth": depth,
     }
+
+
+
+def depth_sweep(g: Graph, incident_id: str, depths: tuple[int, ...] = tuple(range(1, MAX_HOPS + 1))) -> dict:
+    """The same incident judged with the search capped at 1, 2, ... CALLS hops below the symptom.
+
+    At depth 1 the judge only sees the symptom's direct dependencies, which is what a join could do; a cause
+    deeper down is invisible there, and the judge blames whatever is nearest. `settles_at` is the first depth
+    from which the verdict no longer changes; the leader's path shows why the deeper answer is there."""
+    rows = []
+    for d in depths:
+        r = rank_suspects(g, incident_id, limit=3, depth=d)
+        top = r["suspects"][0] if r["suspects"] else None
+        rows.append({"depth": d, "leader": _label(top), "service": top["service"] if top else None,
+                     "hops": top["hops"] if top else None, "path": top["path"] if top else [],
+                     "confidence": r["confidence"], "services_searched": r["dependency_count"] + 1,
+                     "changes_ruled_out": len(r["ruled_out"])})
+    settles = rows[-1]["depth"]
+    for row in reversed(rows):
+        if row["leader"] != rows[-1]["leader"]:
+            break
+        settles = row["depth"]
+    return {"incident": incident_id, "depths": rows, "settles_at": settles, "final": rows[-1]["leader"]}
 
 
 # --- writes (human-gated) ------------------------------------------------------------------------

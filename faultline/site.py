@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import Counter
 
 from . import tools
 from .db import Graph, client, graph_name, list_tenants
@@ -262,3 +263,37 @@ def prove_fixes(g: Graph) -> list[dict]:
                     "summary": p["summary"], "ms": round((time.perf_counter() - t) * 1000, 1),
                     "holds": set(p["predicted_clear"]) <= set(caused) and (bool(p["predicted_clear"]) != bool(f.get("decoy")))})
     return out
+
+
+# --- depth 1 against the full depth ----------------------------------------------------------------------------
+
+def _truth_of(g: Graph, incident_id: str, truth: dict[str, str]) -> str | None:
+    """What really caused the incident: the cause the seed (or RCAEval's answer key) gives its symptom alerts."""
+    causes = Counter(truth[a["id"]] for a in tools.get_incident(g, incident_id)["alerts"] if a["id"] in truth)
+    return causes.most_common(1)[0][0] if causes else None
+
+
+def _right(row: dict, cause: str | None) -> bool | None:
+    if cause is None or not row["service"]:
+        return None if cause is None else False
+    if cause.startswith("infra:"):
+        svc = cause[len("infra:"):]
+        return row["leader"] in (f"{svc} (no change)", f"{svc} (shared host)")
+    return row["leader"] == cause
+
+
+def depth_report(g: Graph) -> dict:
+    """Every open incident of a tenant judged at depth 1 to 5, each verdict checked against the true cause."""
+    from . import world
+    truth = world.TRUE_CAUSES.get(g.tenant, {})
+    out = []
+    for inc in tools.list_incidents(g):
+        sweep = tools.depth_sweep(g, inc["id"])
+        cause = _truth_of(g, inc["id"], truth)
+        for row in sweep["depths"]:
+            row["right"] = _right(row, cause)
+        out.append({**sweep, "symptom": inc["symptom"], "title": inc["title"], "cause": cause})
+    scored = [x for x in out if x["cause"]]
+    right_at = {d: sum(1 for x in scored if x["depths"][d - 1]["right"]) for d in range(1, tools.MAX_HOPS + 1)}
+    return {"tenant": g.tenant, "incidents": out, "scored": len(scored), "right_at": right_at,
+            "changed": [x["incident"] for x in out if x["settles_at"] > 1]}
