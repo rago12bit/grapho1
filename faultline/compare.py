@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 DATA = Path(__file__).resolve().parent.parent / "data" / "rcaeval"
@@ -60,7 +61,9 @@ def load(signals: tuple[str, ...] = ("metrics", "all")) -> tuple[dict, dict[str,
         if not path.exists():
             continue
         for r in json.loads(path.read_text())["rows"]:
-            meta[r["case"]] = {k: r[k] for k in ("suite", "system", "fault", "truth")}
+            meta.setdefault(r["case"], {}).update({k: r[k] for k in ("suite", "system", "fault", "truth")})
+            if sig == "metrics" and r.get("confidence"):
+                meta[r["case"]]["confidence"] = r["confidence"]       # the skeptic's label on the headline run
             for m, label in (("judge+skeptic", "Hypocenter"), ("earliest alert", "Earliest alert"), ("biggest anomaly", "Biggest anomaly")):
                 name = f"{label} ({sig})" if label == "Hypocenter" or sig == "metrics" else None
                 if name:
@@ -132,6 +135,44 @@ def re2_tt_check(meta: dict, hits: dict) -> str:
     return "\n".join(lines)
 
 
+def wilson(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """The 95% Wilson score interval for k right out of n: honest at small n and near 0 or 1, unlike p ± 2 SE."""
+    if not n:
+        return 0.0, 0.0
+    p = k / n
+    mid, half = (p + z * z / (2 * n)) / (1 + z * z / n), z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+    return max(0.0, mid - half), min(1.0, mid + half)
+
+
+def intervals(meta: dict, hits: dict) -> str:
+    """AC@1 with its 95% interval, on all 360 failures and on the held-out Train Ticket set: where two methods'
+    intervals overlap, the data can't tell them apart."""
+    gs = groups(meta)
+    lines = ["| set | method | right first | AC@1 | 95% interval |", "|---|---|---|---|---|"]
+    for g in ("All 360", "RE2-TT"):
+        for h in sorted(hits, key=lambda h: (not h.startswith("Hypocenter"), h)):
+            rows = [hits[h].get(c) for c in gs[g] if c in hits[h]]
+            if not rows or len(rows) != len(gs[g]):
+                continue
+            k, n = sum(bool(r and r[0]) for r in rows), len(rows)
+            lo, hi = wilson(k, n)
+            lines.append(f"| {g} | {h} | {k} of {n} | {k / n:.2f} | {lo:.2f}–{hi:.2f} |")
+    return "\n".join(lines)
+
+
+def confidence(meta: dict, hits: dict, method: str = "Hypocenter (metrics)") -> str:
+    """How often the verdict was right at each confidence the skeptic gave it, on the real failures. A confident
+    wrong blame is a wrong first answer given with high confidence."""
+    lines = ["| confidence | cases | right first | wrong first | right, 95% interval |", "|---|---|---|---|---|"]
+    levels = [("high", {"high"}), ("medium", {"medium"}), ("low", {"low"}), ("high or medium", {"high", "medium"})]
+    for name, keep in levels:
+        cs = [c for c, m in meta.items() if m.get("confidence") in keep and c in hits[method]]
+        k, n = sum(hits[method][c][0] for c in cs), len(cs)
+        lo, hi = wilson(k, n)
+        lines.append(f"| {name} | {n} | {k} | {n - k} | {lo:.2f}–{hi:.2f} |")
+    return "\n".join(lines)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", type=Path, default=DATA / "comparison.json")
@@ -141,6 +182,11 @@ def main() -> None:
     print(table(meta, hits))
     print("\nRE2 Train Ticket, averaged over fault types, against RCAEval's published Table 6\n")
     print(re2_tt_check(meta, hits))
+    print("\nAC@1 with 95% Wilson intervals\n")
+    print(intervals(meta, hits))
+    if any("confidence" in m for m in meta.values()):
+        print("\nHypocenter (metrics) on all 360: right first at each confidence the skeptic gave\n")
+        print(confidence(meta, hits))
     out = {g: {h: scores(cs, hits[h]) for h in hits} for g, cs in groups(meta).items()}
     a.json.write_text(json.dumps(out, indent=1))
 

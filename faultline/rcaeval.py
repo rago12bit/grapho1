@@ -447,6 +447,7 @@ def run_cases(cases: list[str], signals: str = "metrics", verbose: bool = True) 
         rows.append({"case": case, "suite": suite_of(case), "system": system_of(case), "fault": str(idx.loc[case, "fault"]),
                      "truth": truth, "top": {m: o[:5] for m, o in orders.items()},
                      "alerted": truth in {a["service"] for a in b["alerts"]},
+                     "confidence": review["confidence"], "confidence_p": review["confidence_p"],
                      "ac": {m: [_ac(o, truth, k) for k in range(1, 6)] for m, o in orders.items()}})
         if verbose:
             print(f"{case:48} truth={truth:24} judge={','.join(orders['judge+skeptic'][:3]) or '-':60} "

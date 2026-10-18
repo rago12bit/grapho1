@@ -94,8 +94,9 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 
 | Claim | Hypocenter | Compared with | Measured by |
 |---|---|---|---|
-| Finds the cause of real outages | **<!-- claim:real.ac1 -->0.81<!-- /claim -->** right service first over all 360 RCAEval failures | NSigma <!-- claim:real.nsigma -->0.78<!-- /claim --> · CIRCA <!-- claim:real.circa -->0.71<!-- /claim --> (on 240) · earliest alert <!-- claim:real.earliest -->0.51<!-- /claim --> · BARO <!-- claim:real.baro -->0.28<!-- /claim --> | RCAEval's own baseline code, run here ([Public data](#public-data-every-rcaeval-case-against-the-published-baselines)) |
-| Holds on failures nobody tuned on | **<!-- claim:heldout.ac1 -->0.71<!-- /claim -->** AC@1, <!-- claim:heldout.avg5 -->0.75<!-- /claim --> Avg@5 on 90 held-out Train Ticket failures | **NSigma is better: <!-- claim:heldout.nsigma -->0.76 / 0.83<!-- /claim -->**; BARO <!-- claim:heldout.baro -->0.67 / 0.80<!-- /claim --> | settings frozen before the held-out run ([Results](#results)) |
+| Finds the cause of real outages | **<!-- claim:real.ac1 -->0.81<!-- /claim -->** <!-- claim:real.ac1_ci -->[0.77–0.85]<!-- /claim --> right service first over all 360 RCAEval failures | NSigma <!-- claim:real.nsigma -->0.78<!-- /claim --> <!-- claim:real.nsigma_ci -->[0.74–0.82]<!-- /claim -->: the 95% intervals overlap, so 360 cases can't separate the two · CIRCA <!-- claim:real.circa -->0.71<!-- /claim --> (on 240) · earliest alert <!-- claim:real.earliest -->0.51<!-- /claim --> · BARO <!-- claim:real.baro -->0.28<!-- /claim --> | RCAEval's own baseline code, run here ([Public data](#public-data-every-rcaeval-case-against-the-published-baselines)) |
+| Holds on failures nobody tuned on | **<!-- claim:heldout.ac1 -->0.71<!-- /claim -->** <!-- claim:heldout.ac1_ci -->[0.61–0.79]<!-- /claim --> AC@1, <!-- claim:heldout.avg5 -->0.75<!-- /claim --> Avg@5 on 90 held-out Train Ticket failures | **NSigma is better: <!-- claim:heldout.nsigma -->0.76 / 0.83<!-- /claim -->** (AC@1 <!-- claim:heldout.nsigma_ci -->[0.66–0.83]<!-- /claim -->); BARO <!-- claim:heldout.baro -->0.67 / 0.80<!-- /claim --> | settings frozen before the held-out run ([Results](#results)) |
+| No confident wrong blames on real outages | **<!-- claim:real.high_wrong -->0 wrong of 12<!-- /claim -->** high-confidence verdicts on the 360 RCAEval failures; high or medium: <!-- claim:real.confident_right -->241 of 251<!-- /claim --> right first <!-- claim:real.confident_ci -->(0.93–0.98)<!-- /claim --> | low confidence: <!-- claim:real.low_right -->51 of 109<!-- /claim --> right, so "low" means look again | `python -m faultline.compare` ([docs/rcaeval-results.md](docs/rcaeval-results.md)) |
 | Ignores the decoys | **<!-- claim:planted.range -->94.5–96.8%<!-- /claim -->** top-1 on held-out seeds of planted faults, each with decoy changes | "blame the most recent change" 50.0% · "the nearest recent change" 10.7% | `python -m faultline.eval` ([Evaluation](#evaluation)) |
 | Its confidence means something | when it says **high**, right 99.2–100% of the time on held-out seeds | medium 98.0–99.1% · low 74.6–83.8% | the same eval |
 | The graph does the work | **8 of 8** algorithms change a decision when what they read changes; without FalkorDB there is no answer | the decision before the change, on the same graph copy | `tests/test_load_bearing.py` ([The graph does the work](#the-graph-does-the-work)) |
@@ -122,7 +123,7 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 </tr>
 </table>
 
-<sub>Every number in this table and in the two above it is tagged in this file's source with the measurement it comes from; <code>make claims</code> (and a test) fails if one drifts. Every chart is drawn by <code>python -m faultline.charts</code> from the same files the Results page reads (and, for depth, from the graph); a test regenerates them and compares.</sub>
+<sub>Intervals are 95% Wilson intervals. Every number in this table and in the two above it is tagged in this file's source with the measurement it comes from; <code>make claims</code> (and a test) fails if one drifts. Every chart is drawn by <code>python -m faultline.charts</code> from the same files the Results page reads (and, for depth, from the graph); a test regenerates them and compares.</sub>
 
 ## See it
 
@@ -311,6 +312,7 @@ The Python package is still called `faultline` (the project's working name); eve
 | `make judge-check` | build, start, every test, then the product on scratch graphs: verdicts, depth, unknowns, fix proofs, the evidence gate, the pre-deploy check, the read-only user per tenant, the README's numbers, Break it, the planted eval, isolation | ~2 min |
 | `docker compose run --rm app pytest -q` | the <!-- claim:tests -->232<!-- /claim --> tests, against a real FalkorDB on separate test graphs | ~1 min |
 | `make mutants` | 28 safeguards broken one at a time on a scratch copy; a test must catch each | ~2 min |
+| CI ([docs/ci/ci.yml](docs/ci/ci.yml), for GitHub Actions) | on every push: the tests against a real FalkorDB, then `make claims` | ~3 min |
 | `make claims` | every number tagged in this README against the file that measured it (`faultline/claims.py`; the live ones run in `tests/test_claims.py`) | seconds |
 | `docker compose run --rm app python -m faultline.eval --n 400 --seed 3` | planted faults with decoys, ablations and baselines (seeds 3, 11, 42 are held out) | seconds |
 | `make eval` | every RCAEval number: downloads ~3.3 GB, extracts signals, runs Hypocenter and RCAEval's baselines, writes `docs/rcaeval-results.md` | long, once |

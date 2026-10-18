@@ -39,6 +39,19 @@ def _rca(method: str, dataset: str) -> list[float]:
     return next(m for m in r["methods"] if m["name"] == method)["cells"][i]
 
 
+def _rca_table(first: str) -> list[list[str]]:
+    return results._table((ROOT / "docs" / "rcaeval-results.md").read_text(), first)
+
+
+def _ci(dataset: str, method: str) -> str:
+    row = next(r for r in _rca_table("set")[1:] if r[0] == dataset and r[1] == method)
+    return f"[{row[4]}]"
+
+
+def _conf(level: str, col: int) -> str:
+    return next(r for r in _rca_table("confidence")[1:] if r[0] == level)[col]
+
+
 def _scale(services: int, query: str) -> float:
     run = next(x for x in results.scale((ROOT / "docs" / "scale.md").read_text()) if x["services"] == services)
     return next(q for q in run["queries"] if q["query"].startswith(query))["p50_ms"]
@@ -73,6 +86,14 @@ CLAIMS: dict[str, Callable[[], str]] = {
     "heldout.nsigma": lambda: _pair("NSigma", "RE2-TT"),
     "heldout.nsigma_ac1": lambda: f"{_rca('NSigma', 'RE2-TT')[0]:.2f}",
     "heldout.baro": lambda: _pair("BARO", "RE2-TT"),
+    "real.ac1_ci": lambda: _ci("All 360", "Hypocenter (metrics)"),
+    "real.nsigma_ci": lambda: _ci("All 360", "NSigma"),
+    "heldout.ac1_ci": lambda: _ci("RE2-TT", "Hypocenter (metrics)"),
+    "heldout.nsigma_ci": lambda: _ci("RE2-TT", "NSigma"),
+    "real.high_wrong": lambda: f"{_conf('high', 3)} wrong of {_conf('high', 1)}",
+    "real.confident_right": lambda: f"{_conf('high or medium', 2)} of {_conf('high or medium', 1)}",
+    "real.confident_ci": lambda: f"({_conf('high or medium', 4)})",
+    "real.low_right": lambda: f"{_conf('low', 2)} of {_conf('low', 1)}",
     "planted.range": lambda: f"{min(_seeds())}–{max(_seeds())}%",
     "scale.judge_3000": lambda: f"{round(_scale(3000, 'the judge')):d} ms",
     "scale.judge_1000": lambda: f"{_scale(1000, 'the judge'):g} ms",

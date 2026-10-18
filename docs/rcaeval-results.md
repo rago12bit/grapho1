@@ -34,3 +34,29 @@ RE2 Train Ticket, averaged over fault types, against RCAEval's published Table 6
 | Multi-source CIRCA (not run here) | – | 0.06 | – | 0.13 |
 | PDiagnose (not run here) | – | 0.48 | – | 0.67 |
 | Multi-source RCD (not run here) | – | 0.1 | – | 0.54 |
+
+AC@1 with 95% Wilson intervals
+
+| set | method | right first | AC@1 | 95% interval |
+|---|---|---|---|---|
+| All 360 | Hypocenter (all) | 271 of 360 | 0.75 | 0.71–0.79 |
+| All 360 | Hypocenter (metrics) | 292 of 360 | 0.81 | 0.77–0.85 |
+| All 360 | BARO | 102 of 360 | 0.28 | 0.24–0.33 |
+| All 360 | Biggest anomaly (metrics) | 28 of 360 | 0.08 | 0.05–0.11 |
+| All 360 | Earliest alert (metrics) | 182 of 360 | 0.51 | 0.45–0.56 |
+| All 360 | NSigma | 282 of 360 | 0.78 | 0.74–0.82 |
+| RE2-TT | Hypocenter (all) | 67 of 90 | 0.74 | 0.65–0.82 |
+| RE2-TT | Hypocenter (metrics) | 64 of 90 | 0.71 | 0.61–0.79 |
+| RE2-TT | BARO | 60 of 90 | 0.67 | 0.56–0.76 |
+| RE2-TT | Biggest anomaly (metrics) | 24 of 90 | 0.27 | 0.19–0.37 |
+| RE2-TT | Earliest alert (metrics) | 14 of 90 | 0.16 | 0.09–0.24 |
+| RE2-TT | NSigma | 68 of 90 | 0.76 | 0.66–0.83 |
+
+Hypocenter (metrics) on all 360: right first at each confidence the skeptic gave
+
+| confidence | cases | right first | wrong first | right, 95% interval |
+|---|---|---|---|---|
+| high | 12 | 12 | 0 | 0.76–1.00 |
+| medium | 239 | 229 | 10 | 0.92–0.98 |
+| low | 109 | 51 | 58 | 0.38–0.56 |
+| high or medium | 251 | 241 | 10 | 0.93–0.98 |

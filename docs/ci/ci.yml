@@ -1,0 +1,33 @@
+# Add it on github.com (Add file -> Create new file -> .github/workflows/ci.yml, paste this), because a token without
+# the `workflow` scope can't push files under .github/workflows. Then `git pull` before the next push.
+# Every push and pull request: the whole test suite against a real FalkorDB, then every number the README tags
+# checked against the file that measured it. The same commands a judge runs, without Docker Compose.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      falkordb:
+        image: falkordb/falkordb:v4.14.10
+        ports:
+          - 6379:6379
+    env:
+      FALKOR_HOST: localhost
+      FALKOR_PORT: "6379"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Tests, against a real FalkorDB on separate test graphs
+        run: pytest -q
+      - name: README numbers against their sources
+        run: python -m faultline.claims
