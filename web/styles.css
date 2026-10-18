@@ -372,22 +372,13 @@ textarea { width: 100%; min-height: 64px; background: var(--sunk); color: var(--
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* ---------- smaller screens: graph first, then the case file, then the lists ---------- */
-@media (max-width: 1640px) {
-  .tagline, .agent { display: none; }
-}
-@media (max-width: 1600px) {
-  .proof { display: none; }
-}
-@media (max-width: 1380px) and (min-width: 1101px) {
-  .db { display: none; }
-}
+@media (max-width: 1500px) { .db-pill .wide { display: none; } .db-pill .narrow { display: inline; } }
+@media (max-width: 1260px) and (min-width: 1101px) { .tsel .label { display: none; } .sitenav a { padding: 5px 7px; } }
 @media (max-width: 1280px) {
   .layout { grid-template-columns: 300px minmax(0, 1fr) 400px; }
 }
 @media (max-width: 1100px) {
   .top { flex-wrap: wrap; height: auto; padding: 8px 16px; gap: 6px 18px; }
-  .tenants { align-self: auto; flex-wrap: wrap; gap: 2px 16px; }
-  .tenants button { padding: 4px 0; }
   .status { margin-left: 0; gap: 12px; flex-wrap: wrap; }
   .layout { display: flex; flex-direction: column; height: auto; }
   .center { order: 1; }
@@ -399,7 +390,7 @@ textarea { width: 100%; min-height: 64px; background: var(--sunk); color: var(--
   .cmd .kbd { display: none; }
 }
 @media (max-width: 560px) {
-  .db { display: none; }
+  .tsel .label { display: none; }
   .verdict-word { font-size: 38px; }
   .start h1 { font-size: 27px; }
   .legend { display: none; }
@@ -490,5 +481,36 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .sitenav a { padding: 5px 9px; border-radius: 8px; color: var(--muted); white-space: nowrap; text-decoration: none; }
 .sitenav a:hover { color: var(--text); background: var(--panel); }
 .sitenav a[aria-current="page"] { color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); border-radius: 0; }
-@media (max-width: 1500px) { .tenants button { font-size: 12px; } .top { gap: 18px; } }
 @media (max-width: 1100px) { .sitenav { order: 5; width: 100%; overflow-x: auto; } }
+
+/* header: one row that fits; the tenant picker and the status pill replace the old tabs and chips */
+.top { gap: 22px; }
+.brand { text-decoration: none; color: inherit; }
+.tsel { display: flex; align-items: center; gap: 6px; }
+.tsel select { background: var(--panel); color: var(--text); border: 1px solid var(--line-2); border-radius: 8px; padding: 4px 8px; font: 500 12px var(--mono); max-width: 190px; }
+.dbwrap { position: relative; }
+.db-pill { display: inline-flex; align-items: center; gap: 7px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--green-line);
+  background: var(--green-soft); color: var(--green); font: 500 11.5px var(--mono); white-space: nowrap; }
+.db-pill b { font-weight: 600; }
+.db-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+.db-pill svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 2; }
+.db-pill .narrow { display: none; }
+.db-pill.down { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.db-pill.down i { background: var(--accent); box-shadow: none; }
+.db-drop { position: absolute; right: 0; top: calc(100% + 10px); z-index: 60; width: 320px; padding: 16px; border-radius: 14px; background: var(--panel);
+  border: 1px solid var(--line-2); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); font-size: 13px; }
+.db-drop h4 { margin: 0 0 10px; font: 500 10.5px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+.db-drop dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 14px; }
+.db-drop dt { color: var(--dim); }
+.db-drop dd { margin: 0; text-align: right; font-family: var(--mono); }
+.db-drop table { width: 100%; border-collapse: collapse; font: 12px var(--mono); margin-bottom: 14px; }
+.db-drop td { padding: 5px 0; border-top: 1px solid var(--line); color: var(--muted); }
+.db-drop td:not(:first-child) { text-align: right; }
+.db-drop tr.cur td { color: var(--text); }
+.db-drop p { color: var(--muted); }
+.db-drop a { color: var(--amber); }
+@media (max-width: 560px) { .db-drop { position: fixed; left: 12px; right: 12px; top: 120px; width: auto; } }
+
+/* moving between pages cross-fades instead of flashing */
+@view-transition { navigation: auto; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .28s; }

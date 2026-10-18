@@ -63,9 +63,25 @@ export async function loadGraph() {
   ];
   if (cy) cy.destroy();
   shown = null;
-  cy = window.cytoscape({ container: $("#cy"), elements, style: style(), wheelSensitivity: 0.2, minZoom: 0.2, maxZoom: 2.5,
-    layout: { name: "breadthfirst", directed: true, spacingFactor: 1.05, padding: 24, nodeDimensionsIncludeLabels: true,
-      roots: g.nodes.filter((n) => n.exposed).map((n) => n.id) } });
+  const roots = g.nodes.filter((n) => n.exposed).map((n) => n.id);
+  // Up to 30 services read well top-down. Beyond that (Train Ticket's gateway calls about 30 services directly) one
+  // row would run off the canvas, so the services go in rings by hops from the entry points instead.
+  let layout = { name: "breadthfirst", directed: true, spacingFactor: 1.05, padding: 24, nodeDimensionsIncludeLabels: true, roots };
+  if (g.nodes.length > 30) {
+    const out = {};
+    g.edges.forEach((e) => { (out[e.source] = out[e.source] || []).push(e.target); });
+    const depth = {};
+    let ring = roots.length ? roots : [g.nodes[0].id], d = 0;
+    ring.forEach((id) => { depth[id] = 0; });
+    while (ring.length) {
+      d += 1;
+      ring = [...new Set(ring.flatMap((id) => (out[id] || []).filter((m) => depth[m] == null)))];
+      ring.forEach((id) => { depth[id] = d; });
+    }
+    layout = { name: "concentric", concentric: (n) => 100 - (depth[n.id()] ?? d), levelWidth: () => 1, minNodeSpacing: 8,
+      padding: 24, nodeDimensionsIncludeLabels: true, startAngle: -Math.PI / 2 };
+  }
+  cy = window.cytoscape({ container: $("#cy"), elements, style: style(), wheelSensitivity: 0.2, minZoom: 0.1, maxZoom: 2.5, layout });
   home = Object.fromEntries(cy.nodes().map((n) => [n.id(), { ...n.position() }]));
   cy.on("tap", "node", (e) => act.showService(e.target.id()));
   window.__cy = cy;

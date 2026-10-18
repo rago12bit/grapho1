@@ -39,11 +39,6 @@ async function health() {
     $("#offline").hidden = true;
     $("#db").classList.remove("down");
     if (wasDown) loadTenants().catch(() => {});
-    const p = state.health.proof;
-    $("#proof").innerHTML = `${p.tests} tests · ${esc(p.planted)} planted faults · ${esc(p.real)} RCAEval`;
-    const mode = $("#mode");
-    mode.textContent = state.health.claude ? state.health.model : "offline playbook";
-    mode.title = state.health.claude ? "Claude chooses which graph tools to call" : "No ANTHROPIC_API_KEY: a fixed playbook calls the same graph tools";
   } catch {
     $("#offline").hidden = false;
     $("#db").classList.add("down");
@@ -51,18 +46,36 @@ async function health() {
   }
 }
 
+// The status pill opens onto what is actually loaded: the engine, every graph, and what the numbers rest on.
+async function dbDetails() {
+  const box = $("#db-drop");
+  let e = null;
+  try { e = await api("/api/engine"); } catch {}
+  const h = state.health || {}, p = h.proof || {};
+  box.innerHTML = e ? `
+    <h4>Engine</h4>
+    <dl><dt>Database</dt><dd>${esc(e.engine)} ${esc(e.version || "")}</dd><dt>Ping</dt><dd>${e.ping_ms} ms</dd>
+        <dt>Nodes</dt><dd>${e.nodes.toLocaleString()}</dd><dt>Edges</dt><dd>${e.edges.toLocaleString()}</dd>
+        <dt>Agent</dt><dd>${h.claude ? esc(h.model) : "offline playbook"}</dd></dl>
+    <h4>Graphs · one per tenant</h4>
+    <table>${e.graphs.map((g) => `<tr class="${g.tenant === state.tenant ? "cur" : ""}"><td>${esc(g.tenant)}</td><td>${g.nodes.toLocaleString()} n</td><td>${g.edges.toLocaleString()} e</td></tr>`).join("")}</table>
+    <h4>Measured</h4>
+    <p>${p.tests} tests · ${esc(p.planted || "")} planted faults · ${esc(p.real || "")} RCAEval · <a href="/results">results</a></p>`
+    : `<h4>Engine</h4><p>FalkorDB isn't answering. Every answer here is a graph query, so nothing is shown until it is back.</p>`;
+}
+
 async function loadTenants() {
   state.tenants = await api("/api/tenants");
-  const demo = state.tenants.filter((t) => t.kind !== "uploaded"), mine = state.tenants.filter((t) => t.kind === "uploaded");
-  $("#tenants").innerHTML = demo.map((t) =>
-    `<button data-t="${esc(t.id)}" aria-current="${t.id === state.tenant}" title="${esc(t.title)}: ${esc(t.data)}">${esc(t.title.replace(" · RCAEval", ""))}${/RCAEval/.test(t.title) ? `<sup class="real">real</sup>` : ""}</button>`).join("")
-    + (mine.length ? `<select id="mine" aria-label="Your uploads" class="${mine.some((t) => t.id === state.tenant) ? "on" : ""}">
-        <option value="">Your uploads (${mine.length})</option>${mine.map((t) => `<option value="${esc(t.id)}" ${t.id === state.tenant ? "selected" : ""}>${esc(t.title)}</option>`).join("")}</select>` : "");
-  $("#mine")?.addEventListener("change", (e) => e.target.value && switchTenant(e.target.value));
+  const group = (name, ts) => ts.length ? `<optgroup label="${name}">${ts.map((t) =>
+    `<option value="${esc(t.id)}"${t.id === state.tenant ? " selected" : ""}>${esc(t.title.replace(" · RCAEval", ""))}</option>`).join("")}</optgroup>` : "";
+  const real = (t) => /RCAEval/.test(t.title);
+  $("#tenant-sel").innerHTML = group("Demo companies", state.tenants.filter((t) => t.kind !== "uploaded" && !real(t)))
+    + group("Real failures (RCAEval)", state.tenants.filter((t) => t.kind !== "uploaded" && real(t)))
+    + group("Your uploads", state.tenants.filter((t) => t.kind === "uploaded"));
   const cur = state.tenants.find((t) => t.id === state.tenant);
   const n = Object.values(cur?.nodes || {}).reduce((a, b) => a + b, 0);
   const e = Object.values(cur?.edges || {}).reduce((a, b) => a + b, 0);
-  $("#db-stats").textContent = `FalkorDB · ${n.toLocaleString()} nodes · ${e.toLocaleString()} edges`;
+  $("#db-stats").innerHTML = `<b>FalkorDB</b> <span class="wide">· ${n.toLocaleString()} nodes · ${e.toLocaleString()} edges</span><span class="narrow">ready</span>`;
 }
 
 async function switchTenant(t) {
@@ -164,12 +177,26 @@ function wire() {
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => graph.restyle());
   $("#scrub-t").addEventListener("input", (e) => { state.view++; graph.replayAt(e.target.value / 1000); });
   $("#scrub-play").addEventListener("click", () => graph.playReplay(++state.view));
-  $("#tenants").addEventListener("click", (e) => { const b = e.target.closest("button[data-t]"); if (b && b.dataset.t !== state.tenant) switchTenant(b.dataset.t); });
+  $("#tenant-sel").addEventListener("change", (e) => { if (e.target.value !== state.tenant) switchTenant(e.target.value); });
+  $("#db").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const d = $("#db-drop");
+    d.hidden = !d.hidden;
+    $("#db").setAttribute("aria-expanded", String(!d.hidden));
+    if (!d.hidden) dbDetails();
+  });
+  document.addEventListener("click", (e) => { if (!$("#db-drop").contains(e.target)) { $("#db-drop").hidden = true; $("#db").setAttribute("aria-expanded", "false"); } });
   $$(".tab").forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
   $("#cmd").addEventListener("submit", (e) => { e.preventDefault(); run($("#q").value); });
   $("#tour-btn").addEventListener("click", play);
   $("#tour-stop").addEventListener("click", play);
-  $("#home").addEventListener("click", () => { state.selected = null; state.last = null; state.view++; markBoard(null); start(); });
+  $("#home").addEventListener("click", (e) => {
+    // back to where the room starts: the risk board, no case open, a clean address
+    e.preventDefault();
+    history.replaceState(null, "", "/app");
+    state.selected = null; state.last = null; state.view++;
+    setTab("board"); markBoard(null); dismiss(); start();
+  });
   $$("#scope button").forEach((b) => b.addEventListener("click", () => graph.setScope(b.dataset.scope)));
   $("#reset").addEventListener("click", async () => {
     if (!confirm("Rebuild the demo graphs? Actions, investigations and resolutions you made are discarded.")) return;

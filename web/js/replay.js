@@ -5,14 +5,15 @@ import { $, $$, api, esc, mountShell, tenant } from "./shell.js";
 mountShell();
 const T = tenant();
 const q = new URLSearchParams(location.search);
-let cy = null, services = [], incident = null, steps = [], done = null, i = -1, timer = null, speed = 1;
+const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let cy = null, G = null, services = [], incident = null, steps = [], done = null, i = -1, timer = null, speed = 1;
 
 async function boot() {
   let incs = [];
   try {
     const [open, solved, g] = await Promise.all([api(`/api/${T}/incidents?status=open`), api(`/api/${T}/incidents?status=resolved`), api(`/api/${T}/graph`)]);
     incs = [...open, ...solved];
-    graph(g);
+    G = g;
   } catch (e) { $("#verdict").textContent = `Couldn't read ${T}: ${e.message}`; return; }
   const want = q.get("incident") || incs[0]?.id;
   $("#inc").innerHTML = incs.map((x) => `<option value="${esc(x.id)}"${x.id === want ? " selected" : ""}>${esc(x.id)} · ${esc(x.title.slice(0, 40))}${x.status === "resolved" ? " (solved)" : ""}</option>`).join("");
@@ -35,30 +36,57 @@ function pick() {
   $("#rc-chip").textContent = "waiting";
   $("#sus").innerHTML = '<p class="empty">Ranked at the end of the run.</p>';
   bar();
-  api(`/api/${T}/incidents/${encodeURIComponent(incident)}`).then((inc) => {
-    cy && cy.nodes().removeClass("sym seen root cur");
-    cy && cy.getElementById(inc.symptom).addClass("sym");
-  }).catch(() => {});
+  api(`/api/${T}/incidents/${encodeURIComponent(incident)}`).then((inc) => graph(inc.symptom)).catch(() => graph(null));
 }
 
-function graph(g) {
-  services = g.nodes.map((n) => n.id);
-  $("#flow-n").textContent = `${g.nodes.length} services · ${g.edges.length} calls`;
+// The services the incident can reach: its symptom and everything below it on the call graph. That is where the
+// agents look, so the picture stays readable even for Train Ticket's 68 services.
+// `only`, once a run is recorded and the reachable part is large: just what the run touched, what alerted, and the
+// path from the symptom to the cause.
+let SYM = null;
+function graph(symptom, only = null) {
+  SYM = symptom;
+  const out = {};
+  G.edges.forEach((e) => { (out[e.source] = out[e.source] || []).push(e.target); });
+  const keep = new Set(symptom ? [symptom] : G.nodes.map((n) => n.id));
+  const depth = { [symptom]: 0 };
+  for (let ring = [symptom], d = 1; symptom && ring.length; d++) {
+    ring = ring.flatMap((id) => (out[id] || []).filter((m) => !keep.has(m)));
+    ring = [...new Set(ring)];
+    ring.forEach((m) => { keep.add(m); depth[m] = d; });
+  }
+  const reachable = keep.size;
+  if (only) [...keep].forEach((id) => { if (!only.has(id)) keep.delete(id); });
+  services = [...keep];
+  const nodes = G.nodes.filter((n) => keep.has(n.id)), edges = G.edges.filter((e) => keep.has(e.source) && keep.has(e.target));
+  $("#flow-n").textContent = only ? `${nodes.length} of ${reachable} reachable services · the ones this run touched`
+    : `${nodes.length} of ${G.nodes.length} services · reachable from ${symptom || "the entry points"}`;
+  if (cy) cy.destroy();
+  const many = nodes.length > 12;            // a wide fan-out reads better as rings around the symptom
   cy = cytoscape({
-    container: $("#rcy"), minZoom: 0.2, maxZoom: 2.5, wheelSensitivity: 0.25,
-    elements: [...g.nodes.map((n) => ({ data: { id: n.id, label: n.id } })), ...g.edges.map((e, k) => ({ data: { id: `c${k}`, source: e.source, target: e.target } }))],
+    container: $("#rcy"), minZoom: 0.2, maxZoom: 2.2, wheelSensitivity: 0.25,
+    elements: [...nodes.map((n) => ({ data: { id: n.id, label: n.id.replace(/^ts-/, "").replace(/-service$/, "") } })), ...edges.map((e, k) => ({ data: { id: `c${k}`, source: e.source, target: e.target } }))],
     style: [
-      { selector: "node", style: { shape: "round-rectangle", width: "label", height: 22, padding: "8px", "background-color": "#111115", "border-width": 1, "border-color": "#2c2c34",
-        label: "data(label)", color: "#6b6b74", "font-family": "IBM Plex Mono", "font-size": 9, "text-valign": "center", "text-halign": "center" } },
-      { selector: "edge", style: { width: 1, "line-color": "#26262c", "target-arrow-color": "#26262c", "target-arrow-shape": "triangle", "arrow-scale": 0.6, "curve-style": "bezier" } },
+      { selector: "node", style: { shape: "round-rectangle", width: "label", height: 24, padding: "9px", "background-color": "#111115", "border-width": 1, "border-color": "#2c2c34",
+        label: "data(label)", color: "#71717a", "font-family": "IBM Plex Mono", "font-size": 11, "text-valign": "center", "text-halign": "center",
+        "underlay-color": "#ffb347", "underlay-opacity": 0, "underlay-padding": 7, "underlay-shape": "round-rectangle",
+        "transition-property": "border-color, background-color, color, underlay-opacity", "transition-duration": "0.35s" } },
+      { selector: "edge", style: { width: 1.2, "line-color": "#26262c", "target-arrow-color": "#26262c", "target-arrow-shape": "triangle", "arrow-scale": 0.7, "curve-style": "bezier",
+        "transition-property": "line-color, target-arrow-color, width", "transition-duration": "0.35s" } },
       { selector: "node.seen", style: { "border-color": "#ffb347", color: "#f4f4f5", "background-color": "#1c140a" } },
-      { selector: "node.cur", style: { "border-width": 2, "border-color": "#ffb347", color: "#ffb347" } },
-      { selector: "node.sym", style: { "border-color": "#ff6b4a", "background-color": "#24110b", color: "#ff8a6e", "border-width": 2 } },
-      { selector: "node.root", style: { "border-color": "#6ee7b7", "background-color": "#0e231c", color: "#6ee7b7", "border-width": 2.5 } },
-      { selector: "edge.lit", style: { "line-color": "#ff6b4a", "target-arrow-color": "#ff6b4a", width: 2 } },
+      { selector: "edge.seen", style: { "line-color": "#6b5a3a", "target-arrow-color": "#6b5a3a", width: 1.6 } },
+      { selector: "node.cur", style: { "border-width": 2, "border-color": "#ffb347", color: "#ffb347", "underlay-opacity": 0.22 } },
+      { selector: "node.sym", style: { "border-color": "#ff6b4a", "background-color": "#24110b", color: "#ff9a80", "border-width": 2, "underlay-color": "#ff6b4a", "underlay-opacity": 0.14 } },
+      { selector: "node.root", style: { "border-color": "#6ee7b7", "background-color": "#0e231c", color: "#6ee7b7", "border-width": 2.5, "underlay-color": "#6ee7b7", "underlay-opacity": 0.3 } },
+      { selector: "edge.lit", style: { "line-color": "#ff6b4a", "target-arrow-color": "#ff6b4a", width: 2.6 } },
     ],
-    layout: { name: "breadthfirst", directed: true, spacingFactor: 1.05, animate: false },
+    layout: many
+      ? { name: "concentric", concentric: (n) => 100 - (depth[n.id()] ?? 9), levelWidth: () => 1, minNodeSpacing: 10, padding: 30, animate: false }
+      : { name: "breadthfirst", directed: true, roots: symptom ? [symptom] : undefined, spacingFactor: 1.15, padding: 30, animate: false },
   });
+  if (symptom) cy.getElementById(symptom).addClass("sym");
+  cy.on("mouseover", "node", (e) => { $("#rcy").title = e.target.id(); });
+  if (steps.length) show(i);
 }
 
 function record() {
@@ -74,6 +102,7 @@ function record() {
   es.addEventListener("done", (e) => {
     es.close();
     done = JSON.parse(e.data);
+    focus();
     const fdb = steps.reduce((a, s) => a + (s.ms || 0), 0);
     $("#src").textContent = `recorded just now · ${steps.length} steps · ${fdb.toFixed(0)} ms in FalkorDB · ${Math.round(performance.now() - t0)} ms in all`;
     $("#play").disabled = false;
@@ -89,6 +118,19 @@ function record() {
     $("#src").textContent = `failed: ${msg}`;
     $("#play").disabled = false; $("#play").textContent = "▶ Try again";
   });
+}
+
+// After a run: if the reachable part is too big to read, keep the services that matter to this run.
+function focus() {
+  if (!cy || cy.nodes().length <= 22 || !SYM) return;
+  const keep = new Set([SYM, ...steps.flatMap(touched), ...(done?.ranking?.alert_cone || [])]);
+  const root = done?.findings?.root_cause_service;
+  if (root) {
+    keep.add(root);
+    const path = cy.elements().aStar({ root: cy.getElementById(SYM), goal: cy.getElementById(root), directed: true });
+    if (path.found) path.path.nodes().forEach((n) => keep.add(n.id()));
+  }
+  if (keep.size < cy.nodes().length) graph(SYM, keep);
 }
 
 function timeline() {
@@ -119,8 +161,15 @@ function show(k) {
   const tl = $("#tl");                                       // follow the current step inside the list, not the page
   if (cur) tl.scrollTo({ top: cur.offsetTop - tl.clientHeight / 2 + cur.clientHeight / 2, behavior: "smooth" });
   if (cy) {
-    cy.nodes().removeClass("seen cur root"); cy.edges().removeClass("lit");
-    for (let k2 = 0; k2 <= Math.min(i, steps.length - 1); k2++) touched(steps[k2]).forEach((n) => cy.getElementById(n).addClass(k2 === i ? "cur seen" : "seen"));
+    cy.nodes().removeClass("seen cur root"); cy.edges().removeClass("lit seen");
+    const now = i < steps.length && i >= 0 ? touched(steps[i]) : [];
+    for (let k2 = 0; k2 <= Math.min(i, steps.length - 1); k2++) touched(steps[k2]).forEach((n) => cy.getElementById(n).addClass("seen"));
+    now.forEach((n) => cy.getElementById(n).addClass("cur"));
+    cy.edges().filter((e) => e.source().hasClass("seen") && e.target().hasClass("seen")).addClass("seen");
+    // a short pulse on what this step just reached
+    const cur = cy.nodes(".cur");
+    cy.nodes().stop(true).removeStyle("underlay-opacity");     // drop the last pulse so classes decide again
+    if (!reduced && cur.length) cur.animate({ style: { "underlay-opacity": 0.45 } }, { duration: 180, complete: () => cur.animate({ style: { "underlay-opacity": 0.22 } }, { duration: 320 }) });
   }
   if (i >= steps.length && done) verdict(); else partial();
   bar();

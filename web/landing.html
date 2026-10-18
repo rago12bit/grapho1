@@ -106,8 +106,9 @@
     <section class="sits">
       <h2 class="sec-h">Where it sits. <span class="dim">It reads what your stack already emits, and decides only through the graph.</span></h2>
       <div class="sits-card">
-        <svg id="sits" viewBox="0 0 1000 520" role="img" aria-label="Inputs flow into the FalkorDB graph; verdicts and one approved action flow out"></svg>
-        <div class="sits-info" id="sits-info"><p class="mono faint">Tap a part</p></div>
+        <div class="sits-scroll"><svg id="sits" viewBox="0 0 1000 620" role="img" aria-label="Inputs flow into the FalkorDB graph; verdicts and one approved action flow out"></svg></div>
+        <div class="sits-info" id="sits-info" aria-live="polite"><span class="mono">Hover a part</span></div>
+        <span class="sits-note mono">the routes and tools are real</span>
       </div>
     </section>
 
@@ -124,7 +125,7 @@
             <div class="prog" id="prog"></div>
             <div class="fig-box">
               <div class="fig-head mono"><span id="fig-n">Fig 2.1</span><span id="fig-algo" class="hotc"></span></div>
-              <svg id="story" viewBox="0 0 560 420" aria-label="The INC-302 graph at this step"></svg>
+              <svg id="story" viewBox="0 0 600 470" aria-label="The INC-302 graph at this step"></svg>
               <p class="fig-cap" id="fig-cap"></p>
             </div>
           </div>
@@ -141,19 +142,13 @@
 
     <section class="results" id="results">
       <p class="kick">Published evaluation</p>
-      <h2 class="sec-h">All 360 RCAEval failures. <span class="dim">Against the published methods, run on the same cases.</span></h2>
-      <p class="sub">RCAEval's own baseline code in its own image; our BARO run reproduces the paper's numbers exactly. Train Ticket was held out of development.</p>
-      <div class="charts">
-        <figure class="chart">
-          <figcaption>Right service first (AC@1), all 360 cases</figcaption>
-          <div class="bars" data-bars='[["Faultline",0.81,1],["NSigma",0.78],["CIRCA · 240 cases",0.71],["Earliest alert",0.51],["BARO",0.28]]'></div>
-        </figure>
-        <figure class="chart">
-          <figcaption>Held-out Train Ticket, 90 cases: AC@1 · Avg@5</figcaption>
-          <div class="bars pair" data-bars='[["Faultline",0.71,1,0.75],["NSigma",0.76,0,0.83],["BARO",0.67,0,0.80],["TraceRCA · published",0.66,0,0.77]]'></div>
-          <p class="note">NSigma ranks better here. In 20 of our 26 misses the cause alerted but ranked below fifth among 68 services: the next thing to fix.</p>
-        </figure>
-      </div>
+      <h2 class="sec-h">Measured on 360 real outages. <span class="dim">Against the published methods, on the same cases.</span></h2>
+      <a class="res-cta" href="/results">
+        <div class="res-n"><b>0.81</b><span>right first · all 360</span></div>
+        <div class="res-n"><b>0.71</b><span>held-out Train Ticket · NSigma 0.76</span></div>
+        <div class="res-n"><b>94.5–96.8<small>%</small></b><span>planted faults · three held-out seeds</span></div>
+        <div class="res-go">Every result, the losses too <span aria-hidden="true">→</span></div>
+      </a>
     </section>
 
     <section class="run" id="run">

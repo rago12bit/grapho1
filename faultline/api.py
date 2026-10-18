@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, learn, postmortem, public_postmortems, reasoning, seed, site, tools, upload, world
+from . import agent, bench, ingest, learn, postmortem, public_postmortems, reasoning, results, seed, site, tools, upload, world
 from .db import Graph, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 162, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 167, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -527,9 +527,19 @@ def run_experiment(tenant: str, exp_id: str):
     return _guard(site.break_it, _g(tenant), exp_id)
 
 
+@app.get("/api/results")
+def all_results():
+    return {**results.load(), "proof": PROOF, "experiments": len(site.EXPERIMENTS)}
+
+
+@app.post("/api/results/proofs/run")
+def run_proofs():
+    return site.prove_fixes(_g("kestrel"))
+
+
 # path -> page; every page but the incident room is a static file around the same API
 PAGES = {"/": "landing.html", "/app": "index.html", "/oncall": "oncall.html", "/explore": "explore.html",
-         "/break": "break.html", "/replay": "replay.html"}
+         "/break": "break.html", "/replay": "replay.html", "/results": "results.html"}
 
 
 def _page(path: str, file: str):

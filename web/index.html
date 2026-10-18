@@ -13,19 +13,19 @@
 </head>
 <body>
   <header class="top">
-    <button class="brand" id="home" title="Back to the start">
+    <a class="brand" id="home" href="/app" title="Back to the start">
       <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>
       <span class="name serif">Faultline</span>
-      <span class="tagline label">outage root cause on a graph</span>
-    </button>
+    </a>
     <nav class="sitenav" aria-label="Pages">
-      <a href="/app" aria-current="page">Incidents</a><a href="/oncall">On-call</a><a href="/explore">Explore</a><a href="/break">Break it</a><a href="/replay">Replay</a>
+      <a href="/app" aria-current="page">Incidents</a><a href="/oncall">On-call</a><a href="/explore">Explore</a><a href="/break">Break it</a><a href="/replay">Replay</a><a href="/results">Results</a>
     </nav>
-    <nav id="tenants" class="tenants" aria-label="Company"></nav>
     <div class="status">
-      <span id="db" class="db mono"><i></i><span id="db-stats">connecting…</span></span>
-      <span id="proof" class="proof mono" title="pytest; python -m faultline.eval (held-out seeds); every RCAEval RE2 + RE3 case, 360 in all (make eval). On the held-out RE2 Train Ticket set: 64/90."></span>
-      <span class="mono faint agent">agent: <b id="mode"></b></span>
+      <label class="tsel"><span class="label">tenant</span><select id="tenant-sel" aria-label="Company"></select></label>
+      <div class="dbwrap">
+        <button id="db" class="db-pill" aria-expanded="false" aria-controls="db-drop"><i></i><span id="db-stats">connecting…</span><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M2 4 L5 7 L8 4"/></svg></button>
+        <div id="db-drop" class="db-drop" hidden></div>
+      </div>
       <button id="theme" class="theme-btn" aria-label="Switch theme">◐</button>
       <button id="reset" class="btn quiet" title="Rebuild the demo graphs">Reset</button>
       <button id="tour-btn" class="btn solid">Guided demo</button>

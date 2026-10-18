@@ -24,7 +24,7 @@ export function setTenant(t) {
 
 const LINKS = [
   ["/app", "Incidents"], ["/oncall", "On-call"], ["/explore", "Explore"], ["/break", "Break it"], ["/replay", "Replay"],
-  ["/app?tab=memory", "Memory"], ["/app?tab=company", "Company brain"], ["/#results", "Results"],
+  ["/app?tab=memory", "Memory"], ["/app?tab=company", "Company brain"], ["/results", "Results"],
 ];
 const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>';
 
@@ -63,6 +63,7 @@ export function mountShell({ tenants = true } = {}) {
   pill.onclick = (e) => { e.stopPropagation(); drop.hidden = !drop.hidden; pill.setAttribute("aria-expanded", String(!drop.hidden)); };
   document.addEventListener("click", (e) => { if (!drop.contains(e.target)) { drop.hidden = true; pill.setAttribute("aria-expanded", "false"); } });
 
+  smooth();
   if (tenants) loadTenants();
   status();
   setInterval(status, 8000);
@@ -121,3 +122,17 @@ export const ago = (t, now = Date.now() / 1000) => {
   return s < 90 ? `${Math.round(s)} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 172800 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
 };
 export const clock = (t) => new Date(t * 1000).toISOString().slice(11, 16) + " UTC";
+
+// Smooth, eased wheel scrolling (Lenis). Canvases, iframes and scrolling lists keep their own wheel: they carry
+// data-lenis-prevent. Off when the reader asked for reduced motion, and the page works the same without it.
+async function smooth() {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  $$("#cy, #rcy, .tl, iframe, .ex-canvas, .flowbox, .sits-scroll, .heat-wrap, .scroll-x").forEach((el) => el.setAttribute("data-lenis-prevent", ""));
+  try {
+    const { default: Lenis } = await import("https://cdn.jsdelivr.net/npm/lenis@1.1.13/dist/lenis.mjs");
+    const lenis = new Lenis({ lerp: 0.09, smoothWheel: true, anchors: { offset: -70 } });
+    const raf = (t) => { lenis.raf(t); requestAnimationFrame(raf); };
+    requestAnimationFrame(raf);
+    window.__lenis = lenis;
+  } catch { /* offline: native scrolling */ }
+}

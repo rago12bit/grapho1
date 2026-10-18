@@ -165,66 +165,128 @@ const mono = (x, y, t, fill = "#6b6b74", size = 8, anchor = "start") => `<text x
     ${mono(196, iso(46, 46, 34, ...O3)[1] - 26, "GRAPH.COPY", "#ff6b4a")}${mono(196, iso(46, 46, -14, ...O3)[1] - 26, "real graph")}`;
 }
 
-// ---- where it sits -------------------------------------------------------------------------------------------
+// ---- where it sits: inputs on raised tiles, the graph on a plate, the agents above it, proof going out ------------
 {
   const IN = [
-    ["Alerts", "Alertmanager webhook", "Alertmanager posts firing alerts to /alerts/alertmanager; each becomes an Alert node FIRED_ON its service."],
-    ["Deploys", "CI webhook", "CI posts deploys, config changes and flag flips to /changes, with the commits each one ships."],
-    ["Kubernetes", "manifests", "Real manifests give deployments, pods, nodes, images and the config keys each one reads."],
-    ["Owners", "CODEOWNERS · commits", "Who owns each service and who actually changes it, from the projects' own repositories."],
-    ["On-call", "weekly rota", "Shifts in the graph answer who was on call when it started, not only who is on call now."],
-    ["Telemetry", "metrics · logs · traces", "Real metrics, logs and traces from 360 public RCAEval failures, turned into alerts, operations and log patterns."],
+    ["Alerts", "Alertmanager webhook", "alert", "Alertmanager posts firing alerts to /alerts/alertmanager; each becomes an Alert node FIRED_ON its service."],
+    ["Deploys", "CI webhook · commits", "branch", "CI posts deploys, config changes and flag flips to /changes, with the commits each one ships."],
+    ["Kubernetes", "manifests", "pods", "Real manifests give deployments, pods, nodes, images and the config keys each one reads."],
+    ["Owners", "CODEOWNERS · history", "person", "Who owns each service and who actually changes it, from the projects' own repositories."],
+    ["On-call", "weekly rota", "clock", "Shifts in the graph answer who was on call when it started, not only who is on call now."],
+    ["Telemetry", "metrics · logs · traces", "bars", "Real metrics, logs and traces from 360 public RCAEval failures, turned into alerts, operations and log patterns."],
   ];
   const OUT = [
-    ["One approved fix", "with its proof", "A single action, tried on a GRAPH.COPY first. A person approves it, then the alerts decide whether it worked."],
-    ["Who to page", "owner · expert · on call", "The team that owns what broke (not what noticed), its on-call person, and who knows it best."],
-    ["Post-mortem", "markdown", "The case file as a post-mortem: timeline, cause, evidence, the fix and what it predicted."],
-    ["Any agent", "MCP tools", "The same tools over MCP. Every answer comes with the Cypher it ran."],
+    ["One approved fix", "with its proof", "check", "A single action, tried on a GRAPH.COPY first. A person approves it, then the alerts decide whether it worked."],
+    ["Who to page", "owner · expert · on call", "bell", "The team that owns what broke (not what noticed), its on-call person, and who knows it best."],
+    ["Post-mortem", "markdown", "doc", "The case file as a post-mortem: timeline, cause, evidence, the fix and what it predicted."],
+    ["Any agent", "MCP tools", "plug", "The same tools over MCP. Every answer comes with the Cypher it ran."],
   ];
+  // icons in a 40×40 square centred on 0, drawn onto the tile's top face
+  const ICON = {
+    alert: '<path d="M-14 4 L-6 4 L-2 -8 L3 10 L7 0 L13 0"/><circle cx="13" cy="-8" r="2.5" fill="#ff6b4a" stroke="none"/>',
+    branch: '<circle cx="-10" cy="-10" r="3"/><circle cx="-10" cy="10" r="3"/><circle cx="10" cy="-2" r="3"/><path d="M-10 -7 L-10 7 M-10 -2 C -10 -2, 0 -2, 7 -2"/>',
+    pods: '<rect x="-13" y="-13" width="11" height="11"/><rect x="2" y="-13" width="11" height="11"/><rect x="-13" y="2" width="11" height="11"/><rect x="2" y="2" width="11" height="11"/>',
+    person: '<circle cx="0" cy="-6" r="5"/><path d="M-11 12 C -11 2, 11 2, 11 12"/>',
+    clock: '<circle cx="0" cy="0" r="12"/><path d="M0 -7 L0 0 L6 4"/>',
+    bars: '<path d="M-12 12 L-12 2 M-4 12 L-4 -6 M4 12 L4 -1 M12 12 L12 -11"/>',
+    check: '<rect x="-14" y="-7" width="28" height="14" rx="7"/><circle cx="7" cy="0" r="4" fill="#6ee7b7" stroke="none"/>',
+    bell: '<path d="M-9 6 L-9 -2 C -9 -12, 9 -12, 9 -2 L9 6 L12 9 L-12 9 Z"/><path d="M-3 12 L3 12"/>',
+    doc: '<path d="M-10 -13 L6 -13 L11 -8 L11 13 L-10 13 Z"/><path d="M-5 -4 L6 -4 M-5 2 L6 2 M-5 8 L2 8"/>',
+    plug: '<path d="M-12 -6 L-4 -6 L-4 6 L-12 6 Z M-4 0 L4 0 M4 -9 L12 -9 L12 9 L4 9 Z"/>',
+  };
+  const K = 1.45, F = (x, y) => `matrix(${0.866 * K},${0.5 * K},${-0.866 * K},${0.5 * K},${x},${y})`;
+  const W = 34.6 * K, Hh = 20 * K;                         // the top face's half width and half height
+  const slab = (x, y, t, top, side, stroke, w = W, hh = Hh) => `
+    <path d="M${x - w} ${y} L${x} ${y + hh} L${x} ${y + hh + t} L${x - w} ${y + t} Z" fill="${side}" stroke="${stroke}" stroke-width=".8"/>
+    <path d="M${x + w} ${y} L${x} ${y + hh} L${x} ${y + hh + t} L${x + w} ${y + t} Z" fill="${side}" stroke="${stroke}" stroke-width=".8" opacity=".85"/>
+    <path class="face" d="M${x} ${y - hh} L${x + w} ${y} L${x} ${y + hh} L${x - w} ${y} Z" fill="${top}" stroke="${stroke}" stroke-width="1"/>`;
+  const tile = (x, y, icon) => `${slab(x, y, 10, "#141418", "#0c0c0f", "#34343d")}
+    <path d="M${x} ${y - Hh + 6} L${x + W - 10} ${y} L${x} ${y + Hh - 6} L${x - W + 10} ${y} Z" fill="none" stroke="#24242b"/>
+    <g transform="${F(x, y)}" fill="none" stroke="#d4d4d8" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"><g transform="scale(.55)">${ICON[icon]}</g></g>`;
+  const label = (x, y, t, sub, end) => `
+    <text x="${x}" y="${y - 3}" text-anchor="${end ? "end" : "start"}" fill="#f4f4f5" font-size="17" font-weight="500" font-family="Inter">${esc(t)}</text>
+    <text x="${x}" y="${y + 18}" text-anchor="${end ? "end" : "start"}" fill="#8b8b94" font-size="13" font-family="Inter">${esc(sub)}</text>`;
+  const caps = (x, y, t, anchor = "start", fill = "#8b8b94", size = 12) => `<text x="${x}" y="${y}" text-anchor="${anchor}" fill="${fill}" font-size="${size}" letter-spacing="2.4" font-family="IBM Plex Mono">${t}</text>`;
+  const diamond = (path, color, dur, begin = 0, rev = false) => `<path d="M0 -4 L6 0 L0 4 L-6 0 Z" fill="${color}"><animateMotion dur="${dur}s" begin="${begin}s" repeatCount="indefinite" rotate="0"${rev ? ' keyPoints="1;0" keyTimes="0;1" calcMode="linear"' : ""}><mpath href="#${path}"/></animateMotion></path>`;
+
   const svg = $("#sits");
-  const box = (x, y, w, h, title, sub, id, end) => `
-    <g class="part" data-id="${id}" tabindex="0" role="button" aria-label="${esc(title)}">
-      <rect class="box" x="${x}" y="${y}" width="${w}" height="${h}" rx="10" fill="#111115" stroke="#2c2c34"/>
-      <text x="${end ? x + w - 14 : x + 14}" y="${y + 22}" text-anchor="${end ? "end" : "start"}" fill="#f4f4f5" font-size="14" font-weight="600" font-family="Inter">${esc(title)}</text>
-      ${mono(end ? x + w - 14 : x + 14, y + 40, esc(sub), "#6b6b74", 11, end ? "end" : "start")}
-    </g>`;
-  const cx = 500, cy = 330;
-  const plate = (z, f, s) => `<path d="M${[[-150, 0], [0, -86], [150, 0], [0, 86]].map(([x, y]) => [cx + x, cy + y - z]).join("L")}Z" fill="${f}" stroke="${s}"/>`;
-  let h = `${mono(40, 40, "EVIDENCE IN", "#6b6b74", 11)}${mono(960, 40, "PROOF OUT", "#6b6b74", 11, "end")}
-    ${plate(-18, "#0b0b0e", "#1f1f25")}${plate(0, "#121216", "#3a3a44")}`;
-  const pts = [[-60, -10], [-10, -40], [40, -12], [0, 20], [70, 18], [-50, 30]].map(([x, y]) => [cx + x, cy + y - 6]);
-  [[0, 1], [1, 2], [2, 4], [1, 3], [3, 5], [3, 4]].forEach(([a, b]) => { h += `<line x1="${pts[a][0]}" y1="${pts[a][1]}" x2="${pts[b][0]}" y2="${pts[b][1]}" stroke="${a === 1 && b === 3 ? "#ff6b4a" : "#3a3a44"}" stroke-width="1.5"/>`; });
-  pts.forEach((p, i) => { h += `<circle cx="${p[0]}" cy="${p[1]}" r="${i === 3 ? 6 : 4.5}" fill="${i === 3 ? "#ff6b4a" : "#a1a1aa"}"/>`; });
-  h += `<g class="part" data-id="core" tabindex="0" role="button" aria-label="FalkorDB graph">${plate(0, "transparent", "transparent")}
-      <text x="${cx}" y="${cy + 124}" text-anchor="middle" fill="#f4f4f5" font-size="15" font-weight="600" font-family="Inter">FalkorDB graph</text>
-      ${mono(cx, cy + 142, "one per tenant · paths · copies · memory", "#6b6b74", 11, "middle")}</g>`;
-  h += box(cx - 130, 66, 260, 54, "Faultline agents", "triage · investigate · skeptic · respond", "agents");
-  h += `<path d="M${cx - 40} 120 L${cx - 40} ${cy - 92}" stroke="#ff6b4a" class="flow" fill="none"/><path d="M${cx + 40} ${cy - 92} L${cx + 40} 120" stroke="#6ee7b7" class="flow" fill="none"/>
-    ${mono(cx - 50, 184, "HYPOTHESES", "#6b6b74", 10, "end")}${mono(cx + 50, 184, "VERDICTS", "#6b6b74", 10)}`;
-  IN.forEach(([t, s], i) => {
-    const y = 60 + i * 70, d = `M262 ${y + 27} C 330 ${y + 27}, 330 ${cy}, ${cx - 150} ${cy}`;
-    h += `<path d="${d}" stroke="#26262c" fill="none"/><path d="${d}" stroke="#ff6b4a" stroke-opacity=".5" class="flow" fill="none"/>` + box(40, y, 222, 54, t, s, `in${i}`);
+  let h = `<defs><pattern id="isogrid" width="56" height="32.3" patternUnits="userSpaceOnUse"><path d="M0 0 L56 32.3 M56 0 L0 32.3" stroke="#18181d" stroke-width="1"/></pattern>
+    <radialGradient id="plateglow"><stop offset="0" stop-color="#7c6cf6" stop-opacity=".22"/><stop offset="1" stop-color="#7c6cf6" stop-opacity="0"/></radialGradient></defs>
+    <rect width="1000" height="620" fill="url(#isogrid)"/>`;
+  // the graph plate
+  const PX = 500, PY = 400, PW = 160, PH = 92;
+  const plate = (y, top, stroke, t) => `
+    <path d="M${PX - PW} ${y} L${PX} ${y + PH} L${PX} ${y + PH + t} L${PX - PW} ${y + t} Z" fill="#0b0b0e" stroke="${stroke}" stroke-width="1"/>
+    <path d="M${PX + PW} ${y} L${PX} ${y + PH} L${PX} ${y + PH + t} L${PX + PW} ${y + t} Z" fill="#0b0b0e" stroke="${stroke}" stroke-width="1"/>
+    <path d="M${PX} ${y - PH} L${PX + PW} ${y} L${PX} ${y + PH} L${PX - PW} ${y} Z" fill="${top}" stroke="${stroke}" stroke-width="1.4"/>`;
+  h += `<ellipse cx="${PX}" cy="${PY + 10}" rx="240" ry="130" fill="url(#plateglow)"/>`;
+  // flows in: from each input tile to a point along the plate's upper-left edge
+  const INX = 250, INY = (i) => 112 + i * 78, OUTX = 760, OUTY = (i) => 150 + i * 98;
+  IN.forEach((_, i) => {
+    const t = (i + 0.5) / IN.length, tx = PX - PW + PW * t, ty = PY - PH * t;
+    h += `<path id="fin${i}" class="wire" data-for="in${i}" d="M${INX + W} ${INY(i)} C ${INX + W + 90} ${INY(i)}, ${tx - 90} ${ty + 30}, ${tx} ${ty}" fill="none" stroke="#5b5b66" stroke-dasharray="3 5"/>`;
+    h += diamond(`fin${i}`, i % 3 === 0 ? "#ff6b4a" : "#e4e4e7", 4 + i * 0.4, -i * 0.7);
   });
-  OUT.forEach(([t, s], i) => {
-    const y = 120 + i * 84, d = `M${cx + 150} ${cy} C 680 ${cy}, 680 ${y + 27}, 738 ${y + 27}`;
-    h += `<path d="${d}" stroke="#26262c" fill="none"/><path d="${d}" stroke="#6ee7b7" stroke-opacity=".45" class="flow" fill="none"/>` + box(738, y, 222, 54, t, s, `out${i}`, true);
+  h += plate(PY + 20, "#0e0e12", "#2c2c34", 12) + plate(PY, "#121218", "#7c6cf6", 14);
+  // a small graph on the plate, drawn on its face
+  const nodes = [[-48, -10], [-14, -34], [22, -40], [-4, 2], [36, -2], [-30, 30], [18, 34]];
+  const edges = [[0, 1], [1, 2], [1, 3], [3, 4], [2, 4], [3, 5], [3, 6], [4, 6]];
+  const hot = new Set(["1-3", "3-6"]);
+  h += `<g transform="matrix(${0.866 * 1.55},${0.5 * 1.55},${-0.866 * 1.55},${0.5 * 1.55},${PX},${PY})">
+    ${edges.map(([a, b]) => `<line x1="${nodes[a][0]}" y1="${nodes[a][1]}" x2="${nodes[b][0]}" y2="${nodes[b][1]}" stroke="${hot.has(`${a}-${b}`) ? "#6ee7b7" : "#6b6b74"}" stroke-width="1.6" vector-effect="non-scaling-stroke"/>`).join("")}
+    ${nodes.map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="${i === 1 ? 5 : 3.6}" fill="${i === 1 ? "#ff6b4a" : "#0b0b0e"}" stroke="${i === 1 ? "#ff6b4a" : "#d4d4d8"}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`).join("")}</g>`;
+  h += `<g class="part" data-id="core" tabindex="0" role="button" aria-label="FalkorDB graph"><path d="M${PX} ${PY - PH} L${PX + PW} ${PY} L${PX} ${PY + PH} L${PX - PW} ${PY} Z" fill="transparent"/></g>`;
+  // the agents plate and its two links to the graph
+  const AX = 500, AY = 168;
+  h += `<path id="fhyp" d="M${AX - 22} ${AY + 40} L${AX - 22} ${PY - PH + 14}" stroke="#5b5b66" stroke-dasharray="3 5" fill="none"/>
+    <path id="fver" d="M${AX + 22} ${PY - PH + 14} L${AX + 22} ${AY + 40}" stroke="#5b5b66" stroke-dasharray="3 5" fill="none"/>
+    ${diamond("fhyp", "#e4e4e7", 2.6)}${diamond("fver", "#8b7cf6", 2.6, -1.3)}
+    ${caps(AX - 34, 268, "HYPOTHESES", "end")}${caps(AX + 34, 268, "VERDICTS")}`;
+  h += `<g class="part" data-id="agents" tabindex="0" role="button" aria-label="Faultline agents">
+    ${slab(AX, AY, 12, "#121216", "#0b0b0e", "#3a3a44", W * 1.9, Hh * 1.9)}
+    ${[[-34, 0, "#a1a1aa"], [0, -14, "#a1a1aa"], [32, 2, "#6ee7b7"]].map(([dx, dy, c]) => {
+      const x = AX + dx, y = AY + dy - 8;
+      return `<path d="M${x} ${y - 9} L${x + 11} ${y - 3} L${x} ${y + 3} L${x - 11} ${y - 3} Z M${x - 11} ${y - 3} L${x - 11} ${y + 9} L${x} ${y + 15} L${x + 11} ${y + 9} L${x + 11} ${y - 3} M${x} ${y + 3} L${x} ${y + 15}" fill="#0e0e12" stroke="${c}" stroke-width="1.3" stroke-linejoin="round"/>`;
+    }).join("")}
+    <text x="${AX}" y="${AY - 104}" text-anchor="middle" fill="#f4f4f5" font-size="19" font-weight="500" font-family="Inter">Faultline agents</text>
+    ${caps(AX, AY - 80, "TRIAGE · INVESTIGATE · SKEPTIC · RESPOND", "middle")}</g>`;
+  // flows out: from the agents plate to each output tile
+  OUT.forEach((_, i) => {
+    h += `<path id="fout${i}" class="wire" data-for="out${i}" d="M${AX + W * 1.9} ${AY} C ${AX + W * 1.9 + 110} ${AY}, ${OUTX - W - 120} ${OUTY(i)}, ${OUTX - W} ${OUTY(i)}" fill="none" stroke="#5b5b66" stroke-dasharray="3 5"/>`;
+    h += diamond(`fout${i}`, "#6ee7b7", 3.4 + i * 0.4, -i * 0.8);
   });
+  IN.forEach(([t, sub, icon], i) => {
+    h += `<g class="part" data-id="in${i}" tabindex="0" role="button" aria-label="${esc(t)}">${tile(INX, INY(i), icon)}${label(INX - W - 22, INY(i), t, sub, true)}</g>`;
+  });
+  OUT.forEach(([t, sub, icon], i) => {
+    h += `<g class="part" data-id="out${i}" tabindex="0" role="button" aria-label="${esc(t)}">${tile(OUTX, OUTY(i), icon)}${label(OUTX + W + 22, OUTY(i), t, sub)}</g>`;
+  });
+  h += caps(30, 36, "EVIDENCE IN", "start", "#6b6b74", 11) + caps(970, 36, "PROOF OUT", "end", "#6b6b74", 11);
+  h += `<circle cx="${PX + 190}" cy="${PY + 98}" r="5" fill="#8b7cf6"/>
+    <text x="${PX + 204}" y="${PY + 104}" fill="#f4f4f5" font-size="20" font-weight="500" font-family="Inter">FalkorDB graph</text>
+    ${caps(PX + 204, PY + 132, "ONE GRAPH PER TENANT")}${caps(PX + 204, PY + 154, "PATHS · COPIES · CAUSED_BY")}${caps(PX + 204, PY + 176, "MEMORY ON THE NODES")}`;
   svg.innerHTML = h;
+
   const TEXT = {
     core: ["FalkorDB graph", "Every company is its own graph. The investigation walks CALLS paths, copies the graph to prove a fix, and keeps what happened as memory on the nodes."],
     agents: ["Faultline agents", "Triage, investigator, skeptic and responder hand off through the graph. They propose; the graph checks every claim before it is shown."],
   };
-  IN.forEach(([t, , d], i) => { TEXT[`in${i}`] = [t, d]; });
-  OUT.forEach(([t, , d], i) => { TEXT[`out${i}`] = [t, d]; });
+  IN.forEach(([t, , , d], i) => { TEXT[`in${i}`] = [t, d]; });
+  OUT.forEach(([t, , , d], i) => { TEXT[`out${i}`] = [t, d]; });
   const info = $("#sits-info");
+  const idle = info.innerHTML;
   const sel = (id) => {
     $$(".part", svg).forEach((p) => p.classList.toggle("sel", p.dataset.id === id));
-    info.innerHTML = `<b>${esc(TEXT[id][0])}</b><p>${esc(TEXT[id][1])}</p>`;
+    $$(".wire", svg).forEach((w) => w.classList.toggle("on", w.dataset.for === id));
+    info.innerHTML = id ? `<b>${esc(TEXT[id][0])}</b><p>${esc(TEXT[id][1])}</p>` : idle;
   };
   $$(".part", svg).forEach((p) => {
+    p.addEventListener("pointerenter", (e) => { if (e.pointerType === "mouse") sel(p.dataset.id); });
     p.addEventListener("click", () => sel(p.dataset.id));
+    p.addEventListener("focus", () => sel(p.dataset.id));
     p.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sel(p.dataset.id); } });
   });
+  svg.addEventListener("pointerleave", (e) => { if (e.pointerType === "mouse") sel(null); });
 }
 
 // ---- how it decides: the steps scroll, the figure stays and changes ----------------------------------------------
@@ -284,46 +346,52 @@ CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson, at: $at})` },
       <pre class="code">${cypher(s.q)}</pre></div>
     </article>`).join("");
   $("#prog").innerHTML = STEPS.map((s, i) => `<button data-i="${i}" aria-label="Step ${i + 1}: ${s.name}">${s.name}</button>`).join("");
-  $$("#prog button").forEach((b) => b.onclick = () => $(`.step[data-i="${b.dataset.i}"]`).scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" }));
+  $$("#prog button").forEach((b) => b.onclick = () => {
+    const el = $(`.step[data-i="${b.dataset.i}"]`);
+    if (window.__lenis) window.__lenis.scrollTo(el, { offset: -innerHeight / 2 + el.offsetHeight / 2 });
+    else el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+  });
   $$(".step .copy").forEach((b) => b.onclick = () => copy(STEPS[b.dataset.q].q, b));
 
+  // Layout: three columns, every label placed where no edge or node runs through it; arrows show direction.
   const N = {
-    inc: [470, 46, "INC-302", "INCIDENT"], sym: [470, 168, "mobile-bff", ""], auth: [270, 118, "auth", ""], users: [270, 222, "users", ""],
-    pdb: [270, 326, "payments-db", ""], d: [74, 118, "D-5201", "DEPLOY"], f: [74, 222, "F-5202", "FLAG"], c: [74, 326, "C-5101", "CONFIG"],
-    act: [470, 290, "rollback auth", "ACTION"], les: [470, 378, "Lesson", "LESSON"],
+    act: [86, 64, "rollback auth", "ACTION"], inc: [508, 64, "INC-302", "INCIDENT"],
+    d: [86, 158, "D-5201", "DEPLOY"], f: [86, 288, "F-5202", "FLAG"], c: [86, 410, "C-5101", "CONFIG"],
+    auth: [300, 158, "auth", ""], users: [300, 288, "users", ""], pdb: [300, 410, "payments-db", ""],
+    sym: [508, 208, "mobile-bff", ""], les: [508, 410, "Lesson", "LESSON"],
   };
   const svg = $("#story");
   const node = (k) => { const [x, y, t, kind] = N[k]; return `
-    <g class="n" id="n-${k}"><rect x="${x - 56}" y="${y - 17}" width="112" height="34" rx="9" fill="#111115" stroke="#2c2c34"/>
-    <text x="${x}" y="${y + 4.5}" text-anchor="middle" fill="#a1a1aa" font-size="12.5" font-family="IBM Plex Mono">${t}</text>
-    ${kind ? mono(x, y - 22, kind, "#4b4b55", 8.5, "middle") : ""}</g>`; };
-  const edge = (id, d, label, lx, ly) => `<path class="e" id="e-${id}" d="${d}" fill="none" stroke="#2c2c34" stroke-width="1.4"/>${label ? `<text class="x" id="t-${id}" x="${lx}" y="${ly}" fill="#4b4b55" font-size="8.5" font-family="IBM Plex Mono">${label}</text>` : ""}`;
-  const badge = (id, x, y, text) => `<g class="x" id="b-${id}"><rect x="${x}" y="${y}" width="${text.length * 6.1 + 14}" height="18" rx="9" fill="#24110b" stroke="#ff6b4a" stroke-opacity=".5"/>${mono(x + 7, y + 12.5, text, "#ff8a6e", 9.5)}</g>`;
-  const note = (id, x, y, text, color = "#6b6b74") => `<text class="x" id="${id}" x="${x}" y="${y}" fill="${color}" font-size="10" font-family="IBM Plex Mono">${text}</text>`;
+    <g class="n" id="n-${k}"><rect x="${x - 60}" y="${y - 18}" width="120" height="36" rx="10" fill="#111115" stroke="#2c2c34"/>
+    <text x="${x}" y="${y + 5}" text-anchor="middle" fill="#a1a1aa" font-size="13.5" font-weight="500" font-family="IBM Plex Mono">${t}</text>
+    ${kind ? mono(x, y - 25, kind, "#5b5b66", 9.5, "middle") : ""}</g>`; };
+  const edge = (id, d, label, lx, ly, anchor = "middle") => `<path class="e" id="e-${id}" d="${d}" fill="none" stroke="#2c2c34" stroke-width="1.4" marker-end="url(#arr)"/>${label ? `<text class="x" id="t-${id}" x="${lx}" y="${ly}" text-anchor="${anchor}" fill="#4b4b55" font-size="10" font-family="IBM Plex Mono">${label}</text>` : ""}`;
+  const badge = (id, x, y, text) => `<g class="x" id="b-${id}"><rect x="${x}" y="${y}" width="${text.length * 6.6 + 16}" height="20" rx="10" fill="#24110b" stroke="#ff6b4a" stroke-opacity=".55"/>${mono(x + 8, y + 14, text, "#ff9a80", 10.5)}</g>`;
+  const note = (id, x, y, text, color = "#6b6b74", anchor = "middle") => `<text class="x" id="${id}" x="${x}" y="${y}" text-anchor="${anchor}" fill="${color}" font-size="11" font-family="IBM Plex Mono">${text}</text>`;
+  svg.setAttribute("viewBox", "0 0 600 470");
   svg.innerHTML = `
-    ${mono(74, 22, "CHANGES", "#6b6b74", 9.5, "middle")}${mono(270, 22, "SERVICES", "#6b6b74", 9.5, "middle")}${mono(470, 22, "SYMPTOM", "#6b6b74", 9.5, "middle")}
-    <rect class="x" id="copy" x="8" y="66" width="544" height="290" rx="14" fill="rgba(255,107,74,.03)" stroke="#ff6b4a" stroke-dasharray="5 5"/>
-    ${note("copy-t", 20, 345, "GRAPH.COPY · proof_7c1e", "#ff6b4a")}
-    ${edge("calls1", "M414 168 C 370 168, 360 118, 326 118", "CALLS", 352, 136)}
-    ${edge("calls2", "M270 135 L270 205", "CALLS", 276, 174)}
-    ${edge("calls3", "M414 176 C 360 190, 380 326, 326 326", "4 hops", 362, 262)}
-    ${edge("ch1", "M130 118 L214 118", "CHANGED", 146, 112)}
-    ${edge("ch2", "M130 222 L214 222", "CHANGED", 146, 216)}
-    ${edge("ch3", "M130 326 L214 326", "CHANGED", 146, 320)}
-    <path class="e" id="e-cb" d="M470 151 C 470 92, 300 84, 276 101 M264 101 C 220 80, 110 80, 80 101" fill="none" stroke="transparent" stroke-width="2.6"/>
-    ${note("cb-t", 330, 86, "CAUSED_BY", "#ff6b4a")}
-    ${edge("act", "M414 300 C 250 400, 110 390, 74 343", "REVERTS", 200, 380)}
-    ${edge("root", "M414 42 C 220 34, 90 56, 74 101", "ROOT_CAUSE", 188, 44)}
-    ${edge("les", "M526 52 C 556 120, 556 330, 526 372", "TAUGHT", 512, 220)}
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="context-stroke"/></marker></defs>
+    ${mono(86, 18, "CHANGES", "#6b6b74", 10.5, "middle")}${mono(300, 18, "SERVICES", "#6b6b74", 10.5, "middle")}${mono(508, 18, "SYMPTOM", "#6b6b74", 10.5, "middle")}
+    <rect class="x" id="copy" x="12" y="120" width="576" height="338" rx="16" fill="rgba(255,107,74,.035)" stroke="#ff6b4a" stroke-dasharray="5 5"/>
+    ${note("copy-t", 578, 140, "GRAPH.COPY · proof_7c1e", "#ff6b4a", "end")}
+    ${edge("calls1", "M448 208 C 405 208, 405 158, 362 158", "CALLS", 405, 170)}
+    ${edge("calls2", "M332 176 L332 268", "CALLS", 340, 226, "start")}
+    ${edge("calls3", "M448 220 C 410 270, 420 410, 362 410", "via 4 hops", 424, 336, "start")}
+    ${edge("ch1", "M146 158 L238 158", "CHANGED", 192, 150)}
+    ${edge("ch2", "M146 288 L238 288", "CHANGED", 192, 280)}
+    ${edge("ch3", "M146 410 L238 410", "CHANGED", 192, 402)}
+    ${edge("act", "M42 82 L42 138", "REVERTS", 50, 114, "start")}
+    ${edge("root", "M448 70 L148 146", "ROOT_CAUSE", 300, 100)}
+    ${edge("les", "M568 74 C 598 160, 598 320, 568 392", "TAUGHT", 584, 300, "end")}
     ${Object.keys(N).map(node).join("")}
-    ${badge("sym", 422, 190, "A-9102 · 13:40")}
-    ${badge("auth", 222, 140, "A-9101 · 13:38")}
-    ${note("pdb-a", 226, 356, "alerts: INC-301's")}
-    ${note("users-a", 246, 254, "no alert")}
-    ${note("s-d", 20, 150, "0.96 · leads", "#ff6b4a")}
-    ${note("s-f", 20, 254, "0.53 · users quiet")}
-    ${note("s-c", 20, 358, "0.63 · INC-301's")}
-    ${note("pred", 352, 238, "predicted: clears 2 of 2", "#6ee7b7")}`;
+    ${badge("sym", 462, 232, "A-9102 · 13:40")}
+    ${badge("auth", 202, 182, "A-9101 · 13:38")}
+    ${note("pdb-a", 300, 446, "alerts belong to INC-301")}
+    ${note("users-a", 270, 320, "no alert")}
+    ${note("s-d", 86, 192, "0.96 · leads", "#ff6b4a")}
+    ${note("s-f", 86, 322, "0.53 · users quiet")}
+    ${note("s-c", 86, 444, "0.63 · INC-301's")}
+    ${note("pred", 508, 282, "predicted: clears 2 of 2", "#6ee7b7")}`;
 
   const paint = (k, mode) => {
     const g = svg.querySelector(`#n-${k}`), r = g.querySelector("rect"), t = g.querySelector("text");
@@ -331,37 +399,42 @@ CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson, at: $at})` },
       hot: ["#24110b", "#ff6b4a", "#f4f4f5", 1], ok: ["#0e231c", "#6ee7b7", "#6ee7b7", 1], hidden: ["#111115", "#2c2c34", "#a1a1aa", 0] }[mode];
     r.setAttribute("fill", C[0]); r.setAttribute("stroke", C[1]); t.setAttribute("fill", C[2]); g.style.opacity = C[3];
   };
-  const line = (id, mode) => {
+  // an edge's mode; on the Prove step, the two edges the CAUSED_BY chain runs along are relabelled
+  const line = (id, mode, label) => {
     const e = svg.querySelector(`#e-${id}`), t = svg.querySelector(`#t-${id}`);
     const C = { hidden: ["#2c2c34", 0, 1.4], idle: ["#2c2c34", 1, 1.4], on: ["#5b5b64", 1, 1.6], hot: ["#ff6b4a", 1, 2.4], ok: ["#6ee7b7", 1, 1.8] }[mode];
     e.setAttribute("stroke", C[0]); e.style.opacity = C[1]; e.setAttribute("stroke-width", C[2]);
-    if (t) { t.style.opacity = C[1]; t.setAttribute("fill", mode === "hot" ? "#ff6b4a" : mode === "ok" ? "#6ee7b7" : "#4b4b55"); }
+    if (t) {
+      t.style.opacity = C[1];
+      t.setAttribute("fill", mode === "hot" ? "#ff6b4a" : mode === "ok" ? "#6ee7b7" : "#5b5b66");
+      t.textContent = label || t.dataset.base || (t.dataset.base = t.textContent);
+    }
   };
   const H = "hidden";
   const STATE = [
     { n: { inc: "on", sym: "hot", auth: "hot", users: "idle", pdb: "idle", d: H, f: H, c: H, act: H, les: H },
-      e: { calls1: "idle", calls2: "idle", calls3: "idle", ch1: H, ch2: H, ch3: H, cb: H, act: H, root: H, les: H }, x: ["b-sym", "b-auth"] },
+      e: { calls1: "idle", calls2: "idle", calls3: "idle", ch1: H, ch2: H, ch3: H, act: H, root: H, les: H }, x: ["b-sym", "b-auth"] },
     { n: { inc: "on", sym: "hot", auth: "hot", users: "on", pdb: "on", d: "on", f: "on", c: "on", act: H, les: H },
-      e: { calls1: "on", calls2: "on", calls3: "on", ch1: "on", ch2: "on", ch3: "on", cb: H, act: H, root: H, les: H }, x: ["b-sym", "b-auth", "pdb-a", "users-a"] },
+      e: { calls1: "on", calls2: "on", calls3: "on", ch1: "on", ch2: "on", ch3: "on", act: H, root: H, les: H }, x: ["b-sym", "b-auth", "pdb-a", "users-a"] },
     { n: { inc: "on", sym: "hot", auth: "hot", users: "on", pdb: "on", d: "hot", f: "off", c: "off", act: H, les: H },
-      e: { calls1: "on", calls2: "idle", calls3: "idle", ch1: "hot", ch2: "idle", ch3: "idle", cb: H, act: H, root: H, les: H },
+      e: { calls1: "on", calls2: "idle", calls3: "idle", ch1: "hot", ch2: "idle", ch3: "idle", act: H, root: H, les: H },
       x: ["b-sym", "b-auth", "pdb-a", "users-a", "s-d", "s-f", "s-c"] },
     { n: { inc: "on", sym: "hot", auth: "hot", users: "off", pdb: "off", d: "hot", f: "off", c: "off", act: H, les: H },
-      e: { calls1: "idle", calls2: "idle", calls3: "idle", ch1: "idle", ch2: "idle", ch3: "idle", cb: "hot", act: H, root: H, les: H },
-      x: ["b-sym", "b-auth", "copy", "copy-t", "cb-t", "pred"] },
+      e: { calls1: ["hot", "CAUSED_BY"], calls2: "idle", calls3: "idle", ch1: ["hot", "CAUSED_BY"], ch2: "idle", ch3: "idle", act: H, root: H, les: H },
+      x: ["b-sym", "b-auth", "copy", "copy-t", "pred"] },
     { n: { inc: "on", sym: "ok", auth: "ok", users: "off", pdb: "off", d: "on", f: "off", c: "off", act: "hot", les: H },
-      e: { calls1: "ok", calls2: "idle", calls3: "idle", ch1: "on", ch2: "idle", ch3: "idle", cb: H, act: "hot", root: H, les: H }, x: [] },
+      e: { calls1: "ok", calls2: "idle", calls3: "idle", ch1: "on", ch2: "idle", ch3: "idle", act: "hot", root: H, les: H }, x: [] },
     { n: { inc: "hot", sym: "ok", auth: "ok", users: "idle", pdb: "idle", d: "hot", f: "idle", c: "idle", act: "ok", les: "on" },
-      e: { calls1: "idle", calls2: "idle", calls3: "idle", ch1: "on", ch2: "idle", ch3: "idle", cb: H, act: "ok", root: "hot", les: "on" }, x: [] },
+      e: { calls1: "idle", calls2: "idle", calls3: "idle", ch1: "on", ch2: "idle", ch3: "idle", act: "ok", root: "hot", les: "on" }, x: [] },
   ];
-  const ALL_X = ["b-sym", "b-auth", "pdb-a", "users-a", "s-d", "s-f", "s-c", "copy", "copy-t", "cb-t", "pred"];
+  const ALL_X = ["b-sym", "b-auth", "pdb-a", "users-a", "s-d", "s-f", "s-c", "copy", "copy-t", "pred"];
   let cur = -1;
   const go = (i) => {
     if (i === cur) return;
     cur = i;
     const s = STATE[i];
     Object.entries(s.n).forEach(([k, m]) => paint(k, m));
-    Object.entries(s.e).forEach(([k, m]) => line(k, m));
+    Object.entries(s.e).forEach(([k, m]) => (Array.isArray(m) ? line(k, ...m) : line(k, m)));
     ALL_X.forEach((id) => { svg.querySelector(`#${id}`).style.opacity = s.x.includes(id) ? 1 : 0; });
     $$("#prog button").forEach((b, j) => { b.classList.toggle("on", j === i); b.classList.toggle("done", j < i); });
     $$(".step").forEach((el, j) => el.classList.toggle("on", j === i));

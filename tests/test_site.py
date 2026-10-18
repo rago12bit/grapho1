@@ -35,7 +35,8 @@ def _tt(method: str) -> tuple[float, float]:
     return float(ac1_ours if ac1_ours != "–" else ac1_pub), float(avg_ours if avg_ours != "–" else avg_pub)
 
 
-PAGES = {"/": "landing.js", "/app": "main.js", "/oncall": "oncall.js", "/explore": "explore.js", "/break": "break.js", "/replay": "replay.js"}
+PAGES = {"/": "landing.js", "/app": "main.js", "/oncall": "oncall.js", "/explore": "explore.js", "/break": "break.js",
+         "/replay": "replay.js", "/results": "results.js"}
 
 
 def test_every_page_is_served_with_its_own_script_and_nothing_missing():
@@ -51,15 +52,14 @@ def test_every_page_is_served_with_its_own_script_and_nothing_missing():
             assert (ROOT / "web" / "js" / (ref[0] or ref[1])).is_file(), (js.name, ref)
 
 
-def test_the_landing_bars_are_the_eval_numbers():
-    bars = [json.loads(b.replace("&amp;", "&")) for b in re.findall(r"data-bars='([^']+)'", LANDING)]
-    names = {"Faultline": "Faultline (metrics)", "NSigma": "NSigma", "CIRCA · 240 cases": "CIRCA",
-             "Earliest alert": "Earliest alert (metrics)", "BARO": "BARO"}
-    for name, v, *_ in bars[0]:
-        assert v == ALL[names[name]][0], name
-    tt = {"Faultline": "Faultline (metrics)", "NSigma": "NSigma", "BARO": "BARO", "TraceRCA · published": "TraceRCA (not run here)"}
-    for name, ac1, _, avg5 in bars[1]:
-        assert (ac1, avg5) == _tt(tt[name]), name
+def test_the_results_teaser_on_the_landing_page_is_the_eval():
+    teaser = LANDING[LANDING.index('class="res-cta"'):LANDING.index("</a>", LANDING.index('class="res-cta"'))]
+    nums = re.findall(r"<b>([\d.–]+)", teaser)
+    assert nums[0] == f"{ALL['Faultline (metrics)'][0]:.2f}"
+    assert nums[1] == f"{_tt('Faultline (metrics)')[0]:.2f}" and f"NSigma {_tt('NSigma')[0]:.2f}" in teaser
+    readme = (ROOT / "README.md").read_text()
+    seeds = [float(x) for x in re.findall(r"→ ([\d.]+)% \(seed \d+\)", readme)]
+    assert nums[2] == f"{min(seeds)}–{max(seeds)}"
 
 
 def test_the_headline_numbers_match_the_eval():

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Results · Faultline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
+  <link rel="stylesheet" href="/static/pages.css">
+  <link rel="stylesheet" href="/static/results.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+</head>
+<body>
+  <main class="page" id="main">
+    <p class="kick">Results</p>
+    <h1 class="page-h">Measured, not claimed. <span class="dim">Every number here is read from the file that publishes it.</span></h1>
+    <p class="page-sub">Real outages from the public RCAEval benchmark against the published methods run on the same cases, a held-out set kept out of development, planted faults with ablations, learning, scale, and the fix proofs run live. Where Faultline loses, this page says so.</p>
+    <div class="kpis" id="kpis"></div>
+    <nav class="toc" id="toc" aria-label="Sections">
+      <a href="#real">Real outages</a><a href="#held">Held out</a><a href="#planted">Planted faults</a><a href="#learning">Learning</a>
+      <a href="#scale">Scale</a><a href="#proofs">Fix proofs</a><a href="#limits">Limits</a><a href="#reproduce">Reproduce</a>
+    </nav>
+
+    <section class="rs" id="real">
+      <div class="rs-head"><p class="kick">01 · Real outages</p><h2>All 360 RCAEval failures, three systems.</h2>
+        <p>RE2 injects CPU, memory, disk, delay, loss and socket faults; RE3 plants bugs in the code. Every method is RCAEval's own implementation, run here on the same cases, scored with RCAEval's service mapping. Our BARO run reproduces the paper's Table 6 exactly.</p></div>
+      <div class="row wrap"><div class="seg" role="group" aria-label="Metric" id="metric"><button data-m="0" aria-pressed="true">AC@1 · right first</button><button data-m="1" aria-pressed="false">Avg@5 · top five</button></div>
+        <span class="faint mono" style="font-size:12px">brighter = better · RE2 Train Ticket was held out of development</span></div>
+      <div class="card heat-wrap"><table class="heat" id="heat"></table></div>
+      <div class="two">
+        <div class="card pad"><h3 class="h3">All 360, ranked</h3><div class="hbars" id="rank360"></div></div>
+        <div class="card pad"><h3 class="h3">What this says</h3>
+          <ul class="says" id="says"></ul></div>
+      </div>
+    </section>
+
+    <section class="rs" id="held">
+      <div class="rs-head"><p class="kick">02 · Held out</p><h2>90 Train Ticket failures nobody looked at while building it.</h2>
+        <p>Settings were committed before any result outside Online Boutique was seen. RE2 Train Ticket was opened once, after v2 was frozen, and v3 was built on the other 270 cases only.</p></div>
+      <div class="two">
+        <div class="card pad"><h3 class="h3">RE2 Train Ticket · AC@1 and Avg@5</h3><div class="legend2"><span><i class="a"></i>AC@1</span><span><i class="b"></i>Avg@5</span></div><div class="hbars pair" id="heldbars"></div>
+          <p class="note" id="heldnote"></p></div>
+        <div class="card pad"><h3 class="h3">How the judge got here</h3>
+          <ol class="timeline2" id="versions">
+            <li><span class="v">v1</span><div><b>Pre-registered</b> <code>6d9d5a1</code><p>Settings fixed before any Sock Shop, Train Ticket or RE3 result. 155 of 270 dev cases first.</p></div></li>
+            <li><span class="v">v2</span><div><b>Three changes from the dev cases</b> <code>b8e907a</code><p>The symptom can be the cause; Online Boutique's graph from traces plus its manifests; anomaly strength at weight 0.5, chosen on dev.</p></div></li>
+            <li><span class="v hot">v3</span><div><b>Ranking past the suspects, span profile</b> <code>0b4ef76</code><p>Every alerting service ranked, then the quiet ones; where there are traces, whether a service's own work slowed (weight 0.15, chosen on dev).</p></div></li>
+          </ol>
+          <div class="steps3" id="steps3"></div></div>
+      </div>
+    </section>
+
+    <section class="rs" id="planted">
+      <div class="rs-head"><p class="kick">03 · Planted faults</p><h2>Hundreds of faults planted on Kestrel's topology, each with decoys.</h2>
+        <p>Five kinds: a deep change with alerts climbing to it, a silent one whose cause never alerts, an infrastructure failure with nothing changed, one change breaking two services, and a failing host. Each scenario carries a closer change, a newer one and an old one on the path. The generator is ours, so this measures the patterns the judge was built for; the held-out seeds are the fairer number.</p></div>
+      <div class="kpis small" id="seedkpis"></div>
+      <div class="two">
+        <div class="card pad"><h3 class="h3">Switch one factor off · top-1, seed 7, 150 scenarios</h3><div class="hbars" id="ablation"></div></div>
+        <div class="card pad"><h3 class="h3">When it says…</h3><div id="conf"></div>
+          <p class="note">Confidence comes from the margin over the runner-up, not the raw score. It is conservative and ordered: high is right more often than medium, medium more than low.</p></div>
+      </div>
+      <div class="card heat-wrap"><table class="heat pct" id="kinds"></table></div>
+    </section>
+
+    <section class="rs" id="learning">
+      <div class="rs-head"><p class="kick">04 · Learning</p><h2>Each company's judge, refitted on its own solved incidents.</h2>
+        <p>A logistic model over the judge's factors plus each service's track record, used only if, cross-validated on solved incidents alone, it names the cause at least as often as the hand-set weights. The open incidents are the test.</p></div>
+      <div class="three" id="learned"></div>
+      <div class="card pad" id="rerun" style="margin-top:16px"></div>
+    </section>
+
+    <section class="rs" id="scale">
+      <div class="rs-head"><p class="kick">05 · Scale</p><h2>Same queries, a company of 3,000 services.</h2>
+        <p>A synthetic company built in FalkorDB with every layer the demo has: operations, pods, changes, alerts and incidents. p50 over repeated runs on a laptop.</p></div>
+      <div class="two" id="scalecards"></div>
+      <div class="card pad" style="margin-top:16px"><h3 class="h3">Query time, p50 · 1,000 vs 3,000 services <span class="faint mono" style="font-size:11px">log scale</span></h3>
+        <div class="legend2"><span><i class="b"></i>1,000</span><span><i class="a"></i>3,000</span></div><div id="latency"></div></div>
+    </section>
+
+    <section class="rs" id="proofs">
+      <div class="rs-head"><p class="kick">06 · Fix proofs, live</p><h2>Every planted fix, proved on a copy of the graph right now.</h2>
+        <p>Each fix is applied to its own GRAPH.COPY, the alerts whose CAUSED_BY chain ends at what it removes are cleared, and the judge is asked again. Then the prediction is checked against what the seed planted. The decoy should clear nothing.</p></div>
+      <div class="row" style="margin-bottom:12px"><button class="btn primary" id="runproofs">Run the proofs</button><span class="faint mono" id="proofmeta" style="font-size:12px">five copies, made and dropped</span></div>
+      <div class="card heat-wrap"><table class="tbl" id="prooftbl"><tbody><tr><td class="empty">Runs when you reach this section.</td></tr></tbody></table></div>
+      <a class="card pad linkcard" href="/break"><div><p class="kick" style="margin:0">Break it</p><b id="breakline">Seven one-line changes, each judged on a GRAPH.COPY.</b></div><span>Open →</span></a>
+    </section>
+
+    <section class="rs" id="limits">
+      <div class="rs-head"><p class="kick">07 · Limits</p><h2>What these numbers don't say.</h2></div>
+      <ul class="limits">
+        <li>It is <b>not the most accurate ranker</b> on held-out Train Ticket: NSigma is, on both AC@1 and Avg@5.</li>
+        <li>270 of the 360 RCAEval cases were used to develop v2 and v3; read those as seen. The 90 held-out cases are the honest test.</li>
+        <li>Trace methods (MicroRank, TraceRCA) were not run here; their numbers are quoted as published.</li>
+        <li>The planted-fault generator is ours. Silent causes are the weak spot (72–84% on held-out seeds).</li>
+        <li>Like every baseline, the detector uses the injection time to split normal from faulty data.</li>
+        <li>The scale company is synthetic; the timings are a laptop's, not a cluster's.</li>
+      </ul>
+    </section>
+
+    <section class="rs" id="reproduce">
+      <div class="rs-head"><p class="kick">08 · Reproduce</p><h2>Don't trust this page. Run it.</h2></div>
+      <div class="three">
+        <div class="card"><div class="card-h"><h3>Every RCAEval number</h3></div><pre class="code" style="border:0;background:transparent">make eval        # data, signals, Faultline, baselines
+make eval-quick  # re-score in under a minute</pre></div>
+        <div class="card"><div class="card-h"><h3>Planted faults</h3></div><pre class="code" style="border:0;background:transparent">docker compose run --rm app \
+  python -m faultline.eval --n 400 --seed 3</pre></div>
+        <div class="card"><div class="card-h"><h3>Scale</h3></div><pre class="code" style="border:0;background:transparent">docker compose run --rm app \
+  python -m faultline.scale --services 3000</pre></div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="/static/js/results.js"></script>
+</body>
+</html>

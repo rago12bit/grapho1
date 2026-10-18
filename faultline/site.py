@@ -235,3 +235,30 @@ def break_it(g: Graph, exp_id: str) -> dict:
             "before": before, "after": after, "moved": moved,
             "leader_changed": before["leader"] != after["leader"],
             "copy_ms": copy_ms, "judge_ms": judge_ms}
+
+
+# --- the planted fixes, proved live ---------------------------------------------------------------------------
+# The right fix for each planted Kestrel fault, and one decoy (a rollback nothing alerting traces back to).
+FIXES = [
+    {"incidents": ["INC-301", "INC-304"], "kind": "revert_config", "target": "payments-db", "change": "C-5101"},
+    {"incidents": ["INC-302"], "kind": "rollback", "target": "auth", "change": "D-5201"},
+    {"incidents": ["INC-303"], "kind": "page_owner", "target": "catalog-es", "change": None},
+    {"incidents": ["INC-305"], "kind": "page_owner", "target": "k8s-node-4", "change": None},
+    {"incidents": ["INC-301"], "kind": "rollback", "target": "cart", "change": "D-5102", "decoy": True},
+]
+
+
+def prove_fixes(g: Graph) -> list[dict]:
+    """Each fix tried on its own GRAPH.COPY: what it would clear, checked against the alerts the seed planted it as
+    causing (world.TRUE_CAUSES). Nothing is approved and the real graph is not touched."""
+    from . import proof, world
+    truth = world.TRUE_CAUSES[g.tenant]
+    out = []
+    for f in FIXES:
+        t = time.perf_counter()
+        p = proof.preview_fix(g, f["incidents"], f["kind"], f["target"], f["change"])
+        caused = sorted(a for a, cause in truth.items() if cause in (f["change"], f"infra:{f['target']}"))
+        out.append({**f, "verdict": p["verdict"], "predicted_clear": p["predicted_clear"], "truly_caused": caused,
+                    "summary": p["summary"], "ms": round((time.perf_counter() - t) * 1000, 1),
+                    "holds": set(p["predicted_clear"]) <= set(caused) and (bool(p["predicted_clear"]) != bool(f.get("decoy")))})
+    return out
