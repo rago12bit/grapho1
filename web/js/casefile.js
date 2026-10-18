@@ -113,6 +113,16 @@ function render(inc, out) {
   $$("#case .linkbtn[data-inc]").forEach((b) => b.addEventListener("click", () => openIncident(b.dataset.inc)));
   $$("#case [data-svc]").forEach((b) => b.addEventListener("click", () => act.showService(b.dataset.svc)));
   $("#ask-why")?.addEventListener("click", (e) => askWhy(e.target.dataset.alert));
+  $$("#case [data-fb]").forEach((b) => b.addEventListener("click", async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const note = b.dataset.fb === "not_cause" ? (prompt(`Why is ${b.dataset.target} not the cause? (optional)`) ?? null) : "";
+    if (note === null) return;
+    await tapi(`/incidents/${inc.id}/feedback`, { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ target: b.dataset.target, verdict: b.dataset.fb, who: "you", note }) });
+    act.refreshBoard?.();
+    openIncident(inc.id);
+  }));
   renderActions(inc);
 }
 
@@ -174,8 +184,10 @@ function argumentHtml(r, out) {
   const card = (h) => {
     const items = h.status === "standing" ? [...h.supports.map((e) => ev(e, true)), ...h.contradicts.map((e) => ev(e, false))]
       : [...h.contradicts.map((e) => ev(e, false)), ...h.supports.map((e) => ev(e, true))];
-    const head = `<span class="label hs-${esc(h.status)}">${esc(h.status)}</span> <b class="mono">${esc(h.label)}</b> <span class="faint small">${esc(h.service)}</span>
-      <span class="num">${h.score.toFixed(2)}</span><span class="faint small">${h.supports.length} for · ${h.contradicts.length} against</span>`;
+    const head = `<span class="label hs-${esc(h.status.replace(" ", "-"))}">${esc(h.status)}</span> <b class="mono">${esc(h.label)}</b> <span class="faint small">${esc(h.service)}</span>
+      <span class="num">${h.score.toFixed(2)}</span><span class="faint small">${h.supports.length} for · ${h.contradicts.length} against</span>
+      <span class="fb"><button class="link" data-fb="not_cause" data-target="${esc(h.label)}" title="Rule this out for this incident; the model learns from it">not the cause</button>
+      <button class="link" data-fb="confirmed" data-target="${esc(h.label)}">confirm</button></span>`;
     return h.status === "standing" ? `<div class="hyp standing"><div class="hyp-head">${head}</div><ul class="checks">${items.join("")}</ul></div>`
       : `<details class="hyp"><summary class="hyp-head">${head}</summary><ul class="checks">${items.join("")}</ul></details>`;
   };

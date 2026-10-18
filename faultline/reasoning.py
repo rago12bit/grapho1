@@ -92,6 +92,14 @@ def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | N
             add(False, "change", f"a recent change on or below {s['service']} explains its alert better", [], None)
     if s.get("from_below"):
         add(False, "order", f"something below {s['service']} was alerting first: the failure started deeper", [], None)
+    fb = s.get("feedback")
+    if fb:
+        add(fb["verdict"] == "confirmed", "feedback",
+            f"{'confirmed' if fb['verdict'] == 'confirmed' else 'ruled out'} by {fb['by']}" + (f": {fb['note']}" if fb.get("note") else ""), [])
+    if "track" in s["factors"]:
+        t = s["factors"]["track"]
+        add(t >= 0.3, "track", f"when {s['service']} alerted in past incidents it was the cause {round(100 * t)}% of the time "
+                               f"(learned weights in use)", [])
     tel = ranking.get("telemetry") or {}
     lim = tel.get("limits", {}).get(s["service"])
     sig = next((a["signal"] for a in ranking.get("alerts") or [] if a["service"] == s["service"]), "") or ""
@@ -117,6 +125,8 @@ def _evidence(s: dict, ranking: dict, others: list[dict], groups: list[dict] | N
 
 
 def _status(s: dict, review: dict | None, leader: dict) -> str:
+    if (s.get("feedback") or {}).get("verdict") == "not_cause":
+        return "ruled out"
     if s is leader:
         return "standing"
     tried = {r["leader"] for r in (review or {}).get("rounds") or []}
@@ -129,7 +139,8 @@ def hypotheses(ranking: dict, limit: int = 5) -> list[dict]:
         return []
     leader, review, groups = sus[0], ranking.get("skeptic"), ranking.get("alert_groups")
     out = []
-    for i, s in enumerate(sus[:limit]):
+    shown = sus[:limit] + [s for s in sus[limit:] if s.get("feedback")]     # what a person ruled on stays in view
+    for i, s in enumerate(shown):
         others = [o for o in sus if o is not s]
         sup, con = _evidence(s, ranking, others, groups, leader)
         inc = ranking["incident"]["id"]

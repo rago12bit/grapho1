@@ -6,7 +6,7 @@ import { empty, label, loading, queries } from "./parts.js";
 export async function loadMemory() {
   const box = $("#tab-memory");
   box.innerHTML = loading("Reading memory");
-  const [rows, st, fixes] = await Promise.all([tapi("/memory"), tapi("/memory/stats"), tapi("/memory/fixes")]);
+  const [rows, st, fixes, lrn] = await Promise.all([tapi("/memory"), tapi("/memory/stats"), tapi("/memory/fixes"), tapi("/learning")]);
   box.innerHTML = `
     <div class="tiles">
       ${[[st.solved, "solved", "with a root cause"], [st.lessons, "lessons", "cited by later cases"], [st.runs, "agent runs", `${st.handoffs} handoffs`]]
@@ -15,6 +15,7 @@ export async function loadMemory() {
     <form id="msearch" class="msearch"><input id="mq" placeholder="search memory: pool, eviction, timeout…" autocomplete="off" aria-label="Search memory"><button class="btn">Search</button></form>
     <div id="mresults"></div>
     ${fixesHtml(fixes)}
+    ${learningHtml(lrn.model)}
     <div class="label-row">${label("Agents under load")}<span class="label faint">on a copy of this graph</span></div>
     <p class="faint small">Many four-agent investigations at once, sharing one FalkorDB. Each run hands off only through its own Episode nodes; the check is that no run ever reads another's, and every run reaches the same verdict as a run on its own.</p>
     <div class="bench-btns">${[10, 25, 50].map((n) => `<button class="btn" data-bench="${n}">${n} investigations</button>`).join("")}</div>
@@ -46,6 +47,15 @@ export function wireMemory() {
       ${queries(out.traces, 2)}</div>`;
   });
   on(box, "[data-svc]", "click", (b) => b.dataset.svc && act.showService(b.dataset.svc));
+  on(box, "#retrain", "click", async (b) => {
+    b.disabled = true;
+    $("#retrain-out").textContent = " fitting…";
+    try {
+      const r = await tapi("/learning/train", { method: "POST" });
+      $("#retrain-out").textContent = r.trained ? ` done: ${r.enabled ? "in use" : "not in use"}` : ` ${r.reason}`;
+      await loadMemory();
+    } catch (e) { $("#retrain-out").textContent = ` ${e.message}`; b.disabled = false; }
+  });
   on(box, "[data-bench]", "click", async (b) => {
     const out = $("#bench-out");
     $$("[data-bench]", box).forEach((x) => { x.disabled = true; });
@@ -64,6 +74,23 @@ export function wireMemory() {
       $$("[data-bench]", box).forEach((x) => { x.disabled = false; });
     }
   });
+}
+
+function learningHtml(m) {
+  if (!m) return `<div class="label-row">${label("Learned from outcomes")}</div><p class="faint small">Not enough solved incidents here to learn weights from (it needs at least 40 suspects and 5 known causes). The judge uses its hand-set weights.</p>`;
+  const ev = m.evaluation || {}, cv = ev.cross_validation, hand = ev.hand, lrn = ev.learned;
+  const keys = Object.keys(m.weights);
+  const max = Math.max(...keys.map((k) => Math.abs(m.weights[k])), 0.01);
+  const bars = keys.map((k) => `<div class="lw"><span class="mono tiny">${esc(k)}</span><span class="lwbar ${m.weights[k] < 0 ? "neg" : ""}"><i style="width:${Math.round(100 * Math.abs(m.weights[k]) / max)}%"></i></span><span class="num tiny">${m.weights[k] > 0 ? "+" : ""}${m.weights[k].toFixed(2)}</span></div>`).join("");
+  const cal = (c) => (c?.calibration || []).map((b) => `<span class="calb" title="${b.n} cases said ${b.stated}, mean ${b.mean_stated}"><b>${Math.round(100 * b.mean_stated)}%</b> said · <b>${Math.round(100 * b.came_true)}%</b> true <span class="faint">(${b.n})</span></span>`).join("");
+  return `<div class="label-row">${label("Learned from outcomes")}<span class="label ${m.enabled ? "ok" : "faint"}">${m.enabled ? "in use" : "not in use"}</span></div>
+    <p class="faint small">A logistic regression over ${m.rows} silent-failure suspects from this company's solved incidents (${m.positives} were the cause), plus every “not the cause” and “confirmed” people gave. It is used only if, in cross-validation over the solved incidents, it names the cause at least as often as the hand-set weights.</p>
+    <div class="lws">${bars}</div>
+    ${cv ? `<p class="small">History, cross-validated: hand weights right on <b>${cv.hand_top1}</b> of ${cv.incidents}, learned on <b>${cv.learned_top1}</b>.</p>` : ""}
+    ${hand && lrn ? `<p class="small">Open incidents (not used to fit or to decide): hand <b>${hand.top1}/${hand.n}</b> · learned <b>${lrn.top1}/${lrn.n}</b>; Brier score ${hand.brier} → <b>${lrn.brier}</b> (lower is better calibrated).</p>
+      <div class="cals"><div><span class="label faint">hand confidence</span>${cal(hand)}</div><div><span class="label faint">learned probability</span>${cal(lrn)}</div></div>` : ""}
+    ${(m.feedback || []).length ? `<div class="label-row">${label("People's verdicts")}</div><ul class="plain small">${m.feedback.map((f) => `<li><span class="mono">${esc(f.incident)}</span> ${esc(f.target)}: <b class="${f.verdict === "confirmed" ? "ok" : "warn"}">${f.verdict === "confirmed" ? "confirmed" : "not the cause"}</b> <span class="faint">by ${esc(f.by)}${f.note ? `, “${esc(f.note)}”` : ""}</span></li>`).join("")}</ul>` : ""}
+    <button class="btn" id="retrain">Retrain from outcomes</button><span id="retrain-out" class="faint small"></span>`;
 }
 
 function fixesHtml(fixes) {

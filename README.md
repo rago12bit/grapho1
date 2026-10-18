@@ -31,7 +31,16 @@ Most "what broke?" tools blame the most recent deploy near the failing service. 
 9. **The reasoning is a subgraph you can query.** Every suspect becomes a `Hypothesis` (standing, overturned or rejected) with `Evidence` for and against it, and each piece of evidence `CITES` the alerts, changes and past incidents it rests on. The skeptic's checks run against *every* hypothesis, so a rejected one says why it lost ("leaves auth unexplained; 0.33 behind D-5201"). For the hypothesis left standing, the alerts are linked into a **causal chain**: `(:Alert)-[:CAUSED_BY {lag_s, confidence}]->(:Alert)…->(:Change)`. The topology decides which links are possible and the alert timing picks among them, naming silent hops ("via api") and ending at the change, or at the service that failed on its own. One query answers "why did this alert fire?": `MATCH p = (:Alert {id: 'A-9102'})-[:CAUSED_BY*]->(root) RETURN p` gives A-9102 on mobile-bff ← A-9101 on auth ← D-5201.
 10. **It knows where things run.** Every service has its `Deployment` (replicas, CPU and memory limits, image and tag, the config keys, ConfigMaps and Secrets it reads), from the projects' real Kubernetes manifests for Online Boutique, Sock Shop and Train Ticket (secret values never kept), and pods scheduled onto `Node`s in `Zone`s for Kestrel. Two things follow. When two services that don't call each other fail on their own within minutes, and share one node, the judge names the **node** (INC-305: `catalog` and `users` on `k8s-node-4`; without placement it reports two independent faults). And a CPU or memory alert cites the limit the manifest sets ("checkoutservice is capped at 0.2 CPU"). A config change points at the `ConfigKey` it sets and every deployment that reads it.
 11. **From deploy to commit.** Every Kestrel deploy `SHIPS` the commits behind it, and the investigator asks which one to read first: the commit that changed the most request-path code (docs, tests and dependency files don't count) and shares the most words with what the incident shows. For D-5201 that is "validate tokens against the rotating JWKS cache", not the runbook or the tests, and the argument cites the `Commit`. Online Boutique's last eight real releases are in its graph (`Version`-[:INCLUDES]->`Commit`, files and lines changed per service, the manifests' images `BUILT_FROM` v0.10.7), and the Company tab shows each team's deploys per week, change failure rate, time to restore and lead time, computed from the graph.
-12. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
+12. **It learns from its own outcomes, and from you.** On any hypothesis a person can say **not the cause** (it drops out of that incident at once, with their reason in the argument) or **confirm** it; both are kept as `Feedback` nodes. Each real company's judge is also refitted on its own solved incidents: every silent-failure suspect of every solved incident is a training row (its factors plus a **track record**: how often that service turned out to be the cause when it alerted, never counting the incident being scored), labelled by the cause the incident was closed with, people's verdicts included. A logistic regression is fitted and used only if, cross-validated over the solved incidents alone, it names the cause at least as often as the hand-set weights; the open incidents stay a clean test:
+
+    | open incidents (not used to fit or decide) | hand weights | learned | Brier, hand → learned |
+    |---|---|---|---|
+    | Online Boutique (18) | 15 | 16 | 0.144 → 0.079 |
+    | Sock Shop (27) | 21 | 22 | 0.105 → 0.082 |
+    | Train Ticket (26) | 21 | 21 | 0.096 → 0.075 |
+
+    Small gains in top-1 and clearly better calibration: when the learned model says 0.9 it is right about 0.9 of the time (the Memory tab shows the calibration bins). Services that alert in every incident and are rarely the cause (Online Boutique's `redis`) get a low track record and stop crowding the top. One cost found and not hidden: on Train Ticket the skeptic, whose takeover margin was set for hand scores, overturns four learned leaders and brings 21 down to 19. The RCAEval numbers above are the judge without any history (each case is its own graph); this is what history adds.
+13. **Graph algorithms do real work in the investigation:** WCC splits the alerts into separate problems, SPpaths traces the failure path, betweenness flags chokepoints on it, label propagation names the failure domains and teams, PageRank ranks criticality. See [the table](#falkordb-graph-algorithms-used-during-the-investigation).
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB, Oct 15–18 2026).
 Tracks: **01 Agents That Act on Connected Data** (main), **02 Agent Memory and Coordination**, **03 Company Brain**.
@@ -126,6 +135,7 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 (:Deployment)-[:READS {value}]->(:ConfigKey)<-[:SETS]-(:Change)   (:Deployment)-[:USES_CONFIG|USES_SECRET]->(:ConfigMap|:Secret)
 (:Deployment)-[:HAS_POD]->(:Pod)-[:ON_NODE]->(:Node)-[:IN_ZONE]->(:Zone)   (:Node)-[:OWNED_BY]->(:Team)
 (:Change {kind: 'deploy'})-[:SHIPS]->(:Commit {sha, message, code_lines})-[:TOUCHED]->(:Service)   (:Person)-[:AUTHORED]->(:Commit)
+(:Feedback {verdict, by, note})-[:ABOUT]->(:Incident)   (:Model {kind, weights, enabled, evaluation})   # learned from outcomes
 (:Version {tag})-[:INCLUDES]->(:Commit)-[:MENTIONS]->(:Service)   (:Version)-[:CHANGED {files, additions}]->(:Service)   (:Image)-[:BUILT_FROM]->(:Version)
 ```
 
@@ -256,11 +266,11 @@ AC@1 / Avg@5. Full output with the paper's numbers alongside: [docs/rcaeval-resu
 - **The answer key** goes to `world.py` only, so approving a fix is verified against what RCAEval says caused the case: paging the wrong team leaves the alerts firing.
 - Owners come from the project's CODEOWNERS (one maintainers team for everything) and who knows each service from the last 200 commits to its `src/` directory, merged by name, bots kept apart (`python -m faultline.owners --fetch`, snapshot committed so the build stays offline).
 
-With that memory, the judge + skeptic leads with the right service on **15 of the 18** open cases (16 in the top three; v1, on traced edges alone, had 17). A test pins the number.
+With that memory and the weights learned from it, the judge + skeptic leads with the right service on **16 of the 18** open cases (16 in the top three; with the hand-set weights 15, and v1 on traced edges alone 15 with 17 in the top three). A test pins the number.
 
 ### Sock Shop and Train Ticket, in the app
 
-The same treatment for the other two systems, every RE2 and RE3 case each (`python -m faultline.rcaeval` → `export_system`, fixtures in `faultline/fixtures/`): 120 incidents per company, repetition 3 of every fault open for the agents (27 and 26) and the rest solved history. Train Ticket's graph is **3,990 nodes and 5,265 edges**: 68 services, 160 operations with 203 operation-level calls carrying traffic and latency, 3,072 alerts, 397 hot-endpoint links and 287 error log patterns. Service cards list each service's endpoints (busiest first, with what each calls downstream) and the error logs it printed in past incidents. On the open cases the judge + skeptic leads with the right service on **21 of 27** (Sock Shop) and **19 of 26** (Train Ticket). Nobody's owners or on-call are public for these two, so each has a single owning team and no people.
+The same treatment for the other two systems, every RE2 and RE3 case each (`python -m faultline.rcaeval` → `export_system`, fixtures in `faultline/fixtures/`): 120 incidents per company, repetition 3 of every fault open for the agents (27 and 26) and the rest solved history. Train Ticket's graph is **3,990 nodes and 5,265 edges**: 68 services, 160 operations with 203 operation-level calls carrying traffic and latency, 3,072 alerts, 397 hot-endpoint links and 287 error log patterns. Service cards list each service's endpoints (busiest first, with what each calls downstream) and the error logs it printed in past incidents. On the open cases, with weights learned from each company's solved incidents, the judge + skeptic leads with the right service on **21 of 27** (Sock Shop, 24 in the top three) and **19 of 26** (Train Ticket, 23 in the top three; the judge alone 21). Nobody's owners or on-call are public for these two, so each has a single owning team and no people.
 
 ## Agent, memory and actions
 
@@ -296,6 +306,7 @@ There is deliberately no approve tool. An agent can propose a fix; only a person
 faultline/db.py          FalkorDB access, per-tenant graphs, query trace, read-only guard
 faultline/seed.py        the synthetic companies (deterministic)
 faultline/tools.py       graph tools, the judge, actions, memory
+faultline/learn.py       weights fitted on a company's solved incidents and people's verdicts; cross-validated, calibrated
 faultline/delivery.py    releases, commits and the deploy→commit links (fixtures/boutique_releases.json: real)
 faultline/manifests.py   the three systems' real Kubernetes manifests, boiled down (fixtures/manifests.json)
 faultline/reasoning.py   the argument as a subgraph: hypotheses, evidence, citations, the CAUSED_BY chain

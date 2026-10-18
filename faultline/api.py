@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, postmortem, reasoning, seed, tools, upload, world
+from . import agent, bench, ingest, learn, postmortem, reasoning, seed, tools, upload, world
 from .db import Graph, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -36,7 +36,7 @@ PUBLIC = os.environ.get("FAULTLINE_PUBLIC") == "1"
 INGEST_TOKEN = os.environ.get("FAULTLINE_INGEST_TOKEN", "")
 # route suffix -> (requests, per seconds), per client address
 LIMITS = [("/investigate", 20, 60), ("/upload", 4, 600), ("/bench", 2, 60), ("/reset", 2, 300), ("/ask", 30, 60),
-          ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60)]
+          ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300)]
 _hits: dict[tuple[str, str], deque] = {}
 
 
@@ -150,7 +150,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 118, "planted": "94.5–96.8%", "real": "285/360"}
+PROOF = {"tests": 123, "planted": "94.5–96.8%", "real": "285/360"}
 
 
 @app.get("/api/health")
@@ -259,6 +259,33 @@ def argument(tenant: str, incident_id: str):
     g = _g(tenant)
     _guard(tools.get_incident, g, incident_id)
     return {"hypotheses": reasoning.argument(g, incident_id), "traces": g.trace.queries}
+
+
+class FeedbackIn(BaseModel):
+    target: str = Field(max_length=120)
+    verdict: str = Field(pattern="^(not_cause|confirmed)$")
+    who: str = Field(default="on-call", max_length=60)
+    note: str = Field(default="", max_length=300)
+
+
+@app.post("/api/{tenant}/incidents/{incident_id}/feedback")
+def feedback(tenant: str, incident_id: str, body: FeedbackIn):
+    """A person's verdict on one suspect. 'not_cause' takes it out of this incident's ranking at once; both are
+    kept as labelled outcomes the model learns from at the next retrain."""
+    g = _g(tenant)
+    return _guard(tools.give_feedback, g, incident_id, body.target, body.verdict, body.who, body.note)
+
+
+@app.get("/api/{tenant}/learning")
+def learning(tenant: str):
+    g = _g(tenant)
+    return {"model": learn.summary(g), "traces": g.trace.queries}
+
+
+@app.post("/api/{tenant}/learning/train")
+def learning_train(tenant: str):
+    """Refit the weights from the solved incidents and people's verdicts, as they stand now."""
+    return learn.train(_g(tenant), tenant)
 
 
 @app.get("/api/{tenant}/alerts/{alert_id}/why")

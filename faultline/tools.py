@@ -546,6 +546,67 @@ def _host_suspects(g: Graph, signals: list[dict], alerts: list[dict], first_symp
     return out
 
 
+# --- learning from outcomes ----------------------------------------------------------------------------
+
+LEARNED_FEATURES = ["alert_chain", "earliness", "proximity", "footprint", "unchanged", "strength", "track"]
+
+
+def outcome_history(g: Graph) -> list[dict]:
+    """Every solved incident with its root-cause service and the services that alerted in its window: the
+    outcomes the learned model and the track record are counted from."""
+    return g.read("""
+        MATCH (i:Incident {status: 'resolved'})-[:ROOT_CAUSE]->(:Change)-[:CHANGED]->(c:Service)
+        OPTIONAL MATCH (a:Alert)-[:FIRED_ON]->(s:Service) WHERE a.at >= i.started - 7200 AND a.at <= i.started + 1800
+        RETURN i.id AS id, c.name AS cause, collect(DISTINCT s.name) AS alerting""")
+
+
+def track_record(history: list[dict], service: str, exclude: str | None = None) -> float:
+    """Of the solved incidents where `service` alerted, the share it caused (smoothed: 1 of 2 with no history).
+    A service that alerts in every incident and is rarely the cause scores low."""
+    seen = [h for h in history if h["id"] != exclude and service in h["alerting"]]
+    caused = sum(h["cause"] == service for h in seen)
+    return round((caused + 1) / (len(seen) + 2), 3)
+
+
+def learned_model(g: Graph) -> dict | None:
+    rows = g.read("MATCH (m:Model {kind: 'signal'}) RETURN m.weights AS w, m.bias AS b, m.n AS n, m.enabled AS on")
+    if not rows or not rows[0]["on"]:
+        return None
+    return {"w": json.loads(rows[0]["w"]), "b": rows[0]["b"], "n": rows[0]["n"]}
+
+
+def learned_score(model: dict, factors: dict) -> float:
+    z = model["b"] + sum(model["w"][k] * factors.get(k, 0.0) for k in LEARNED_FEATURES)
+    return 1 / (1 + math.exp(-z))
+
+
+def feedback_on(g: Graph, incident_id: str) -> dict[str, dict]:
+    """What people said about this incident's suspects, keyed by the suspect's label."""
+    rows = g.read("""
+        MATCH (f:Feedback)-[:ABOUT]->(:Incident {id: $inc})
+        RETURN f.target AS target, f.verdict AS verdict, f.by AS by, f.note AS note, f.at AS at ORDER BY f.at""",
+                  {"inc": incident_id})
+    return {r["target"]: r for r in rows}
+
+
+def give_feedback(g: Graph, incident_id: str, target: str, verdict: str, by: str, note: str = "") -> dict:
+    """A person's verdict on one suspect: 'not_cause' rules it out for this incident at once; 'confirmed' backs
+    it. Either way it is kept as a labelled outcome the model learns from. `target` is a suspect's label as the
+    judge prints it (a change id, 'svc (no change)', 'node (shared host)')."""
+    if verdict not in ("not_cause", "confirmed"):
+        raise ValueError("verdict is not_cause or confirmed")
+    get_incident(g, incident_id)
+    g.write("""
+        MATCH (i:Incident {id: $inc})
+        OPTIONAL MATCH (old:Feedback {target: $t})-[:ABOUT]->(i)
+        DETACH DELETE old""", {"inc": incident_id, "t": target})
+    g.write("""
+        MATCH (i:Incident {id: $inc})
+        CREATE (:Feedback {target: $t, verdict: $v, by: $by, note: $note, at: $at})-[:ABOUT]->(i)""",
+            {"inc": incident_id, "t": target, "v": verdict, "by": by[:60], "note": note[:300], "at": clock(g, [incident_id])})
+    return {"incident": incident_id, "target": target, "verdict": verdict, "by": by}
+
+
 def confidence_from(top: float, gap: float) -> tuple[float, str]:
     """Confidence comes from how far the leader is ahead, not from its raw score: a 0.9 with a 0.88 runner-up
     is a coin toss. A logistic on the gap to the runner-up (0.5 at a 0.10 gap), damped when the leader itself
@@ -600,6 +661,8 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         })
 
     alerting = {a["service"] for a in alerts}
+    model = learned_model(g)
+    history = outcome_history(g) if model else []
     power = {a["service"]: max(a.get("strength") or 0.0, 0.0) for a in alerts if a.get("strength") is not None}
     top_power = max(power.values(), default=0.0)
     # The symptom service itself competes too: it can be where the failure started, when nothing it depends on
@@ -637,6 +700,11 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         if top_power > 0:
             factors["strength"] = round(math.log1p(power.get(svc, 0.0)) / math.log1p(top_power), 3)
             score = (1 - STRENGTH_W) * score + STRENGTH_W * factors["strength"]
+        if model:
+            # weights learned from this company's own solved incidents, plus how often this service turned out
+            # to be the cause when it alerted before
+            factors["track"] = track_record(history, svc, exclude=incident_id)
+            score = (1 - SIGNAL_WEIGHTS["precedent"]) * learned_score(model, factors) + SIGNAL_WEIGHTS["precedent"] * prec
         suspects.append({
             "type": "signal", "service": svc, "change": None, "hops": hops[svc], "path": path,
             "minutes_before": round((start - first) / 60, 1), "factors": factors,
@@ -645,13 +713,20 @@ def rank_suspects(g: Graph, incident_id: str, limit: int = 6) -> dict:
         })
 
     suspects += _host_suspects(g, [s for s in suspects if s["type"] == "signal"], alerts, first_symptom_alert, power, top_power)
+    said = feedback_on(g, incident_id)
+    for s in suspects:
+        f = said.get(_label(s))
+        if f:
+            s["feedback"] = f
+            if f["verdict"] == "not_cause":
+                s["score"] = 0.0          # a person who looked ruled it out: it goes to the bottom, with the reason
     _shape_precedent(g, inc, suspects, incident_id)
     # Ties go to whichever started first (a change's time, a silent failure's first alert), then by name, so
     # the same graph always gives the same answer whatever order the database returned rows in.
     suspects.sort(key=lambda s: (s["change"]["id"] if s["change"] else s["service"]))
     suspects.sort(key=lambda s: (s["score"], s["footprint"]["coverage"],
                                  -(s["change"]["at"] if s["change"] else s["first_alert"])), reverse=True)
-    suspects = suspects[:limit]
+    suspects = suspects[:limit] + [s for s in suspects[limit:] if s.get("feedback")]
     for i, s in enumerate(suspects):
         s["recommended_action"] = _recommend(g, s)
         s["owner"] = who_owns(g, s["service"])

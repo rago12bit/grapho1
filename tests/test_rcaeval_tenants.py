@@ -28,8 +28,9 @@ def _score(g, tenant):
 
 
 def test_every_case_is_loaded_and_the_open_ones_are_scored_as_published(tenants):
-    """README quotes these: Sock Shop 21/27 first (24 in the top three), Train Ticket 19/26 (21)."""
-    for t, (n_open, n_all, score) in {"sockshop": (27, 120, (21, 24)), "trainticket": (26, 120, (19, 21))}.items():
+    """README quotes these (judge + skeptic, weights learned from each company's solved incidents): Sock Shop
+    21/27 first (24 in the top three), Train Ticket 19/26 (23)."""
+    for t, (n_open, n_all, score) in {"sockshop": (27, 120, (21, 24)), "trainticket": (26, 120, (19, 23))}.items():
         g = tenants[t]
         incs = tools.list_incidents(g, None)
         assert len(incs) == n_all and sum(i["status"] == "open" for i in incs) == n_open
@@ -70,7 +71,7 @@ def test_the_entry_point_itself_can_be_the_cause(tenants):
     g = tenants["sockshop"]
     front = [c for c in seed.rcaeval_cases("sockshop")["open"] if c["root_cause"] == "front-end"]
     tops = [agent.judged(g, c["id"])["suspects"][0]["service"] for c in front]
-    assert len(front) == 3 and tops.count("front-end") == 2
+    assert len(front) == 3 and tops.count("front-end") == 3
 
 
 def test_paging_the_right_owner_clears_a_train_ticket_incident(tenants):

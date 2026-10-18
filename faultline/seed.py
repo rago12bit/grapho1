@@ -781,6 +781,10 @@ def build(tenant: str, *, force: bool = False) -> dict:
         _write_runtime(g, manifests.load(tenant), manifests.SOURCES[tenant])
         if tenant == "boutique":
             delivery.write_boutique(g)
+        # learn the silent-failure weights from this company's solved incidents (enabled only if they hold up in
+        # cross-validation over that history)
+        from . import learn
+        learn.train(g, tenant)
         from .tools import store_signature
         for row in g.read("MATCH (i:Incident {status: 'resolved'}) RETURN i.id AS id"):
             store_signature(g, row["id"])
