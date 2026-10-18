@@ -27,7 +27,7 @@ DIRS = {"frontend": "src/frontend", "checkoutservice": "src/checkoutservice", "p
 
 
 def _get(url: str):
-    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "faultline"})
+    req = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json", "User-Agent": "hypocenter"})
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read()) if "api.github.com" in url else r.read().decode()
 

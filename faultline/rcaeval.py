@@ -1,4 +1,4 @@
-"""Faultline on public data: RCAEval RE2-OB (Online Boutique), real metrics and traces with a known root cause.
+"""Hypocenter on public data: RCAEval RE2-OB (Online Boutique), real metrics and traces with a known root cause.
 
     docker compose run --rm app python -m faultline.rcaeval --download     # ~190 MB, 18 cases, into data/rcaeval
     docker compose run --rm app python -m faultline.rcaeval                # build each case's graph, run the judge
@@ -611,7 +611,7 @@ def table(res: dict) -> str:
     n = res["n"]
     lines = ["| method | top-1 | top-3 |", "|---|---|---|"]
     for m in res["top1"]:
-        name = {"judge+skeptic": "**Faultline (judge + skeptic)**", "judge": "Faultline (judge only)"}.get(m, m)
+        name = {"judge+skeptic": "**Hypocenter (judge + skeptic)**", "judge": "Hypocenter (judge only)"}.get(m, m)
         lines.append(f"| {name} | {res['top1'][m]}/{n} | {res['top3'][m]}/{n} |")
     by: dict[str, list[bool]] = {}
     for r in res["rows"]:

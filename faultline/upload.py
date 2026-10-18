@@ -1,7 +1,7 @@
 """Bring your own incident: an uploaded file becomes its own tenant graph, and the judge reads it at once.
 
 Two formats:
-  JSON   Faultline's own incident format (web/examples/incident.json): services, calls (or spans to derive them
+  JSON   Hypocenter's own incident format (web/examples/incident.json): services, calls (or spans to derive them
          from), owners, changes, alerts and the incident. Anything with deploys in it gets the full change-based
          judge.
   ZIP    one case in RCAEval's layout: inject_time.txt plus metrics and traces as parquet or CSV. The call graph
@@ -81,7 +81,7 @@ def _cap(spec: dict, key: str) -> list:
 
 
 def from_json(spec: dict) -> dict:
-    """Validate Faultline's incident JSON into the shapes the seed writers take."""
+    """Validate Hypocenter's incident JSON into the shapes the seed writers take."""
     if not isinstance(spec, dict):
         raise ValueError("the JSON must be an object")
     raw = _cap(spec, "services")

@@ -528,7 +528,7 @@ def claude_available() -> bool:
 
 def _system(tenant: str) -> str:
     title = Graph(tenant).read("MATCH (o:Org) RETURN o.title AS t")[0]["t"]
-    return f"""You are Faultline, the on-call investigator for {title}. Its services, call graph, owners, deploys, \
+    return f"""You are Hypocenter, the on-call investigator for {title}. Its services, call graph, owners, deploys, \
 config and flag changes, alerts and past incidents live in a FalkorDB graph, and your tools query it.
 
 How to investigate an incident:

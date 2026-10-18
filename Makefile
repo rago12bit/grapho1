@@ -1,7 +1,7 @@
 # Reproduce every RCAEval number in the README with one command:
 #
-#   make eval          # ~3.3 GB download the first time, then signals, Faultline, RCAEval's baselines, the comparison
-#   make eval-quick    # data, signals and baselines already there: re-run Faultline and the comparison (~10 min)
+#   make eval          # ~3.3 GB download the first time, then signals, Hypocenter, RCAEval's baselines, the comparison
+#   make eval-quick    # data, signals and baselines already there: re-run Hypocenter and the comparison (~10 min)
 #
 # Everything runs in Docker. Results: data/rcaeval/*.json and docs/rcaeval-results.md.
 
@@ -35,7 +35,7 @@ baselines:
 	$(BASE) python /b/run_baselines.py --methods circa,pc_randomwalk --systems ob,ss
 
 compare:
-	@{ echo "# RCAEval: Faultline against RCAEval's baselines"; echo; \
+	@{ echo "# RCAEval: Hypocenter against RCAEval's baselines"; echo; \
 	  echo 'Output of `make eval` (`python -m faultline.compare`): AC@1 / Avg@5. See the README, "Public data", for how each number was produced.'; echo; \
 	  $(APP) python -m faultline.compare 2>/dev/null; } > docs/rcaeval-results.md
 	@cat docs/rcaeval-results.md

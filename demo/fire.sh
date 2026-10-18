@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Plays a live incident into Faultline the way production would: CI posts a deploy, then Alertmanager posts
-# alerts climbing the call graph. Faultline opens an incident by itself and the agents name the cause.
+# Plays a live incident into Hypocenter the way production would: CI posts a deploy, then Alertmanager posts
+# alerts climbing the call graph. Hypocenter opens an incident by itself and the agents name the cause.
 #
 #   demo/fire.sh            deploy + three firing alerts  -> an incident is opened and investigated
 #   demo/fire.sh resolve    the same alerts, resolved     -> an approved fix is verified by real recovery
@@ -22,7 +22,7 @@ alert() {  # fingerprint service summary start [end]
     "$status" "$1" "$2" "$3" "$(iso "$4")" "$ends"
 }
 
-TOKEN=(); [ -n "${FAULTLINE_INGEST_TOKEN:-}" ] && TOKEN=(-H "X-Faultline-Token: $FAULTLINE_INGEST_TOKEN")
+TOKEN=(); [ -n "${FAULTLINE_INGEST_TOKEN:-}" ] && TOKEN=(-H "X-Hypocenter-Token: $FAULTLINE_INGEST_TOKEN")
 post() { curl -fsS -X POST "$APP/api/$TENANT/$1" -H 'content-type: application/json' ${TOKEN[@]+"${TOKEN[@]}"} --data "$2"; echo; }
 
 if [ "${1:-}" = "resolve" ]; then

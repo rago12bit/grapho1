@@ -3,10 +3,10 @@ import { $, $$, api, esc, mountShell } from "./shell.js";
 
 mountShell({ tenants: false });
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
-const NAME = { "Faultline (metrics)": "Faultline", "Faultline (all)": "Faultline, logs + traces as alerts",
+const NAME = { "Hypocenter (metrics)": "Hypocenter", "Hypocenter (all)": "Hypocenter, logs + traces as alerts",
   "Earliest alert (metrics)": "Earliest alert", "Biggest anomaly (metrics)": "Biggest anomaly" };
 const nice = (n) => NAME[n] || n;
-const isMe = (n) => /^Faultline/.test(n);
+const isMe = (n) => /^Hypocenter/.test(n);
 const f2 = (x) => (x == null ? "–" : x.toFixed(2));
 
 // grow bars once they scroll into view
@@ -20,7 +20,7 @@ const grow = (el) => (reduced ? $$("[data-w]", el).forEach((b) => { b.style.widt
 let D = null, metric = 0;
 
 function kpis() {
-  const all = D.rcaeval.methods.find((m) => m.name === "Faultline (metrics)").cells.at(-1)[0];
+  const all = D.rcaeval.methods.find((m) => m.name === "Hypocenter (metrics)").cells.at(-1)[0];
   const ns = D.rcaeval.methods.find((m) => m.name === "NSigma").cells.at(-1)[0];
   const tt = D.held_out_tt[0], nsTT = D.held_out_tt.find((r) => r.name.startsWith("NSigma"));
   const seeds = D.held_out_seeds.map((s) => s.skeptic);
@@ -41,23 +41,23 @@ function heat() {
   const rows = [...R.methods].sort((a, b) => (isMe(b.name) - isMe(a.name)) || (b.cells.at(-1)[metric] ?? 0) - (a.cells.at(-1)[metric] ?? 0));
   const shade = (v) => (v == null ? "" : `background: rgba(255,107,74,${(0.06 + 0.62 * v * v).toFixed(3)})`);
   $("#heat").innerHTML = `<thead><tr><th>method</th>${R.datasets.map((d, i) => `<th>${esc(d)}<small>${R.sizes[i]} cases</small></th>`).join("")}</tr></thead><tbody>
-    ${rows.map((m) => `<tr class="${m.name === "Faultline (metrics)" ? "me" : ""}"><td>${esc(nice(m.name))}</td>${m.cells.map((c, i) => {
+    ${rows.map((m) => `<tr class="${m.name === "Hypocenter (metrics)" ? "me" : ""}"><td>${esc(nice(m.name))}</td>${m.cells.map((c, i) => {
       const v = c[metric];
       return `<td class="c${v == null ? " na" : ""}${i === m.cells.length - 1 ? " all" : ""}" style="${shade(v)}" title="${esc(nice(m.name))} · ${esc(R.datasets[i])}">${f2(v)}${i === m.cells.length - 1 && m.note ? `<small class="faint"> /${m.note}</small>` : ""}</td>`;
     }).join("")}</tr>`).join("")}</tbody>`;
   const ranked = [...R.methods].filter((m) => m.cells.at(-1)[metric] != null).sort((a, b) => b.cells.at(-1)[metric] - a.cells.at(-1)[metric]);
   $("#rank360").innerHTML = ranked.map((m) => {
     const v = m.cells.at(-1)[metric];
-    return `<div class="hb${m.name === "Faultline (metrics)" ? " me" : ""}"><span class="n">${esc(nice(m.name))}${m.note ? ` · ${m.note}` : ""}</span><span class="r"><i data-w="${v * 100}%"></i></span><span class="val">${f2(v)}</span></div>`;
+    return `<div class="hb${m.name === "Hypocenter (metrics)" ? " me" : ""}"><span class="n">${esc(nice(m.name))}${m.note ? ` · ${m.note}` : ""}</span><span class="r"><i data-w="${v * 100}%"></i></span><span class="val">${f2(v)}</span></div>`;
   }).join("");
   if (reduced) grow($("#rank360")); else $$("#rank360 [data-w]").forEach((b) => { b.style.width = b.dataset.w; });
 }
 
 function says() {
   const g = (n) => D.rcaeval.methods.find((m) => m.name === n).cells.at(-1);
-  const me = g("Faultline (metrics)"), ns = g("NSigma"), all = g("Faultline (all)");
+  const me = g("Hypocenter (metrics)"), ns = g("NSigma"), all = g("Hypocenter (all)");
   $("#says").innerHTML = `
-    <li><b>Ahead over all 360:</b> Faultline names the right service first in ${f2(me[0])} of cases; NSigma, the best baseline, ${f2(ns[0])}.</li>
+    <li><b>Ahead over all 360:</b> Hypocenter names the right service first in ${f2(me[0])} of cases; NSigma, the best baseline, ${f2(ns[0])}.</li>
     <li><b>Its top five are weaker:</b> Avg@5 ${f2(me[1])} against NSigma's ${f2(ns[1])}. When it misses, the cause is often lower in its list.</li>
     <li><b>Logs and traces as alerts</b> scored ${f2(all[0])}, below metric alerts, so the headline uses metric alerts and keeps logs and traces as evidence.</li>
     <li><b>CIRCA and PC-RandomWalk</b> take 5–10 minutes per Train Ticket case here; they were run on the other 240.</li>`;
@@ -66,13 +66,13 @@ function says() {
 function held() {
   const rows = D.held_out_tt;
   $("#heldbars").innerHTML = rows.map((r) => `
-    <div class="hb${/^Faultline v3/.test(r.name) ? " me" : ""}"><span class="n" title="${esc(r.name)}">${esc(r.name.replace(" (judge + skeptic)", "").replace("(RCAEval's code, run here = published)", "· run here").replace("(RCAEval's code, run here)", "· run here"))}</span>
+    <div class="hb${/^Hypocenter v3/.test(r.name) ? " me" : ""}"><span class="n" title="${esc(r.name)}">${esc(r.name.replace(" (judge + skeptic)", "").replace("(RCAEval's code, run here = published)", "· run here").replace("(RCAEval's code, run here)", "· run here"))}</span>
       <span class="r"><i class="a" data-w="${(r.ac1 ?? 0) * 100}%"></i><i class="b" data-w="${(r.avg5 ?? 0) * 100}%"></i></span><span class="val">${f2(r.ac1)}</span></div>`).join("");
   grow($("#heldbars"));
   const v = (n) => rows.find((r) => r.name.startsWith(n));
-  const me = v("Faultline v3"), ns = v("NSigma");
-  $("#heldnote").innerHTML = `NSigma ranks better here (${f2(ns.ac1)} against ${f2(me.ac1)}), and its top five are better (${f2(ns.avg5)} against ${f2(me.avg5)}). In 20 of Faultline's 26 misses the cause alerted but ranked below fifth among 68 services: that is where the next improvement has to come from.`;
-  $("#steps3").innerHTML = ["Faultline v1", "Faultline v2", "Faultline v3"].map((n) => { const r = v(n); return `<div><b>${f2(r.ac1)}</b><span>${n.slice(10)} · AC@1</span></div>`; }).join("");
+  const me = v("Hypocenter v3"), ns = v("NSigma");
+  $("#heldnote").innerHTML = `NSigma ranks better here (${f2(ns.ac1)} against ${f2(me.ac1)}), and its top five are better (${f2(ns.avg5)} against ${f2(me.avg5)}). In 20 of Hypocenter's 26 misses the cause alerted but ranked below fifth among 68 services: that is where the next improvement has to come from.`;
+  $("#steps3").innerHTML = ["Hypocenter v1", "Hypocenter v2", "Hypocenter v3"].map((n) => { const r = v(n); return `<div><b>${f2(r.ac1)}</b><span>${n.slice(10)} · AC@1</span></div>`; }).join("");
 }
 
 function planted() {
@@ -83,7 +83,7 @@ function planted() {
     [`${D.learning_rerun.after}%`, "the same faults, second time", `first time ${D.learning_rerun.before}%`],
   ].map(([v, l, s]) => `<div class="kpi"><div class="v" style="font-size:30px">${esc(v)}</div><div class="l">${esc(l)}</div><div class="s">${esc(s)}</div></div>`).join("");
   $("#ablation").innerHTML = S.rows.map((r) => {
-    const v = r.values[all], me = /^Faultline/.test(r.name);
+    const v = r.values[all], me = /^Hypocenter/.test(r.name);
     return `<div class="hb${me ? " me" : ""}"><span class="n">${esc(r.name)}</span><span class="r"><i data-w="${v}%"></i></span><span class="val">${v}%</span></div>`;
   }).join("");
   grow($("#ablation"));
@@ -93,7 +93,7 @@ function planted() {
   grow($("#conf"));
   const shade = (v) => (v == null ? "" : `background: rgba(110,231,183,${(0.04 + 0.55 * Math.pow(v / 100, 3)).toFixed(3)})`);
   $("#kinds").innerHTML = `<thead><tr><th>top-1 by kind · seed 7</th>${S.kinds.map((k) => `<th>${esc(k)}</th>`).join("")}</tr></thead><tbody>
-    ${S.rows.map((r) => `<tr class="${/^Faultline/.test(r.name) ? "me" : ""}"><td>${esc(r.name)}</td>${r.values.map((v) => `<td class="c" style="${shade(v)}">${v == null ? "–" : `${v}%`}</td>`).join("")}</tr>`).join("")}</tbody>`;
+    ${S.rows.map((r) => `<tr class="${/^Hypocenter/.test(r.name) ? "me" : ""}"><td>${esc(r.name)}</td>${r.values.map((v) => `<td class="c" style="${shade(v)}">${v == null ? "–" : `${v}%`}</td>`).join("")}</tr>`).join("")}</tbody>`;
 }
 
 function learning() {

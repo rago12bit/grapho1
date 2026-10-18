@@ -32,7 +32,7 @@ function render() {
 
 function row(i) {
   return `<li><button data-id="${esc(i.id)}" class="${i.status}">
-    <div class="r1">${sev(i.severity)}<span class="mono">${esc(i.id)}</span><span class="label st-${esc(i.status)}">${esc(i.status)}</span>${i.source === "alertmanager" ? `<span class="label live" title="Opened by Faultline from an Alertmanager webhook">live</span>` : ""}<span class="faint small when">${ago(i.started)}</span></div>
+    <div class="r1">${sev(i.severity)}<span class="mono">${esc(i.id)}</span><span class="label st-${esc(i.status)}">${esc(i.status)}</span>${i.source === "alertmanager" ? `<span class="label live" title="Opened by Hypocenter from an Alertmanager webhook">live</span>` : ""}<span class="faint small when">${ago(i.started)}</span></div>
     <div class="title">${esc(i.title)}</div>
     ${i.leader ? `<div class="lead-line mono"><span class="faint">→</span> ${esc(i.leader)} <span class="conf-${esc(i.confidence)}">${esc(i.confidence)}</span>${i.explains?.length ? ` <span class="faint">· explains ${i.explains.length}</span>` : ""}</div>`
       : `<div class="lead-line mono faint">symptom on ${esc(i.symptom)}</div>`}

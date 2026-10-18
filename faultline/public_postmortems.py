@@ -6,7 +6,7 @@ Source: Dan Luu's list of public post-mortems (github.com/danluu/post-mortems), 
 companies, each a link to the company's own report with a one-paragraph summary, grouped into failure classes
 (config errors, hardware and power, conflicts, time, database, uncategorized).
 
-The list has no licence, so none of it ships with Faultline: this module only fetches it, on your machine, into a
+The list has no licence, so none of it ships with Hypocenter: this module only fetches it, on your machine, into a
 graph of its own (`knowledge`, shared by every company and untouched by "Reset"), and every entry keeps the link
 to the original report. Nothing is committed to the repository.
 

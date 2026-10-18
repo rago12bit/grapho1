@@ -1,7 +1,7 @@
 """Live input: changes pushed by CI/CD and alerts pushed by monitoring.
 
 Nothing is polled. A deploy pipeline (or a config/flag service) posts each change as it lands; Alertmanager, or
-Grafana alerting in the same format, posts alerts as they fire and resolve. Faultline writes both into the graph,
+Grafana alerting in the same format, posts alerts as they fire and resolve. Hypocenter writes both into the graph,
 opens an incident when the opening rule says so, and has the agents investigate it straight away. Resolved alerts
 set `cleared_at`, which is exactly what `verify_fix` reads, so a fix is verified by real recovery.
 """

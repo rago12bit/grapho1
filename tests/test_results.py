@@ -14,9 +14,9 @@ def test_the_rcaeval_tables_are_read_as_published():
     d = results.load()
     r = d["rcaeval"]
     assert r["datasets"][-1] == "All 360" and sum(r["sizes"][:-1]) == r["sizes"][-1] == 360
-    me = next(m for m in r["methods"] if m["name"] == "Faultline (metrics)")
+    me = next(m for m in r["methods"] if m["name"] == "Hypocenter (metrics)")
     doc = (ROOT / "docs" / "rcaeval-results.md").read_text()
-    row = next(line for line in doc.splitlines() if line.startswith("| **Faultline (metrics)**"))
+    row = next(line for line in doc.splitlines() if line.startswith("| **Hypocenter (metrics)**"))
     assert me["cells"][-1] == [float(x) for x in re.findall(r"\d\.\d+", row.split("|")[-2])]
     circa = next(m for m in r["methods"] if m["name"] == "CIRCA")
     assert circa["note"] == "240" and circa["cells"][2] == [None, None]          # not run on Train Ticket
@@ -34,7 +34,7 @@ def test_scale_planted_and_learning_come_from_their_files():
     assert d["synthetic"]["kinds"][:5] == ["deep", "silent", "infra", "shared", "host"]
     assert [c["label"] for c in d["confidence"]] == ["high", "medium", "low"]
     assert {l["company"] for l in d["learned"]} == {"Online Boutique", "Sock Shop", "Train Ticket"}
-    assert d["held_out_tt"][0]["name"].startswith("Faultline v3") and d["held_out_tt"][0]["ac1"] == 0.71
+    assert d["held_out_tt"][0]["name"].startswith("Hypocenter v3") and d["held_out_tt"][0]["ac1"] == 0.71
 
 
 def test_every_planted_fix_holds_on_a_copy_and_the_decoy_clears_nothing(fresh):

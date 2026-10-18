@@ -213,7 +213,7 @@ def test_public_mode_guards_webhooks_and_rate_limits(fresh, monkeypatch):
     with _client() as c:
         body = {"alerts": [_am("fp-p", "checkout", T0)]}
         assert c.post("/api/kestrel/alerts/alertmanager", json=body).status_code == 403
-        assert c.post("/api/kestrel/alerts/alertmanager", json=body, headers={"X-Faultline-Token": "s3cret"}).status_code == 200
+        assert c.post("/api/kestrel/alerts/alertmanager", json=body, headers={"X-Hypocenter-Token": "s3cret"}).status_code == 200
         codes = [c.post("/api/kestrel/incidents/INC-303/investigate").status_code for _ in range(3)]
         assert codes == [200, 200, 429]
     api._hits.clear()

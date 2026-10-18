@@ -16,7 +16,7 @@ from .db import Graph, client, graph_name, list_tenants
 
 
 def engine() -> dict:
-    """FalkorDB's module version, a ping, and the size of every Faultline graph."""
+    """FalkorDB's module version, a ping, and the size of every Hypocenter graph."""
     c = client().connection
     t = time.perf_counter()
     c.ping()

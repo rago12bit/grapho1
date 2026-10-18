@@ -1,4 +1,4 @@
-# Faultline: FalkorDB + the agent API/UI.
+# Hypocenter: FalkorDB + the agent API/UI.
 #   docker compose up -d --build        -> UI on http://localhost:8090, FalkorDB browser on :3003
 #   docker compose run --rm app pytest  -> tests against the same FalkorDB
 services:

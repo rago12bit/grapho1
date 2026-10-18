@@ -67,7 +67,7 @@ export async function play() {
     await say(6, "Mobile logins fail with seven services alerting. Weakly connected components split them into three separate groups, so three separate problems: the auth deploy explains its own.", 7000);
 
     await act.openIncident("INC-303");
-    await say(7, "Search degraded and nothing changed. catalog-es went red first, so Faultline pages its owner instead of blaming the last deploy.", 6000);
+    await say(7, "Search degraded and nothing changed. catalog-es went red first, so Hypocenter pages its owner instead of blaming the last deploy.", 6000);
 
     await act.showService("payments-db");
     await say(8, "The company as a graph: who owns payments-db, who actually knows it from the fixes they approved, chokepoints by betweenness, domains by label propagation.", 7000);

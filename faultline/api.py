@@ -29,7 +29,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Faultline", lifespan=lifespan)
+app = FastAPI(title="Hypocenter", lifespan=lifespan)
 
 # --- running on a public server ---------------------------------------------------------------------------
 # FAULTLINE_PUBLIC=1 turns on what a shared, internet-facing demo needs: per-client rate limits on the routes that
@@ -54,8 +54,8 @@ async def public_guard(request, call_next):
     if PUBLIC and request.method == "POST":
         path = request.url.path
         if path.endswith(("/alerts/alertmanager", "/changes")) and (
-                not INGEST_TOKEN or not hmac.compare_digest(request.headers.get("x-faultline-token", ""), INGEST_TOKEN)):
-            return JSONResponse({"detail": "webhooks need X-Faultline-Token on this server"}, status_code=403)
+                not INGEST_TOKEN or not hmac.compare_digest(request.headers.get("x-hypocenter-token", ""), INGEST_TOKEN)):
+            return JSONResponse({"detail": "webhooks need X-Hypocenter-Token on this server"}, status_code=403)
         for suffix, n, per in LIMITS:
             if path.endswith(suffix):
                 q = _hits.setdefault((_client(request), suffix), deque())
@@ -178,7 +178,7 @@ def tenants():
 
 @app.post("/api/upload")
 async def upload_case(request: Request, filename: str = "upload.json"):
-    """Bring your own incident: Faultline's incident JSON, or an RCAEval-layout case zip. Becomes a new tenant."""
+    """Bring your own incident: Hypocenter's incident JSON, or an RCAEval-layout case zip. Becomes a new tenant."""
     n = request.headers.get("content-length")
     if n is None or not n.isdigit() or int(n) > upload.MAX_ZIP_BYTES:
         raise HTTPException(413, "upload too large (40 MB at most) or without a length")

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Faultline</title>
+  <title>Hypocenter</title>
   <meta name="description" content="An on-call agent whose reasoning lives in a FalkorDB graph: it traces the outage, argues every suspect, proves the fix on a copy of the graph, and checks it worked.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,14 +21,14 @@
       <div class="hero-copy">
         <a class="news" href="/break"><span class="news-tag">New</span> Break the graph: seven experiments on a GRAPH.COPY <span aria-hidden="true">›</span></a>
         <h1>What broke.<br>Why.<br><span class="grad">Will the fix work?</span></h1>
-        <p class="lede">Faultline follows an outage down the call graph to the change that started it, argues every suspect with evidence it can cite, and proves the fix on a copy of the FalkorDB graph <em>before</em> anyone approves it.</p>
+        <p class="lede">Hypocenter follows an outage down the call graph to the change that started it, argues every suspect with evidence it can cite, and proves the fix on a copy of the FalkorDB graph <em>before</em> anyone approves it.</p>
         <div class="ctas">
           <a class="btn primary" href="/replay?tenant=kestrel&amp;incident=INC-302&amp;play=1">Run the hero incident <span aria-hidden="true">→</span></a>
           <a class="btn ghost" href="/break"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13 9 7M9 3l4 4-2 2-4-4z"/></svg> Break the graph</a>
         </div>
       </div>
       <div class="hero-cube">
-        <canvas id="cube" aria-label="The Faultline graph as a cube: drag to turn it, click to take it apart into its node types"></canvas>
+        <canvas id="cube" aria-label="The Hypocenter graph as a cube: drag to turn it, click to take it apart into its node types"></canvas>
         <div class="callouts" id="callouts" aria-hidden="true">
           <span class="co co1"><i></i>F-5202 · ruled out</span>
           <span class="co co2"><i></i>C-5101 · another incident's</span>
@@ -46,7 +46,7 @@
       <div class="window" id="window">
         <div class="win-bar"><i></i><i></i><i></i><span class="mono">localhost:8090/app · INC-302</span><a class="mono" href="/app?tenant=kestrel&amp;incident=INC-302">open it ↗</a></div>
         <div class="win-body">
-          <iframe id="win-frame" title="The Faultline incident room, live" data-src="/app?tenant=kestrel&amp;incident=INC-302&amp;embed=1" tabindex="-1"></iframe>
+          <iframe id="win-frame" title="The Hypocenter incident room, live" data-src="/app?tenant=kestrel&amp;incident=INC-302&amp;embed=1" tabindex="-1"></iframe>
           <button class="win-cover" id="win-cover"><span>Click to use it</span></button>
         </div>
       </div>
@@ -175,7 +175,7 @@
         <details><summary>What happens if FalkorDB is down?</summary><p>Every answer is a graph query, so nothing is shown rather than something guessed. The status pill turns red, the pages say so, and they reconnect by themselves.</p></details>
         <details><summary>Can it change production on its own?</summary><p>No. It proposes one action with its proof attached; a person approves it, and then the alerts decide whether it worked.</p></details>
         <details><summary>Is the data real?</summary><p>Kestrel Pay and Harbor are synthetic companies. Online Boutique, Sock Shop and Train Ticket are all 360 real failures from the public RCAEval benchmark, with real telemetry, real call graphs and real root causes.</p></details>
-        <details><summary>Where do the numbers on this page come from?</summary><p><code>make eval</code> downloads the public data, runs Faultline and RCAEval's own baselines, and prints the tables in <code>docs/rcaeval-results.md</code>. A test fails if this page and that file disagree.</p></details>
+        <details><summary>Where do the numbers on this page come from?</summary><p><code>make eval</code> downloads the public data, runs Hypocenter and RCAEval's own baselines, and prints the tables in <code>docs/rcaeval-results.md</code>. A test fails if this page and that file disagree.</p></details>
       </div>
     </section>
 
@@ -185,9 +185,9 @@
       <div class="cmds">
         <div class="card"><div class="card-h"><h3>The app</h3><button class="copy mono" data-copy="c1">Copy</button></div><pre class="code" id="c1">docker compose up -d --build
 open http://localhost:8090</pre></div>
-        <div class="card"><div class="card-h"><h3>Every RCAEval number</h3><button class="copy mono" data-copy="c2">Copy</button></div><pre class="code" id="c2">make eval        # data, signals, Faultline, baselines
+        <div class="card"><div class="card-h"><h3>Every RCAEval number</h3><button class="copy mono" data-copy="c2">Copy</button></div><pre class="code" id="c2">make eval        # data, signals, Hypocenter, baselines
 make eval-quick  # re-score in under a minute</pre></div>
-        <div class="card"><div class="card-h"><h3>From any MCP client</h3><button class="copy mono" data-copy="c3">Copy</button></div><pre class="code" id="c3">claude mcp add faultline -- docker compose \
+        <div class="card"><div class="card-h"><h3>From any MCP client</h3><button class="copy mono" data-copy="c3">Copy</button></div><pre class="code" id="c3">claude mcp add hypocenter -- docker compose \
   exec -T app python -m faultline.mcp_server</pre></div>
       </div>
     </section>

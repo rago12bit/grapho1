@@ -1,6 +1,6 @@
 """Prove a fix before anyone approves it, on a copy of the graph.
 
-The argument says *why* Faultline blames something; this says *what fixing it will do*, before it is done:
+The argument says *why* Hypocenter blames something; this says *what fixing it will do*, before it is done:
 
 1. Copy the tenant's graph (`GRAPH.COPY`), so nothing real is touched.
 2. Write the incident's causal chain into the copy: `(Alert)-[:CAUSED_BY]->...->(Change | Service | Node)`.

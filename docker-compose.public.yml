@@ -1,4 +1,4 @@
-# A public demo on one small server: Faultline behind Caddy (automatic HTTPS), FalkorDB not exposed.
+# A public demo on one small server: Hypocenter behind Caddy (automatic HTTPS), FalkorDB not exposed.
 #   DOMAIN=203-0-113-7.sslip.io FAULTLINE_INGEST_TOKEN=$(openssl rand -hex 16) \
 #     docker compose -f docker-compose.yml -f docker-compose.public.yml up -d --build
 # See deploy/DEPLOY.md.

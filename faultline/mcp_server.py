@@ -18,7 +18,7 @@ from . import agent
 TENANT = os.environ.get("FAULTLINE_TENANT", "kestrel")
 
 server = MCPServer(
-    name="faultline",
+    name="hypocenter",
     instructions=(
         "Outage investigation over a FalkorDB graph of services, owners, changes, alerts and past incidents. "
         "Start an incident with rank_suspects. Actions you propose wait for human approval."),
@@ -173,7 +173,7 @@ def propose_action(incident_id: str, kind: str, target: str, summary: str, chang
 # On a public server (FAULTLINE_PUBLIC=1) the MCP endpoint is read-only: the one tool that writes isn't registered.
 if os.environ.get("FAULTLINE_PUBLIC") != "1":
     server.tool(description=(
-        "Propose a fix (rollback, revert_config, disable_flag, page_owner). A human approves it in the Faultline UI. "
+        "Propose a fix (rollback, revert_config, disable_flag, page_owner). A human approves it in the Hypocenter UI. "
         "also_for: other open incidents the same change explains, so one approval mitigates all of them."))(propose_action)
 
 

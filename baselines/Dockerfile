@@ -1,5 +1,5 @@
 # RCAEval's own implementations of the published baselines, in their own image so none of their dependencies
-# reach Faultline's. Only the metric-based methods that need no torch / Python 3.8 environment.
+# reach Hypocenter's. Only the metric-based methods that need no torch / Python 3.8 environment.
 #   docker build -t faultline-baselines baselines
 #   docker run --rm -e OMP_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -v "$PWD/data:/data" -v "$PWD/baselines:/b:ro" faultline-baselines python /b/run_baselines.py
 FROM python:3.12-slim

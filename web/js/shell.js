@@ -33,7 +33,7 @@ export function mountShell({ tenants = true } = {}) {
   const head = document.createElement("header");
   head.className = "sh";
   head.innerHTML = `
-    <a class="sh-brand" href="/">${LOGO}<span>Faultline</span></a>
+    <a class="sh-brand" href="/">${LOGO}<span>Hypocenter</span></a>
     <nav class="sh-nav" aria-label="Pages">${LINKS.map(([href, name]) =>
       `<a href="${href}"${href === here ? ' aria-current="page"' : ""}>${name}</a>`).join("")}</nav>
     <div class="sh-right">
@@ -51,11 +51,11 @@ export function mountShell({ tenants = true } = {}) {
   foot.className = "sf";
   foot.innerHTML = `
     <div class="sf-row">
-      <a class="sh-brand" href="/">${LOGO}<span>Faultline</span></a>
+      <a class="sh-brand" href="/">${LOGO}<span>Hypocenter</span></a>
       ${LINKS.map(([href, name]) => `<a href="${href}">${name}</a>`).join("")}
       <span class="sf-note mono">On a FalkorDB graph · Kestrel Pay is synthetic · RCAEval is real</span>
     </div>
-    <div class="sf-mark" aria-hidden="true">Faultline</div>`;
+    <div class="sf-mark" aria-hidden="true">Hypocenter</div>`;
   document.body.append(foot);
 
   $("#sh-burger").onclick = () => head.classList.toggle("open");

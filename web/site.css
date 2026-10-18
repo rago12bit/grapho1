@@ -81,7 +81,7 @@ h1, h2, h3 { font-family: var(--display); letter-spacing: -0.03em; margin: 0; }
 .sf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; padding: 22px var(--gut); font-size: 13px; color: var(--ink-2); }
 .sf-row a:hover { color: var(--ink); }
 .sf-row .sf-note { margin-left: auto; color: var(--ink-3); }
-.sf-mark { font: 800 clamp(90px, 19vw, 300px)/0.8 var(--display); letter-spacing: -0.06em; color: #121216; padding: 0 var(--gut);
+.sf-mark { font: 800 clamp(56px, calc((100vw - 2 * var(--gut)) / 5.15), 290px)/0.8 var(--display); letter-spacing: -0.06em; color: #121216; padding: 0 var(--gut);
   margin-bottom: -0.12em; user-select: none; white-space: nowrap; }
 
 /* page scaffolding */

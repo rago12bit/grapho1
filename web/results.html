@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Results · Faultline</title>
+  <title>Results · Hypocenter</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -16,7 +16,7 @@
   <main class="page" id="main">
     <p class="kick">Results</p>
     <h1 class="page-h">Measured, not claimed. <span class="dim">Every number here is read from the file that publishes it.</span></h1>
-    <p class="page-sub">Real outages from the public RCAEval benchmark against the published methods run on the same cases, a held-out set kept out of development, planted faults with ablations, learning, scale, and the fix proofs run live. Where Faultline loses, this page says so.</p>
+    <p class="page-sub">Real outages from the public RCAEval benchmark against the published methods run on the same cases, a held-out set kept out of development, planted faults with ablations, learning, scale, and the fix proofs run live. Where Hypocenter loses, this page says so.</p>
     <div class="kpis" id="kpis"></div>
     <nav class="toc" id="toc" aria-label="Sections">
       <a href="#real">Real outages</a><a href="#held">Held out</a><a href="#planted">Planted faults</a><a href="#learning">Learning</a>
@@ -102,7 +102,7 @@
     <section class="rs" id="reproduce">
       <div class="rs-head"><p class="kick">08 · Reproduce</p><h2>Don't trust this page. Run it.</h2></div>
       <div class="three">
-        <div class="card"><div class="card-h"><h3>Every RCAEval number</h3></div><pre class="code" style="border:0;background:transparent">make eval        # data, signals, Faultline, baselines
+        <div class="card"><div class="card-h"><h3>Every RCAEval number</h3></div><pre class="code" style="border:0;background:transparent">make eval        # data, signals, Hypocenter, baselines
 make eval-quick  # re-score in under a minute</pre></div>
         <div class="card"><div class="card-h"><h3>Planted faults</h3></div><pre class="code" style="border:0;background:transparent">docker compose run --rm app \
   python -m faultline.eval --n 400 --seed 3</pre></div>

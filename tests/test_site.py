@@ -55,15 +55,15 @@ def test_every_page_is_served_with_its_own_script_and_nothing_missing():
 def test_the_results_teaser_on_the_landing_page_is_the_eval():
     teaser = LANDING[LANDING.index('class="res-cta"'):LANDING.index("</a>", LANDING.index('class="res-cta"'))]
     nums = re.findall(r"<b>([\d.–]+)", teaser)
-    assert nums[0] == f"{ALL['Faultline (metrics)'][0]:.2f}"
-    assert nums[1] == f"{_tt('Faultline (metrics)')[0]:.2f}" and f"NSigma {_tt('NSigma')[0]:.2f}" in teaser
+    assert nums[0] == f"{ALL['Hypocenter (metrics)'][0]:.2f}"
+    assert nums[1] == f"{_tt('Hypocenter (metrics)')[0]:.2f}" and f"NSigma {_tt('NSigma')[0]:.2f}" in teaser
     readme = (ROOT / "README.md").read_text()
     seeds = [float(x) for x in re.findall(r"→ ([\d.]+)% \(seed \d+\)", readme)]
     assert nums[2] == f"{min(seeds)}–{max(seeds)}"
 
 
 def test_the_headline_numbers_match_the_eval():
-    ac1 = ALL["Faultline (metrics)"][0]
+    ac1 = ALL["Hypocenter (metrics)"][0]
     assert f'data-count="{ac1:.2f}" data-dec="2">{ac1:.2f}</p>' in LANDING
     assert f"NSigma {ALL['NSigma'][0]:.2f}" in LANDING and f"BARO {ALL['BARO'][0]:.2f}" in LANDING
     from faultline.api import PROOF

@@ -298,7 +298,7 @@ def table(res: dict) -> str:
     head = "| | " + " | ".join(f"{k} ({p1['counts'][k]})" for k in kinds) + f" | **all ({p1['counts']['all']})** | top-3 all |"
     lines = [head, "|---" * (len(kinds) + 3) + "|"]
     for v, row in p1["top1"].items():
-        name = {"full": "**Faultline (judge)**", "full + skeptic": "**Faultline (judge + skeptic)**"}.get(v, v)
+        name = {"full": "**Hypocenter (judge)**", "full + skeptic": "**Hypocenter (judge + skeptic)**"}.get(v, v)
         lines.append(f"| {name} | " + " | ".join(f"{row.get(k)}%" for k in kinds)
                      + f" | **{row['all']}%** | {p1['top3'][v]['all']}% |")
     out = "\n".join(lines)

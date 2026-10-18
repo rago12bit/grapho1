@@ -91,7 +91,7 @@ function publicHtml(r) {
       <div class="prec-head"><a class="mono" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer">${esc(m.company)}</a> <span class="label faint">${esc(m.class)}</span>
         ${m.shared.length ? `<span class="faint small">shares ${m.shared.map(esc).join(", ")}</span>` : `<span class="faint small">same failure class</span>`}</div>
       <div class="small">${esc(m.text)}</div></div>`).join("")
-    + `<p class="faint small">From <a class="link" href="${esc(p.source)}" target="_blank" rel="noopener noreferrer">Dan Luu's list of public post-mortems</a>, fetched on this machine (it has no licence, so none of it ships with Faultline). Shown as precedent, never scored.</p>`);
+    + `<p class="faint small">From <a class="link" href="${esc(p.source)}" target="_blank" rel="noopener noreferrer">Dan Luu's list of public post-mortems</a>, fetched on this machine (it has no licence, so none of it ships with Hypocenter). Shown as precedent, never scored.</p>`);
 }
 
 function render(inc, out) {
@@ -396,7 +396,7 @@ export function renderActions(inc) {
         <div class="ak label">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}${(a.covers || []).length > 1 ? ` · covers ${a.covers.map(esc).join(", ")}` : ""}</div>
         <div class="s">${esc(a.summary)}</div>${a.status === "proposed" ? recordFor(a) : ""}${proofHtml(a)}
         ${a.status === "proposed" ? `<div class="btns"><button class="btn solid hot" data-a="${esc(a.id)}" data-ok="1">Approve fix</button><button class="btn quiet" data-a="${esc(a.id)}" data-ok="0">Reject</button></div>
-            <p class="faint small">Approving applies it to the simulated system only. Then Faultline checks the alerts in the graph to see whether it worked.</p>`
+            <p class="faint small">Approving applies it to the simulated system only. Then Hypocenter checks the alerts in the graph to see whether it worked.</p>`
           : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · applied to the simulated system" : ""}</div>
             ${a.verified === true ? `<div class="verify ok">✓ Verified: ${esc(a.verification)}</div>` : a.verified === false ? `<div class="verify no">✗ Did not work: ${esc(a.verification)}. The incident is open again.</div>` : a.verification ? `<div class="verify wait">… ${esc(a.verification)}</div>` : ""}`}
       </div>`).join(""), pending ? `<span class="label warn">needs your approval</span>` : "")

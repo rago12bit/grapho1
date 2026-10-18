@@ -95,7 +95,7 @@ async function scene(id, body) {
 
 const titleCard = `<div style="text-align:center;max-width:1200px;zoom:.75">
   <svg viewBox="0 0 32 32" width="84" height="84" style="fill:none;stroke:#ff7a45;stroke-width:3"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>
-  <div style="font-size:84px;font-weight:600;letter-spacing:.5px;margin-top:10px">Faultline</div>
+  <div style="font-size:84px;font-weight:600;letter-spacing:.5px;margin-top:10px">Hypocenter</div>
   <div style="font-size:34px;color:#c3c8cf;margin-top:18px;line-height:1.35">Which change broke production,<br>and how did the failure get there?</div>
   <div style="font-size:20px;color:#8a93a0;margin-top:34px;font-family:'JetBrains Mono',monospace">an on-call agent on a FalkorDB graph · Graph Hacks 2026</div></div>`;
 
@@ -117,7 +117,7 @@ const evalCard = `<div style="width:1320px;zoom:.75">
 
 const closeCard = `<div style="text-align:center;zoom:.75">
   <svg viewBox="0 0 32 32" width="64" height="64" style="fill:none;stroke:#ff7a45;stroke-width:3"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg>
-  <div style="font-size:72px;font-weight:600;margin-top:8px">Faultline</div>
+  <div style="font-size:72px;font-weight:600;margin-top:8px">Hypocenter</div>
   <div style="font-size:30px;color:#c3c8cf;margin-top:16px;font-family:'JetBrains Mono',monospace">docker compose up -d --build</div>
   <div style="font-size:24px;color:#8a93a0;margin-top:26px">github.com/rago12bit/grapho1 · FalkorDB · Graph Hacks 2026</div></div>`;
 

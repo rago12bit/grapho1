@@ -1,4 +1,4 @@
-# Putting Faultline on a public URL
+# Putting Hypocenter on a public URL
 
 One small Linux server is enough (2 vCPU, 2–4 GB RAM: an AWS Lightsail or EC2 `t3.small`, a Hetzner CX22, a
 DigitalOcean droplet). FalkorDB, the app, the MCP endpoint and Caddy (automatic HTTPS) all run from one compose
@@ -30,7 +30,7 @@ first to let Claude drive the agents; without it the offline playbook answers.
 | Browse, open incidents, run the agents, approve fixes, export postmortems | yes | yes, rate-limited per visitor |
 | Upload your own incident | yes | yes, 4 per 10 minutes per visitor, 40 MB cap, 8 uploads kept |
 | Load test | yes | 2 per minute per visitor, one at a time server-wide, on a copy of the graph |
-| Alert and change webhooks | open | only with header `X-Faultline-Token: $FAULTLINE_INGEST_TOKEN` |
+| Alert and change webhooks | open | only with header `X-Hypocenter-Token: $FAULTLINE_INGEST_TOKEN` |
 | MCP at `https://$DOMAIN/mcp` | stdio, all tools | streamable HTTP, read-only (no `propose_action`) |
 | FalkorDB browser (:3003) | yes | not exposed |
 | Reset demo | yes | 2 per 5 minutes per visitor |
@@ -44,7 +44,7 @@ Everyone shares one demo state. To start each day clean, add a cron job on the s
 ## 4. Fire the live demo at it
 
 ```bash
-APP=https://$DOMAIN demo/fire.sh            # needs the token: add -H "X-Faultline-Token: ..." or run it on the server
+APP=https://$DOMAIN demo/fire.sh            # needs the token: add -H "X-Hypocenter-Token: ..." or run it on the server
 ```
 
 `demo/fire.sh` reads `FAULTLINE_INGEST_TOKEN` from the environment and sends it when set.
@@ -52,5 +52,5 @@ APP=https://$DOMAIN demo/fire.sh            # needs the token: add -H "X-Faultli
 ## 5. Point an MCP client at it
 
 ```json
-{ "mcpServers": { "faultline": { "type": "http", "url": "https://<DOMAIN>/mcp" } } }
+{ "mcpServers": { "hypocenter": { "type": "http", "url": "https://<DOMAIN>/mcp" } } }
 ```

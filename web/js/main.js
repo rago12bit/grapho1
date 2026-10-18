@@ -118,7 +118,7 @@ function start() {
     <section class="sec"><div class="label-row"><h3 class="label">Try one</h3></div>
       <ul class="try">${samples().map((s) => `<li><button data-q="${esc(s.q)}"><span>${esc(s.label)}</span><span class="mono faint">${esc(s.q)}</span></button></li>`).join("")}</ul></section>
     <section class="sec"><div class="label-row"><h3 class="label">Bring your own incident</h3></div>
-      <p class="small faint">A JSON file in Faultline's incident format (services, calls or spans, owners, changes, alerts), or one case zipped in RCAEval's layout (inject_time.txt, metrics and traces as parquet or CSV). It becomes its own graph and the judge reads it at once.</p>
+      <p class="small faint">A JSON file in Hypocenter's incident format (services, calls or spans, owners, changes, alerts), or one case zipped in RCAEval's layout (inject_time.txt, metrics and traces as parquet or CSV). It becomes its own graph and the judge reads it at once.</p>
       <div class="up-row"><label class="btn"><input type="file" id="upfile" accept=".json,.zip,application/json,application/zip" hidden>Choose a file</label>
         <button class="btn quiet" id="up-example">Try the example</button>
         <a class="link" href="/static/examples/incident.json" download>example JSON</a></div>

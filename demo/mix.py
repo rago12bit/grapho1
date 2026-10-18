@@ -4,7 +4,7 @@
 
 Inputs in <dir>: rec/video.webm, rec/timeline.json (scene start times from record.mjs), <audio-subdir>/<scene>.mp3
 (default audio/; the 1.5x clips live in audio_fast/).
-Outputs: captions.srt and faultline-demo.mp4 (1920x1080, H.264 + AAC).
+Outputs: captions.srt and hypocenter-demo.mp4 (1920x1080, H.264 + AAC).
 """
 import json
 import re
@@ -73,6 +73,6 @@ graph = ";".join(delays) + ";" + "".join(f"[a{i}]" for i in range(1, len(timelin
     f"[0:v]scale=1920:1080:flags=lanczos,subtitles={d / 'captions.srt'}:force_style='{style}',fps=30,format=yuv420p[vout]"
 cmd = ["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", graph, "-map", "[vout]", "-map", "[aout]",
        "-t", f"{end:.2f}", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-c:a", "aac", "-b:a", "160k",
-       "-movflags", "+faststart", str(d / "faultline-demo.mp4")]
+       "-movflags", "+faststart", str(d / "hypocenter-demo.mp4")]
 subprocess.run(cmd, check=True)
-print(f"wrote {d / 'faultline-demo.mp4'} ({end:.1f} s, {n - 1} captions)")
+print(f"wrote {d / 'hypocenter-demo.mp4'} ({end:.1f} s, {n - 1} captions)")

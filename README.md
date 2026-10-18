@@ -1,10 +1,10 @@
-# Faultline
+# Hypocenter
 
 **An on-call agent whose reasoning lives in the graph. It traces an outage through FalkorDB, keeps every hypothesis and the evidence for and against it as nodes, proves the fix on a copy of the graph before anyone approves it, and checks afterwards that the fix did what the proof said.**
 
 Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB), Tracks 01, 02 and 03. `docker compose up -d --build`, then http://localhost:8090.
 
-![Faultline's case file for INC-302 after the agents ran: the failure path from mobile-bff down to auth in red, each causal hop labelled with its lag, the two independent faults below it in amber, and the verdict with 15 of 15 claims checked on the right](docs/img/case-file.png)
+![Hypocenter's case file for INC-302 after the agents ran: the failure path from mobile-bff down to auth in red, each causal hop labelled with its lag, the two independent faults below it in amber, and the verdict with 15 of 15 claims checked on the right](docs/img/case-file.png)
 
 <sub>INC-302 after the four agents ran. Red is the path the failure climbed (auth → mobile-bff, +120 s); amber are the two other faults below the symptom, which belong to other incidents. The scrubber under the graph replays it minute by minute.</sub>
 
@@ -31,9 +31,9 @@ A person approves every fix; nothing outside the simulated world is changed.
 
 <details><summary>The three tracks</summary>
 
-| Track | What Faultline does |
+| Track | What Hypocenter does |
 |---|---|
-| **01 · Agents that act on connected data** | The loop above, plus WCC, SPpaths, betweenness, label propagation and PageRank used during the investigation; Alertmanager and CI webhooks, so monitoring opens incidents and Faultline investigates them by itself; an MCP server. |
+| **01 · Agents that act on connected data** | The loop above, plus WCC, SPpaths, betweenness, label propagation and PageRank used during the investigation; Alertmanager and CI webhooks, so monitoring opens incidents and Hypocenter investigates them by itself; an MCP server. |
 | **02 · Agent memory and coordination** | Four agents hand off only through `Episode` nodes; investigations stream live; precedent, a fix track record and weights learned from each company's solved incidents and people's verdicts change the next answer; past incidents matched by vector and full-text index; a load test in the app checks isolation under 50 parallel runs. |
 | **03 · Company brain** | Owners, experts by what they did, the on-call rota, journeys and SLOs, runtime and config, releases and commits, delivery metrics, runbooks, public post-mortems, and a card per service with the queries behind it. |
 
@@ -43,11 +43,11 @@ A person approves every fix; nothing outside the simulated world is changed.
 
 1. **The alert chain decides, not proximity.** In INC-301 a `cart` deploy is one hop from the failing `checkout` and more recent than the real cause. Nothing on its path alerted, so it scores 0.27. A connection-pool change two hops down, on `payments-db`, has `payments-db`, `payments` and `checkout` alerting in that order above it, so it scores 0.94.
 2. **"Nothing changed" is a first-class answer.** When no change on the path explains an incident, alerting dependencies with no change compete as suspects. In INC-303 the answer is "the search cluster failed first; this is infrastructure, page its owner", instead of blaming whatever deployed last.
-3. **One change, many incidents.** Two teams often open separate incidents for one cause. Faultline checks whether the leading change also fully explains other open incidents (same alert-chain test), says so, and proposes one fix that covers all of them. One approval mitigates every linked incident. INC-301 (checkout) and INC-304 (refunds) are both the same pool change.
+3. **One change, many incidents.** Two teams often open separate incidents for one cause. Hypocenter checks whether the leading change also fully explains other open incidents (same alert-chain test), says so, and proposes one fix that covers all of them. One approval mitigates every linked incident. INC-301 (checkout) and INC-304 (refunds) are both the same pool change.
 4. **Memory changes the score, not just the display.** Resolving an incident writes `ROOT_CAUSE`, `RESOLVED_BY` and a `Lesson` into the graph, and the next investigation scores precedent from them. A test deletes the memory and checks that the same change then scores lower.
-5. **A fault simulator checks every suspect.** For each one it asks "if this broke, which services would alert, and in what order?" and compares that with what actually alerted: "explains 3 of 3 alerting services, in the predicted order". Alerts the leader can't explain point to **independent faults**: in INC-302 the auth deploy explains 2 of the 7 alerting services under `mobile-bff`, and Faultline names the other two faults behind the rest (the pool change of INC-301/304, the search cluster of INC-303). A cause that never alerts itself (a queue, a database) still counts when everything above it did, and a change the failure climbed *past* is marked down.
+5. **A fault simulator checks every suspect.** For each one it asks "if this broke, which services would alert, and in what order?" and compares that with what actually alerted: "explains 3 of 3 alerting services, in the predicted order". Alerts the leader can't explain point to **independent faults**: in INC-302 the auth deploy explains 2 of the 7 alerting services under `mobile-bff`, and Hypocenter names the other two faults behind the rest (the pool change of INC-301/304, the search cluster of INC-303). A cause that never alerts itself (a queue, a database) still counts when everything above it did, and a change the failure climbed *past* is marked down.
 6. **Four agents, one graph, and a skeptic among them.** Triage, Investigator, Skeptic and Responder never pass anything to each other in code: each writes an `Episode` to the graph and the next one starts by reading it back, so an investigation can be resumed by another process or session. The **Skeptic** tries to knock the leader over before anyone acts: what doesn't it explain, did its alerts come in the right order, did the change land before the incident, is it clearly ahead? If a rival explains more and scores within reach, the verdict is overturned. Confidence comes from the **gap** to the runner-up, not the raw score. Verdicts stay in the graph as scored `SUSPECTED_CAUSE` and `SIMILAR_TO` edges, and the Responder attaches the team's `Runbook`.
-7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 94.5–96.8% top-1 and 99.8–100% top-3 on held-out seeds, against 50% for "blame the most recent change". When Faultline says **high** confidence it has been right 99.2–100% of the time. On **real telemetry** it runs on every RCAEval RE2 and RE3 case (360 failures in three systems) against RCAEval's own baseline code, run here on the same cases: 0.81 first over all 360 (NSigma 0.78), 0.71 on the 90 Train Ticket cases kept out of development, ahead of BARO (0.67) and behind NSigma (0.76), with a worse top five than both (see [Public data](#public-data-every-rcaeval-case-against-the-published-baselines)). All 360 failures are loaded into the app as three more companies.
+7. **Measured, not claimed.** An eval plants hundreds of random faults on the same topology and reports accuracy, the drop when each factor is switched off, and two naive baselines (see [Evaluation](#evaluation)): 94.5–96.8% top-1 and 99.8–100% top-3 on held-out seeds, against 50% for "blame the most recent change". When Hypocenter says **high** confidence it has been right 99.2–100% of the time. On **real telemetry** it runs on every RCAEval RE2 and RE3 case (360 failures in three systems) against RCAEval's own baseline code, run here on the same cases: 0.81 first over all 360 (NSigma 0.78), 0.71 on the 90 Train Ticket cases kept out of development, ahead of BARO (0.67) and behind NSigma (0.76), with a worse top five than both (see [Public data](#public-data-every-rcaeval-case-against-the-published-baselines)). All 360 failures are loaded into the app as three more companies.
 8. **Every claim is checked, every number is explained, and the agent can't act alone.** Every change id, incident id, service and clock time in a verdict is looked up in the graph, and what the claim *says* must match it ("C-5101 changed auth" fails: it changed payments-db; "D-5102 caused it" fails: it was ruled out; "payments alerted before payments-db" fails: the times say otherwise). The verdict must also hang together (the blamed change exists, changed the named service, and is among the judge's top suspects); claims Claude makes that the graph can't back are dropped from the evidence and shown as such. Each suspect shows its factor scores, its footprint and its path, and every step shows its Cypher. Free-form queries run through `GRAPH.RO_QUERY`, so the database itself refuses writes. The agent and the MCP server can only propose fixes; there is no approve tool.
 9. **The reasoning is a subgraph you can query.** Every suspect becomes a `Hypothesis` (standing, overturned or rejected) with `Evidence` for and against it, and each piece of evidence `CITES` the alerts, changes and past incidents it rests on. The skeptic's checks run against *every* hypothesis, so a rejected one says why it lost ("leaves auth unexplained; 0.33 behind D-5201"). For the hypothesis left standing, the alerts are linked into a **causal chain**: `(:Alert)-[:CAUSED_BY {lag_s, confidence}]->(:Alert)…->(:Change)`. The topology decides which links are possible and the alert timing picks among them, naming silent hops ("via api") and ending at the change, or at the service that failed on its own. One query answers "why did this alert fire?": `MATCH p = (:Alert {id: 'A-9102'})-[:CAUSED_BY*]->(root) RETURN p` gives A-9102 on mobile-bff ← A-9101 on auth ← D-5201.
 10. **It knows where things run.** Every service has its `Deployment` (replicas, CPU and memory limits, image and tag, the config keys, ConfigMaps and Secrets it reads), from the projects' real Kubernetes manifests for Online Boutique, Sock Shop and Train Ticket (secret values never kept), and pods scheduled onto `Node`s in `Zone`s for Kestrel. Two things follow. When two services that don't call each other fail on their own within minutes, and share one node, the judge names the **node** (INC-305: `catalog` and `users` on `k8s-node-4`; without placement it reports two independent faults). And a CPU or memory alert cites the limit the manifest sets ("checkoutservice is capped at 0.2 CPU"). A config change points at the `ConfigKey` it sets and every deployment that reads it.
@@ -82,7 +82,7 @@ docker compose up -d --build
 - On-call `/oncall` (who to page for each open incident, from the rota in the graph) · Explore `/explore` (the whole
   graph, every label) · Break it `/break` (seven one-line changes, each judged on a `GRAPH.COPY`) · Replay
   `/replay` (an investigation streamed live, then played back step by step)
-- FalkorDB browser: http://localhost:3003 (graph `faultline_kestrel`)
+- FalkorDB browser: http://localhost:3003 (graph `hypocenter_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
 
 The graphs are built on first start. **Reset** in the header rebuilds them. **Guided demo** (or http://localhost:8090/app?demo=1) plays the whole story on the live app with captions.
@@ -99,7 +99,7 @@ The graphs are built on first start. **Reset** in the header rebuilds them. **Gu
 
 ![Real RCAEval telemetry in the Boutique tenant: each alert's metric as a sparkline, the leader highlighted](docs/img/real-data.png)
 
-### Live input: monitoring and CI push, Faultline acts
+### Live input: monitoring and CI push, Hypocenter acts
 
 ```bash
 demo/fire.sh            # CI posts a fraud-scoring deploy, Alertmanager posts three alerts climbing to checkout
@@ -113,7 +113,7 @@ demo/fire.sh resolve    # the same alerts, resolved: an approved fix is verified
 
 ### Bring your own incident
 
-On the start panel, or `POST /api/upload`: a JSON file in Faultline's format ([web/examples/incident.json](web/examples/incident.json): services, calls or spans, people, changes, alerts, the incident), or one case zipped in RCAEval's layout (`inject_time.txt`, metrics and traces as parquet or CSV, read with the same detector as the benchmark). Each upload becomes its own graph (`up_…`) and the judge reads it at once; the example's answer is `C-102`, a connection limit cut two hops below the storefront. Uploads are capped (2 MB JSON, 40 MB zip, 400 MB unzipped), names and counts validated, zip members read by name only (no paths), one at a time, and only the 8 newest are kept. A trace export has no deploys in it, so its answers are always "nothing changed" infrastructure suspects.
+On the start panel, or `POST /api/upload`: a JSON file in Hypocenter's format ([web/examples/incident.json](web/examples/incident.json): services, calls or spans, people, changes, alerts, the incident), or one case zipped in RCAEval's layout (`inject_time.txt`, metrics and traces as parquet or CSV, read with the same detector as the benchmark). Each upload becomes its own graph (`up_…`) and the judge reads it at once; the example's answer is `C-102`, a connection limit cut two hops below the storefront. Uploads are capped (2 MB JSON, 40 MB zip, 400 MB unzipped), names and counts validated, zip members read by name only (no paths), one at a time, and only the 8 newest are kept. A trace export has no deploys in it, so its answers are always "nothing changed" infrastructure suspects.
 
 To let Claude drive the investigation instead of the offline playbook, put a key in `.env` before starting:
 
@@ -124,7 +124,7 @@ docker compose up -d
 
 Without a key, a fixed playbook calls the same graph tools in the same order, so the demo always works. The header shows which mode is running.
 
-**Demo video:** `demo/` regenerates it from the running app. Put one voiceover MP3 per scene of `demo/narration.json` in `data/demo/audio/` (with a `durations.txt` of `<scene> <seconds>` lines), then run `node demo/record.mjs data/demo/audio data/demo/rec` (needs `playwright-core@1.64.1`) to record the real UI in time with the voice, and `demo/mix.py` in any container with ffmpeg to lay in the audio, burn in captions and write `data/demo/faultline-demo.mp4`.
+**Demo video:** `demo/` regenerates it from the running app. Put one voiceover MP3 per scene of `demo/narration.json` in `data/demo/audio/` (with a `durations.txt` of `<scene> <seconds>` lines), then run `node demo/record.mjs data/demo/audio data/demo/rec` (needs `playwright-core@1.64.1`) to record the real UI in time with the voice, and `demo/mix.py` in any container with ffmpeg to lay in the audio, burn in captions and write `data/demo/hypocenter-demo.mp4`.
 
 ## Five incidents, five kinds of answer
 
@@ -186,7 +186,7 @@ The judge (`faultline/tools.py`, `rank_suspects`) does the multi-hop work:
 |---|---|---|
 | `algo.WCC` | `alert_clusters` | **Investigator** copies the alerting services under the symptom (and the calls between them) into a scratch graph and splits them into weakly connected components. Each component is a separate problem: INC-302's alerts form exactly three groups, one per cause. The **Skeptic** fails the verdict if any group is explained by neither the leader nor an independent fault. The scratch graph is always dropped. |
 | `algo.SPpaths` | `failure_paths` | **Investigator** lists the k shortest call paths from the symptom down to the leading suspect. |
-| `algo.betweenness` | `single_points_of_failure` | **Responder** checks whether the failure path runs through the services most call paths depend on ("runs through payments, #1 by betweenness"). FalkorDB samples betweenness by default; Faultline samples every node with a fixed seed so the ranking is repeatable. |
+| `algo.betweenness` | `single_points_of_failure` | **Responder** checks whether the failure path runs through the services most call paths depend on ("runs through payments, #1 by betweenness"). FalkorDB samples betweenness by default; Hypocenter samples every node with a fixed seed so the ranking is repeatable. |
 | `algo.labelPropagation` | `failure_domains` | **Responder** names the failure domains (groups of services that mostly talk to each other) and their teams that the alerts reach. |
 | `algo.pageRank` | `critical_services` | Criticality, node size in the UI, blast radius. |
 
@@ -203,8 +203,8 @@ The eval plants faults on Kestrel's real topology, one incident per scenario, sp
 
 | | deep (30) | silent (30) | infra (30) | shared (30) | host (30) | **all (150)** | top-3 all |
 |---|---|---|---|---|---|---|---|
-| **Faultline (judge)** | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
-| **Faultline (judge + skeptic)** | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
+| **Hypocenter (judge)** | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
+| **Hypocenter (judge + skeptic)** | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
 | no recency | 100.0% | 50.0% | 100.0% | 100.0% | 93.3% | **88.7%** | 98.7% |
 | no proximity | 100.0% | 73.3% | 100.0% | 100.0% | 93.3% | **93.3%** | 98.7% |
 | no alert_chain | 83.3% | 70.0% | 100.0% | 96.7% | 93.3% | **88.7%** | 98.7% |
@@ -222,7 +222,7 @@ Learning: the same 150 faults planted again after the first round was resolved: 
 
 Held-out seeds (400 scenarios each), judge → judge + skeptic: 94.2% → 94.5% (seed 3), 96.2% → 96.8% (seed 11), 96.2% → 96.5% (seed 42); top-3 99.8–100%; host faults 98.8–100%; linked-incident precision and recall 1.0. Confidence on the held-out seeds: **high** was right 99.2–100% of the time, **medium** 98.0–99.1%, **low** 74.6–83.8%. (Before the host kind existed the same seeds scored 95.8–97.5% on four kinds; adding a fifth reshuffles which faults each seed draws, and the silent ones, the weak spot, came out harder.)
 
-Without host suspects (`_host_suspects` returning nothing) every host scenario is wrong by construction: the judge blames one of the two services and reports the other as an independent fault, which is what Faultline did before the runtime layer existed. The host kind is planted exactly as the rule expects, so its score says the mechanism works, not how often real nodes fail this cleanly.
+Without host suspects (`_host_suspects` returning nothing) every host scenario is wrong by construction: the judge blames one of the two services and reports the other as an independent fault, which is what Hypocenter did before the runtime layer existed. The host kind is planted exactly as the rule expects, so its score says the mechanism works, not how often real nodes fail this cleanly.
 
 How to read it honestly:
 - The scenario generator is mine, so this measures the judge against the failure patterns it was designed for, not against real outages. The weights were adjusted while looking at seed 7; the held-out seeds are the fairer number.
@@ -233,16 +233,16 @@ How to read it honestly:
 
 ## Public data: every RCAEval case, against the published baselines
 
-The synthetic eval measures the judge against the patterns it was built for. On real telemetry Faultline runs on **all of** [RCAEval](https://huggingface.co/datasets/phamquiluan/RCAEval)'s multi-source and code-level suites (MIT, [paper](https://arxiv.org/abs/2412.17015)): **360 recorded failures** in three systems, Online Boutique (12 services), Sock Shop (15) and Train Ticket (68). RE2 (270 cases) injects CPU, memory, disk, delay, packet loss and socket faults; RE3 (90 cases) plants bugs in the services' code. Every case comes with metrics, logs, traces where the system has them, and the true root-cause service.
+The synthetic eval measures the judge against the patterns it was built for. On real telemetry Hypocenter runs on **all of** [RCAEval](https://huggingface.co/datasets/phamquiluan/RCAEval)'s multi-source and code-level suites (MIT, [paper](https://arxiv.org/abs/2412.17015)): **360 recorded failures** in three systems, Online Boutique (12 services), Sock Shop (15) and Train Ticket (68). RE2 (270 cases) injects CPU, memory, disk, delay, packet loss and socket faults; RE3 (90 cases) plants bugs in the services' code. Every case comes with metrics, logs, traces where the system has them, and the true root-cause service.
 
-It is scored the way RCAEval scores its own baselines, against **RCAEval's own implementations of those baselines, run here on the same cases** (`baselines/`, their package in its own image, never in Faultline's). Every ranking, Faultline's included, goes through RCAEval's service mapping and is scored with AC@1 and Avg@5 (the mean of AC@1…AC@5).
+It is scored the way RCAEval scores its own baselines, against **RCAEval's own implementations of those baselines, run here on the same cases** (`baselines/`, their package in its own image, never in Hypocenter's). Every ranking, Hypocenter's included, goes through RCAEval's service mapping and is scored with AC@1 and Avg@5 (the mean of AC@1…AC@5).
 
 ```bash
-make eval          # everything: ~3.3 GB of RCAEval data, signals, Faultline, RCAEval's baselines, docs/rcaeval-results.md
-make eval-quick    # with data, signals and baselines in place: re-score Faultline and rewrite the comparison (< 1 min)
+make eval          # everything: ~3.3 GB of RCAEval data, signals, Hypocenter, RCAEval's baselines, docs/rcaeval-results.md
+make eval-quick    # with data, signals and baselines in place: re-score Hypocenter and rewrite the comparison (< 1 min)
 ```
 
-The [Makefile](Makefile) spells out each step (download, extract, span profile, Faultline in both signal modes, the baselines in their own image, the comparison). Two runs give identical rankings.
+The [Makefile](Makefile) spells out each step (download, extract, span profile, Hypocenter in both signal modes, the baselines in their own image, the comparison). Two runs give identical rankings.
 
 **The harness reproduces the paper.** Our run of RCAEval's BARO on RE2 Train Ticket gives AC@1 0.47 / 0.93 / 1.0 / 0.60 / 0.47 / 0.53 per fault type and Avg@5 0.80, exactly the paper's Table 6. So the baselines below are run the way their authors run them.
 
@@ -258,9 +258,9 @@ A third round (v3, commit `0b4ef76`) came out of the same 270 dev cases and noth
 
 | RE2 Train Ticket (90 held-out cases) | AC@1 | Avg@5 |
 |---|---|---|
-| **Faultline v3 (judge + skeptic)** | **0.71** | **0.75** |
-| Faultline v2 | 0.70 | 0.75 |
-| Faultline v1 (the pre-registered settings) | 0.29 | 0.58 |
+| **Hypocenter v3 (judge + skeptic)** | **0.71** | **0.75** |
+| Hypocenter v2 | 0.70 | 0.75 |
+| Hypocenter v1 (the pre-registered settings) | 0.29 | 0.58 |
 | BARO (RCAEval's code, run here = published) | 0.67 | 0.80 |
 | NSigma (RCAEval's code, run here) | 0.76 | 0.83 |
 | TraceRCA (published) | 0.66 | 0.77 |
@@ -269,15 +269,15 @@ A third round (v3, commit `0b4ef76`) came out of the same 270 dev cases and noth
 | CIRCA (published) | 0.32 | 0.46 |
 | earliest alert | 0.16 | 0.49 |
 
-**What that says.** On held-out data Faultline ranks first about as often as the best published methods (ahead of BARO and TraceRCA, behind NSigma), and its top five are worse than theirs (Avg@5 0.75 against 0.80–0.83): in 20 of the 26 Train Ticket misses the cause alerted but ranked below fifth among 68 services, which is where the next improvement has to come from (and it has to be found on other data). It is not the most accurate root-cause ranker on this benchmark, and this README does not claim it is. Where it differs is what comes with the answer: the path, the evidence for and against every suspect, the causal chain stored in the graph, the endpoint that slowed and the log lines that appeared, the owner, runbook and fix, and claims checked against the graph.
+**What that says.** On held-out data Hypocenter ranks first about as often as the best published methods (ahead of BARO and TraceRCA, behind NSigma), and its top five are worse than theirs (Avg@5 0.75 against 0.80–0.83): in 20 of the 26 Train Ticket misses the cause alerted but ranked below fifth among 68 services, which is where the next improvement has to come from (and it has to be found on other data). It is not the most accurate root-cause ranker on this benchmark, and this README does not claim it is. Where it differs is what comes with the answer: the path, the evidence for and against every suspect, the causal chain stored in the graph, the endpoint that slowed and the log lines that appeared, the owner, runbook and fix, and claims checked against the graph.
 
 Every case (v3; 270 of the 360 were used to develop it, so read them as seen; CIRCA and PC-RandomWalk take 5–10 minutes per Train Ticket case here and were run on the other two systems):
 
 | method | RE2-OB (90) | RE2-SS (90) | RE2-TT (90) | RE3-OB (30) | RE3-SS (30) | RE3-TT (30) | all |
 |---|---|---|---|---|---|---|---|
-| **Faultline v3, metrics** | 0.83 / 0.92 | 0.84 / 0.90 | 0.71 / 0.75 | 1.00 / 1.00 | 0.67 / 0.76 | 0.90 / 0.97 | **0.81 / 0.87** (360) |
-| Faultline v2, metrics | 0.84 / 0.92 | 0.84 / 0.89 | 0.70 / 0.75 | 0.97 / 0.99 | 0.67 / 0.72 | 0.83 / 0.94 | 0.79 / 0.86 (360) |
-| Faultline v3, + logs and traces as alerts | 0.69 / 0.89 | 0.83 / 0.89 | 0.74 / 0.78 | 1.00 / 1.00 | 0.33 / 0.66 | 0.90 / 0.96 | 0.75 / 0.86 (360) |
+| **Hypocenter v3, metrics** | 0.83 / 0.92 | 0.84 / 0.90 | 0.71 / 0.75 | 1.00 / 1.00 | 0.67 / 0.76 | 0.90 / 0.97 | **0.81 / 0.87** (360) |
+| Hypocenter v2, metrics | 0.84 / 0.92 | 0.84 / 0.89 | 0.70 / 0.75 | 0.97 / 0.99 | 0.67 / 0.72 | 0.83 / 0.94 | 0.79 / 0.86 (360) |
+| Hypocenter v3, + logs and traces as alerts | 0.69 / 0.89 | 0.83 / 0.89 | 0.74 / 0.78 | 1.00 / 1.00 | 0.33 / 0.66 | 0.90 / 0.96 | 0.75 / 0.86 (360) |
 | NSigma | 0.79 / 0.91 | 0.86 / 0.94 | 0.76 / 0.83 | 0.83 / 0.89 | 0.57 / 0.83 | 0.80 / 0.96 | 0.78 / 0.90 (360) |
 | CIRCA | 0.60 / 0.82 | 0.79 / 0.92 | – | 0.83 / 0.96 | 0.67 / 0.89 | – | 0.71 / 0.89 (240) |
 | BARO | 0.14 / 0.74 | 0.07 / 0.76 | 0.67 / 0.80 | 0.00 / 0.77 | 0.00 / 0.74 | 0.77 / 0.95 | 0.28 / 0.78 (360) |
@@ -288,7 +288,7 @@ AC@1 / Avg@5. Full output with the paper's numbers alongside: [docs/rcaeval-resu
 
 **Logs and traces.** Every case's logs become templates (`faultline/telemetry.py`: ids, numbers, hex, ips and quoted strings masked, so 171k lines are ~500 patterns), and its spans an operation-level call graph with traffic and p50/p99 latency per call. Used as *alerts* (a service alerts when its error lines or span latency rise and stay up), they made the judge worse in v1 (133/270 against 155) and mixed in v2 (above), so the headline uses metric alerts, and logs and traces are used as **evidence**: each hypothesis cites the endpoint that slowed most (`(:Alert)-[:ON_OPERATION]->(:Operation)`) and the error log patterns that appeared with the incident (`(:LogPattern)-[:SEEN_IN]->(:Incident)`).
 
-**Limits of the comparison.** Trace methods (MicroRank, TraceRCA) were not run here: RCAEval's `main.py` feeds every method metrics only, the span preparation behind their published numbers isn't in the repo, and our attempt did not reproduce them, so they are quoted as published. ε-Diagnosis needs Salesforce PyRCA and RCD Python 3.8; neither was set up. Faultline is given no injection time, but its detector, like every baseline, uses it to split normal from faulty data.
+**Limits of the comparison.** Trace methods (MicroRank, TraceRCA) were not run here: RCAEval's `main.py` feeds every method metrics only, the span preparation behind their published numbers isn't in the repo, and our attempt did not reproduce them, so they are quoted as published. ε-Diagnosis needs Salesforce PyRCA and RCD Python 3.8; neither was set up. Hypocenter is given no injection time, but its detector, like every baseline, uses it to split normal from faulty data.
 
 ### The same failures, in the app: Online Boutique
 
@@ -317,8 +317,8 @@ The same treatment for the other two systems, every RE2 and RE3 case each (`pyth
 - **Memory you can search and match**: every resolved incident gets an 18-number *signature* of its story (kind of cause, kind of thing that broke, depth below the symptom, tiers, risk) stored in a FalkorDB **vector index**, so `shape_matches` finds past incidents that looked the same on other services (INC-212's pool change matches INC-230's Kafka retention change at 0.91). Shape matches are shown as evidence but not scored: crediting them helped look-alike decoys as much as real causes in the eval. **Full-text indexes** over lessons, changes, alerts and incident titles back `search_memory` ("pgbouncer pool connections" finds INC-212's lesson, its pool change, today's C-5101 and the payments-db alert). `experts(service)` ranks people by what they did: fixes they approved for incidents caused there, changes they made, owning team.
 - **Concurrency** (`python -m faultline.bench`): copies the demo graph with `GRAPH.COPY` and runs many investigations at once. 40 runs, 8 at a time: about 80 runs a second, no handoff ever read from another run, every run complete, every verdict identical to a single run. Queries retry with backoff when FalkorDB reports it is busy; errors in a query are never retried.
 - **Proof before approval**: every proposed fix is first applied to a `GRAPH.COPY` of the company's graph with the causal chain written in; the alerts whose `CAUSED_BY` path ends at what the fix removes are cleared there and the judge is asked again, so the card says what the fix will clear, what it will leave and what explains the rest (`faultline/proof.py`). The copy is dropped; the prediction stays on the `Action`.
-- **Verification**: approving a fix is not the end. The fix is applied to a simulated system (`faultline/world.py`, which stands in for production and is the only place the true cause of each alert is written down), and monitoring reports which alerts recover. Faultline then verifies from the graph alone: every alert in each covered incident's alert cone must have cleared after the fix. If any is still firing, the fix is marked as not working and the incident reopens. Approving the pool revert clears INC-301 and INC-304 and nothing else; approving a rollback of the unrelated `cart` deploy leaves checkout, payments and payments-db firing and reopens INC-301. A test checks that no agent tool or MCP tool imports the simulator's answer key.
-- **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_boutique`, `faultline_harbor`, and `faultline_up_…` per upload). Isolation comes from separate graphs, not a property filter, and a test proves it.
+- **Verification**: approving a fix is not the end. The fix is applied to a simulated system (`faultline/world.py`, which stands in for production and is the only place the true cause of each alert is written down), and monitoring reports which alerts recover. Hypocenter then verifies from the graph alone: every alert in each covered incident's alert cone must have cleared after the fix. If any is still firing, the fix is marked as not working and the incident reopens. Approving the pool revert clears INC-301 and INC-304 and nothing else; approving a rollback of the unrelated `cart` deploy leaves checkout, payments and payments-db firing and reopens INC-301. A test checks that no agent tool or MCP tool imports the simulator's answer key.
+- **Tenants**: one FalkorDB graph per company (`hypocenter_kestrel`, `hypocenter_boutique`, `hypocenter_harbor`, and `hypocenter_up_…` per upload). Isolation comes from separate graphs, not a property filter, and a test proves it.
 
 ## MCP
 
@@ -328,7 +328,7 @@ The same tools are available to any MCP client:
 docker compose exec -T app python -m faultline.mcp_server          # stdio
 ```
 
-Claude Code: `claude mcp add faultline -- docker compose -f /path/to/faultline/docker-compose.yml exec -T app python -m faultline.mcp_server`
+Claude Code: `claude mcp add hypocenter -- docker compose -f /path/to/faultline/docker-compose.yml exec -T app python -m faultline.mcp_server`
 
 On a public server (`docker-compose.public.yml`) the same tools are served over streamable HTTP at `https://<host>/mcp`, read-only: `propose_action` is not registered there.
 
@@ -351,7 +351,7 @@ faultline/agent.py       the four agents (Claude or offline playbook), the case 
 faultline/eval.py        planted-fault accuracy eval with ablations, baselines and a learning run
 faultline/rcaeval.py     RCAEval runner for all three systems: topology, alerts, strength, AC@k and Avg@5
 faultline/telemetry.py   logs → templates and error-log alerts; spans → operation graph and span alerts
-faultline/compare.py     Faultline against RCAEval's baselines on the same cases
+faultline/compare.py     Hypocenter against RCAEval's baselines on the same cases
 baselines/               RCAEval's own baseline code in its own image, and the runner that mirrors its main.py
 faultline/bench.py       concurrency benchmark: many investigations at once on a graph copy, isolation checked
 faultline/world.py       the simulated system: true causes, and which alerts a fix clears (agents never read it)

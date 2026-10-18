@@ -1,10 +1,10 @@
-"""Run RCAEval's own baseline implementations on the same cases Faultline is scored on.
+"""Run RCAEval's own baseline implementations on the same cases Hypocenter is scored on.
 
-Runs inside the faultline-baselines image (see Dockerfile), never in Faultline's. It calls the methods from the
+Runs inside the faultline-baselines image (see Dockerfile), never in Hypocenter's. It calls the methods from the
 RCAEval package (MIT) unchanged and prepares each case the way RCAEval's main.py does: metrics only, latency-50
 dropped, forward-filled, the last 10 minutes before the injection and the first 10 after (--length 20), the
 injection time given to the method, and the SLI chosen by the same rule. Service ranks come from metric names
-the same way (`name.split("_")[0].replace("-db", "")`, duplicates dropped), and every method, Faultline included,
+the same way (`name.split("_")[0].replace("-db", "")`, duplicates dropped), and every method, Hypocenter included,
 is scored with that same mapping.
 
     docker build -t faultline-baselines baselines

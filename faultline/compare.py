@@ -1,11 +1,11 @@
-"""Faultline against RCAEval's published baselines, on the same cases, scored the same way.
+"""Hypocenter against RCAEval's published baselines, on the same cases, scored the same way.
 
     docker compose run --rm app python -m faultline.rcaeval --suites re2,re3 --signals metrics --json data/rcaeval/faultline_metrics.json
     docker compose run --rm app python -m faultline.rcaeval --suites re2,re3 --signals all --json data/rcaeval/faultline_all.json
     (baselines: see baselines/run_baselines.py)
     docker compose run --rm app python -m faultline.compare
 
-Every ranking, Faultline's included, goes through RCAEval's own service mapping (`name.split("_")[0]
+Every ranking, Hypocenter's included, goes through RCAEval's own service mapping (`name.split("_")[0]
 .replace("-db", "")`, duplicates dropped) and is scored with AC@1, AC@3 and Avg@5 (the mean of AC@1..AC@5). A
 method that fails or times out on a case scores zero on it. RCAEval's paper (arXiv 2412.17015, Table 6) publishes
 per-method numbers for RE2 Train Ticket; they are printed next to ours as a check that the baselines were run
@@ -61,8 +61,8 @@ def load(signals: tuple[str, ...] = ("metrics", "all")) -> tuple[dict, dict[str,
             continue
         for r in json.loads(path.read_text())["rows"]:
             meta[r["case"]] = {k: r[k] for k in ("suite", "system", "fault", "truth")}
-            for m, label in (("judge+skeptic", "Faultline"), ("earliest alert", "Earliest alert"), ("biggest anomaly", "Biggest anomaly")):
-                name = f"{label} ({sig})" if label == "Faultline" or sig == "metrics" else None
+            for m, label in (("judge+skeptic", "Hypocenter"), ("earliest alert", "Earliest alert"), ("biggest anomaly", "Biggest anomaly")):
+                name = f"{label} ({sig})" if label == "Hypocenter" or sig == "metrics" else None
                 if name:
                     hits.setdefault(name, {})[r["case"]] = _ac(_dedupe(r["top"][m]), r["truth"])
     for key, label in BASELINES.items():
@@ -99,7 +99,7 @@ def groups(meta: dict) -> dict[str, list[str]]:
 
 def table(meta: dict, hits: dict) -> str:
     gs = groups(meta)
-    names = sorted(hits, key=lambda h: (not h.startswith("Faultline"), h))
+    names = sorted(hits, key=lambda h: (not h.startswith("Hypocenter"), h))
     lines = ["| method | " + " | ".join(f"{g} ({len(cs)})" for g, cs in gs.items()) + " |",
              "|---|" + "---|" * len(gs)]
     for h in names:
@@ -108,7 +108,7 @@ def table(meta: dict, hits: dict) -> str:
             s = scores(cs, hits[h])
             cells.append("–" if s is None else f"{s['ac1']:.2f} / {s['avg5']:.2f}" + (f" ({s['missing']} n/a)" if s["missing"] else "")
                          + (f" (on {s['n']})" if s["n"] != len(cs) else ""))
-        lines.append(f"| {'**' + h + '**' if h.startswith('Faultline') else h} | " + " | ".join(cells) + " |")
+        lines.append(f"| {'**' + h + '**' if h.startswith('Hypocenter') else h} | " + " | ".join(cells) + " |")
     return "\n".join(lines)
 
 
@@ -117,7 +117,7 @@ def re2_tt_check(meta: dict, hits: dict) -> str:
     the way Table 6 averages them."""
     tt = [c for c, m in meta.items() if m["suite"] == "RE2" and m["system"] == "tt"]
     lines = ["| method | AC@1 ours | AC@1 published | Avg@5 ours | Avg@5 published |", "|---|---|---|---|---|"]
-    for h in sorted(hits, key=lambda h: (not h.startswith("Faultline"), h)):
+    for h in sorted(hits, key=lambda h: (not h.startswith("Hypocenter"), h)):
         per = [scores([c for c in tt if meta[c]["fault"] == f], hits[h]) for f in FAULT_ORDER]
         per = [p for p in per if p]
         if not per:

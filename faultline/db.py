@@ -11,7 +11,7 @@ from typing import Any
 from falkordb import FalkorDB
 from redis import exceptions as rx
 
-GRAPH_PREFIX = os.environ.get("FAULTLINE_GRAPH_PREFIX", "faultline_")
+GRAPH_PREFIX = os.environ.get("FAULTLINE_GRAPH_PREFIX", "hypocenter_")
 ROW_CAP = 200
 QUERY_TIMEOUT_MS = 3000
 

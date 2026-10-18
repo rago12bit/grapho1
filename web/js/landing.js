@@ -242,13 +242,13 @@ const mono = (x, y, t, fill = "#6b6b74", size = 8, anchor = "start") => `<text x
     <path id="fver" d="M${AX + 22} ${PY - PH + 14} L${AX + 22} ${AY + 40}" stroke="#5b5b66" stroke-dasharray="3 5" fill="none"/>
     ${diamond("fhyp", "#e4e4e7", 2.6)}${diamond("fver", "#8b7cf6", 2.6, -1.3)}
     ${caps(AX - 34, 268, "HYPOTHESES", "end")}${caps(AX + 34, 268, "VERDICTS")}`;
-  h += `<g class="part" data-id="agents" tabindex="0" role="button" aria-label="Faultline agents">
+  h += `<g class="part" data-id="agents" tabindex="0" role="button" aria-label="Hypocenter agents">
     ${slab(AX, AY, 12, "#121216", "#0b0b0e", "#3a3a44", W * 1.9, Hh * 1.9)}
     ${[[-34, 0, "#a1a1aa"], [0, -14, "#a1a1aa"], [32, 2, "#6ee7b7"]].map(([dx, dy, c]) => {
       const x = AX + dx, y = AY + dy - 8;
       return `<path d="M${x} ${y - 9} L${x + 11} ${y - 3} L${x} ${y + 3} L${x - 11} ${y - 3} Z M${x - 11} ${y - 3} L${x - 11} ${y + 9} L${x} ${y + 15} L${x + 11} ${y + 9} L${x + 11} ${y - 3} M${x} ${y + 3} L${x} ${y + 15}" fill="#0e0e12" stroke="${c}" stroke-width="1.3" stroke-linejoin="round"/>`;
     }).join("")}
-    <text x="${AX}" y="${AY - 104}" text-anchor="middle" fill="#f4f4f5" font-size="19" font-weight="500" font-family="Inter">Faultline agents</text>
+    <text x="${AX}" y="${AY - 104}" text-anchor="middle" fill="#f4f4f5" font-size="19" font-weight="500" font-family="Inter">Hypocenter agents</text>
     ${caps(AX, AY - 80, "TRIAGE · INVESTIGATE · SKEPTIC · RESPOND", "middle")}</g>`;
   // flows out: from the agents plate to each output tile
   OUT.forEach((_, i) => {
@@ -269,7 +269,7 @@ const mono = (x, y, t, fill = "#6b6b74", size = 8, anchor = "start") => `<text x
 
   const TEXT = {
     core: ["FalkorDB graph", "Every company is its own graph. The investigation walks CALLS paths, copies the graph to prove a fix, and keeps what happened as memory on the nodes."],
-    agents: ["Faultline agents", "Triage, investigator, skeptic and responder hand off through the graph. They propose; the graph checks every claim before it is shown."],
+    agents: ["Hypocenter agents", "Triage, investigator, skeptic and responder hand off through the graph. They propose; the graph checks every claim before it is shown."],
   };
   IN.forEach(([t, , , d], i) => { TEXT[`in${i}`] = [t, d]; });
   OUT.forEach(([t, , , d], i) => { TEXT[`out${i}`] = [t, d]; });
@@ -317,7 +317,7 @@ CREATE (x)-[:BLAMES]->(c)` },
   { name: "Prove", algo: "GRAPH.COPY · CAUSED_BY", file: "proof.py · preview_fix",
     text: "Rolling back D-5201 is tried on a <b>GRAPH.COPY</b>: every alert whose CAUSED_BY chain ends at the deploy is cleared there, and the judge is asked again. It clears both of INC-302's alerts and leaves nothing behind.",
     cap: "On the copy: A-9102 → A-9101 → D-5201. The rollback clears 2 of 2.",
-    q: `GRAPH.COPY faultline_kestrel proof_7c1e
+    q: `GRAPH.COPY hypocenter_kestrel proof_7c1e
 MATCH p = (a:Alert)-[:CAUSED_BY*1..12]->(root:Change {id: $root})
 MATCH (a)-[:FIRED_ON]->(s:Service)
 RETURN DISTINCT a.id AS alert, s.name AS service` },
