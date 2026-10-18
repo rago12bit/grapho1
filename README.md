@@ -312,7 +312,7 @@ The Python package is still called `faultline` (the project's working name); eve
 | `make judge-check` | build, start, every test, then the product on scratch graphs: verdicts, depth, unknowns, fix proofs, the evidence gate, the pre-deploy check, the read-only user per tenant, the README's numbers, Break it, the planted eval, isolation | ~2 min |
 | `docker compose run --rm app pytest -q` | the <!-- claim:tests -->232<!-- /claim --> tests, against a real FalkorDB on separate test graphs | ~1 min |
 | `make mutants` | 28 safeguards broken one at a time on a scratch copy; a test must catch each | ~2 min |
-| CI ([docs/ci/ci.yml](docs/ci/ci.yml), for GitHub Actions) | on every push: the tests against a real FalkorDB, then `make claims` | ~3 min |
+| CI ([.github/workflows/ci.yml](.github/workflows/ci.yml), GitHub Actions) | on every push: the tests against a real FalkorDB, then `make claims` | ~3 min |
 | `make claims` | every number tagged in this README against the file that measured it (`faultline/claims.py`; the live ones run in `tests/test_claims.py`) | seconds |
 | `docker compose run --rm app python -m faultline.eval --n 400 --seed 3` | planted faults with decoys, ablations and baselines (seeds 3, 11, 42 are held out) | seconds |
 | `make eval` | every RCAEval number: downloads ~3.3 GB, extracts signals, runs Hypocenter and RCAEval's baselines, writes `docs/rcaeval-results.md` | long, once |
