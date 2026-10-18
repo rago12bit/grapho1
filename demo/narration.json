@@ -1,50 +1,46 @@
 [
   {
     "id": "s1_title",
-    "text": "This is Hypocenter. When production breaks, it answers two questions: which change caused it, and how did the failure get there?"
+    "text": "This is Hypocenter, an on-call agent whose reasoning lives in a FalkorDB graph. When production breaks, it answers three questions: what broke, why, and will the fix work?"
   },
   {
-    "id": "s2_graph",
-    "text": "Hypocenter keeps a FalkorDB graph of the company: every service and who calls whom, the owners, every deploy, config change and feature flag, the alerts, and the incidents it has already solved. Node size is PageRank."
+    "id": "s2_real",
+    "text": "Start with a real failure. This is Online Boutique, from the public RCAEval benchmark, with a CPU fault injected into one service. Six services are alerting. Hypocenter walks the call graph down from the storefront, finds that currencyservice alerted first, that the alerts climb back up the path in order, and that nothing was deployed. Its answer: an infrastructure failure on currencyservice. That is the benchmark's answer too."
   },
   {
-    "id": "s3_inc301",
-    "text": "Checkout is slow. Four agents take the incident, and they only talk through the graph. Triage finds what changed and what is alerting. The investigator scores every suspect. A cart deploy is closer and newer, but nothing below it alerted. Two hops down, a connection pool limit on payments-db was cut, and the alerts climb in order: payments-db, then payments, then checkout."
+    "id": "s3_numbers",
+    "text": "It runs on all three hundred and sixty RCAEval failures, in three systems, against the benchmark's own baseline code. It names the right service first in eighty one percent. On the ninety Train Ticket cases we kept out of development it scores seventy one percent, and NSigma does better. The results page says so."
   },
   {
-    "id": "s4_verdict",
-    "text": "Then a skeptic tries to knock the verdict over: what does it not explain, did the alerts arrive in the right order, is it clearly ahead? It holds, with high confidence, and every id and time in the answer is checked against the graph. And the same change also explains a second incident, refunds timing out, opened by another team. One root cause, one fix."
+    "id": "s4_agents",
+    "text": "Kestrel is a demo company built to show every kind of answer. Mobile logins are failing, and seven services are alerting. Four agents take the incident: triage, an investigator, a skeptic and a responder. They never pass anything to each other in code. Each one writes its handoff to the graph, and the next one reads it back."
   },
   {
-    "id": "s5_approve",
-    "text": "The agent can only propose. A person approves, and one approval mitigates both incidents."
+    "id": "s5_replay",
+    "text": "Replay shows the run, step by step, lighting each service as it is reached. The investigator splits the alerts into three separate problems with WCC, and a minimum spanning forest shows how each one spread. The auth deploy explains the logins. The other two problems belong to other incidents."
   },
   {
-    "id": "s6_inc302",
-    "text": "Mobile logins are failing, and seven services are alerting below it. Hypocenter runs weakly connected components on the alerting part of the graph: three separate groups, so three separate problems. The auth deploy explains its own group. The other two belong to incidents that are already open."
+    "id": "s6_argue",
+    "text": "Every suspect becomes a hypothesis, with evidence for and against it, stored as nodes. The alerts are linked into a causal chain, so why did this alert fire is a single query. And every claim in the verdict is checked against the graph."
   },
   {
-    "id": "s7_inc303",
-    "text": "And when nothing changed, it says so. The search cluster went red first. That is infrastructure, so it pages the team that owns it, instead of blaming whatever deployed last."
+    "id": "s7_prove",
+    "text": "Before anyone approves a fix, Hypocenter tries it on a copy of the graph, and says which alerts it will clear and which it leaves. A person approves. Then it checks that the alerts really cleared."
   },
   {
-    "id": "s7b_cypher",
-    "text": "Every step shows the exact Cypher it ran against FalkorDB, here the weakly connected components call."
+    "id": "s8_depth",
+    "text": "The organisers asked for two tests. Ask the same question at depth one: the judge confidently blames payments, which is only a victim. From two hops down, it finds the pool change underneath. And ask about something that is not in the graph: it says it is not modelled, not that it is safe."
   },
   {
-    "id": "s7c_whatif",
-    "text": "You can also ask the graph. What breaks if ledger-db goes down? It predicts the waves of alerts, the entry points hit, and the teams it would page."
+    "id": "s9_brain",
+    "text": "The graph is also the company's memory. Ask why the pool change was made, and the answer comes from the team's chat: the proposal, the approval, and a warning about a past incident. Follow up with, who owns it, and the conversation, kept in the graph, knows what it means."
   },
   {
-    "id": "s7d_memory",
-    "text": "And when an incident is closed, the cause and the lesson go back into the graph, so the next similar incident is scored against them."
+    "id": "s10_break",
+    "text": "Break it changes the graph on purpose and shows how the verdict moves, each experiment on a copy that is thrown away."
   },
   {
-    "id": "s8_eval",
-    "text": "We measured it. On hundreds of planted faults it names the right cause first ninety six to ninety seven percent of the time. On thirty six real failures from the public RCAEval benchmark it is right eighty six percent of the time, and in its top three ninety four percent, level with the best simple baseline. We publish both."
-  },
-  {
-    "id": "s9_close",
-    "text": "Hypocenter. One docker command, with or without Claude. Built on FalkorDB for Graph Hacks."
+    "id": "s11_close",
+    "text": "All eight of FalkorDB's graph algorithms do work in an investigation, and one command, make judge-check, rebuilds and checks everything from a fresh clone. Hypocenter."
   }
 ]
