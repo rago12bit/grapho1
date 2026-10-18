@@ -237,7 +237,7 @@ SYSTEMS = {
     # Every ts-X-service keeps its own ts-X-mongo / ts-X-mysql, as in its deployment.
     "tt": {"title": "Train Ticket", "entry": "ts-ui-dashboard", "skip": frozenset(), "datastores": set()},
 }
-# v1: the settings committed before any result on these systems (6d9d5a1). v2: two structural fixes found by
+# v1: the settings committed before any result on these systems (623d340). v2: two structural fixes found by
 # looking at v1's misses on everything except RE2 Train Ticket, which stayed unseen as the held-out test: the
 # manifest edges above, and the judge letting the symptom service itself be the cause (tools.rank_suspects).
 VERSION = 3

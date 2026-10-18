@@ -281,7 +281,7 @@ The [Makefile](Makefile) spells out each step (download, extract, span profile, 
 
 **The harness reproduces the paper.** Our run of RCAEval's BARO on RE2 Train Ticket gives AC@1 0.47 / 0.93 / 1.0 / 0.60 / 0.47 / 0.53 per fault type and Avg@5 0.80, exactly the paper's Table 6. So the baselines below are run the way their authors run them.
 
-**How the judge was developed, and what is held out.** Settings for every system were committed before any result on Sock Shop, Train Ticket or RE3 was seen (v1, commit `6d9d5a1`). v1 did badly away from Online Boutique: 155 of the 270 cases outside RE2 Train Ticket first, against 165 for "blame whatever alerted first" and 0.72 AC@1 for RCAEval's NSigma. Looking at those 270 cases, and only those, gave three changes (v2, commit `b8e907a`, frozen before the held-out run):
+**How the judge was developed, and what is held out.** Settings for every system were committed before any result on Sock Shop, Train Ticket or RE3 was seen (v1, commit `623d340`). v1 did badly away from Online Boutique: 155 of the 270 cases outside RE2 Train Ticket first, against 165 for "blame whatever alerted first" and 0.72 AC@1 for RCAEval's NSigma. Looking at those 270 cases, and only those, gave three changes (v2, commit `8de51f4`, frozen before the held-out run):
 
 1. **The symptom service can be the cause.** RE3 plants code faults in Sock Shop's `front-end` itself; v1 never considered the entry point a suspect.
 2. **Online Boutique's call graph = traces + its release manifests.** Spans miss calls into uninstrumented services (`adservice`, `shippingservice`, `cartservice` from frontend and checkout); the manifests' `*_ADDR` variables name them. Sock Shop's RE2/RE3 cases have no traces at all, so its graph comes from the project's code the same way (`faultline/rcaeval.py`). Train Ticket's comes from 1M+ spans per case, its untraced gateway, and each service's own database.
@@ -411,7 +411,7 @@ tests/                   pytest against a real FalkorDB, on separate test graphs
 ## What didn't work
 
 - **The skeptic against learned scores.** Its takeover margin was set for hand-weighted scores; on Train Ticket it overturns four learned leaders and brings 21 right down to 19. Left in, reported above.
-- **Exact betweenness at 3,000 services** ran FalkorDB out of memory. Above 500 services it now samples 500 sources with a fixed seed, and says it is approximate.
+- **Exact betweenness at 3,000 services** ran FalkorDB out of memory. Above 500 services it now samples 500 sources with a fixed seed, and says it is approximate. Reproduced on its own afterwards: on v4.14.10 the memory grows with every node in the graph times the sample size, not with the labelled subgraph (3,000 services beside 150,000 unrelated nodes OOM a 6 GB container; alone they need 334 MB). The script is `scripts/betweenness-memory-repro.sh`, with a draft issue for FalkorDB in [docs/upstream](docs/upstream/falkordb-betweenness-memory.md).
 - **Crediting look-alike incidents** (vector shape matches) helped decoys as much as real causes in the eval, so shape matches are shown as evidence and never scored.
 - **Train Ticket, held out:** NSigma beats Hypocenter on AC@1 (0.76 against 0.71) and on Avg@5. v3 was built on the other 270 cases only, so this stays the honest number.
 - **The mutation suite's first run caught 19 of 21.** No test noticed if the judge stopped marking down a change the failure had already climbed past, or if a verdict called an off-path change the cause. Both now have tests, and both breakages are caught.
