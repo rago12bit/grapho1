@@ -7,123 +7,142 @@
   <meta name="description" content="An on-call agent whose reasoning lives in a FalkorDB graph: it traces the outage, argues every suspect, proves the fix on a copy of the graph, and checks it worked.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
   <link rel="stylesheet" href="/static/landing.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+  <script type="importmap">{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
-  <header class="nav">
-    <a class="brand" href="/"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 26 L13 6 L17 17 L21 11 L28 26"/></svg><span>Faultline</span></a>
-    <nav class="links" aria-label="Sections">
-      <a href="/app">Incident room</a>
-      <a href="#loop">How it works</a>
-      <a href="#results">Results</a>
-      <a href="#brain">Company brain</a>
-      <a href="#run">Run it</a>
-    </nav>
-    <span class="status"><i></i><span id="db">FalkorDB · connecting</span></span>
-  </header>
-
-  <main>
+  <main id="main">
+    <!-- hero: fault lines behind, the graph as a cube on the right -->
     <section class="hero">
+      <canvas id="contours" aria-hidden="true"></canvas>
       <div class="hero-copy">
-        <p class="kicker"><i class="dot"></i> 13:40 UTC · SEV1 · 30% of mobile logins failing</p>
-        <h1>What broke.<br>Why we think so.<br><span class="grad">Will the fix work?</span></h1>
-        <p class="lede">Faultline is an on-call agent whose reasoning lives in a FalkorDB graph. It follows the failure down the call graph to the change that started it, keeps every suspect as a hypothesis with evidence for and against, and proves the fix on a copy of the graph before anyone approves it.</p>
+        <a class="news" href="/break"><span class="news-tag">New</span> Break the graph: seven experiments on a GRAPH.COPY <span aria-hidden="true">›</span></a>
+        <h1>What broke.<br>Why.<br><span class="grad">Will the fix work?</span></h1>
+        <p class="lede">Faultline follows an outage down the call graph to the change that started it, argues every suspect with evidence it can cite, and proves the fix on a copy of the FalkorDB graph <em>before</em> anyone approves it.</p>
         <div class="ctas">
-          <a class="btn primary" href="/app?tenant=kestrel&amp;incident=INC-302">Open INC-302 <span aria-hidden="true">→</span></a>
-          <a class="btn ghost" href="/app?demo=1">Play the guided demo</a>
+          <a class="btn primary" href="/replay?tenant=kestrel&amp;incident=INC-302&amp;play=1">Run the hero incident <span aria-hidden="true">→</span></a>
+          <a class="btn ghost" href="/break"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13 9 7M9 3l4 4-2 2-4-4z"/></svg> Break the graph</a>
         </div>
       </div>
-      <div class="hero-art" aria-label="A failure climbing a service graph, hop by hop, from a deploy to the symptom">
-        <canvas id="chain"></canvas>
-        <p class="art-cap mono" id="art-cap">auth ← D-5201 · +240 s</p>
+      <div class="hero-cube">
+        <canvas id="cube" aria-label="The Faultline graph as a cube: drag to turn it, click to take it apart into its node types"></canvas>
+        <div class="callouts" id="callouts" aria-hidden="true">
+          <span class="co co1"><i></i>F-5202 · ruled out</span>
+          <span class="co co2"><i></i>C-5101 · another incident's</span>
+          <span class="co co3 hot"><i></i>D-5201 · proved</span>
+          <span class="co co4"><i></i>mobile-bff</span>
+        </div>
+        <div class="tip" id="tip" hidden></div>
+        <p class="hint mono" id="hint"><i></i> Click the cube</p>
+      </div>
+      <p class="scroll-cue mono" aria-hidden="true">Scroll to explore</p>
+    </section>
+
+    <!-- the real incident room, live, in a window that flattens as you scroll -->
+    <section class="window-wrap">
+      <div class="window" id="window">
+        <div class="win-bar"><i></i><i></i><i></i><span class="mono">localhost:8090/app · INC-302</span><a class="mono" href="/app?tenant=kestrel&amp;incident=INC-302">open it ↗</a></div>
+        <div class="win-body">
+          <iframe id="win-frame" title="The Faultline incident room, live" data-src="/app?tenant=kestrel&amp;incident=INC-302&amp;embed=1" tabindex="-1"></iframe>
+          <button class="win-cover" id="win-cover"><span>Click to use it</span></button>
+        </div>
       </div>
     </section>
 
-    <section class="proof" aria-label="Measured results">
+    <section class="stats" id="results-top">
       <article>
-        <p class="eyebrow">Real outages</p>
-        <p class="big">0.81</p>
-        <p class="what">of 360 real RCAEval failures named first, across Online Boutique, Sock Shop and Train Ticket.</p>
-        <p class="vs">RCAEval's own code on the same cases: NSigma 0.78 · BARO 0.28</p>
+        <p class="eyebrow"><b>Real outages</b> · higher is better</p>
+        <p class="big" data-count="0.81" data-dec="2">0.81</p>
+        <p class="what">of 360 real RCAEval failures named first, in three systems (Online Boutique, Sock Shop, Train Ticket).</p>
+        <p class="vs mono">RCAEval's own code on the same cases: NSigma 0.78 · BARO 0.28</p>
       </article>
       <article>
-        <p class="eyebrow">Fix, proved first</p>
-        <p class="big">4/4</p>
-        <p class="what">planted fixes cleared exactly the alerts the graph copy predicted. The decoy rollback was shown to clear nothing, before approval.</p>
-        <p class="vs">GRAPH.COPY · CAUSED_BY · the judge asked again</p>
+        <p class="eyebrow"><b>Fix, proved first</b> · same means right</p>
+        <p class="big"><span data-count="4" data-dec="0">4</span>/4</p>
+        <p class="what">planted fixes cleared exactly the alerts the graph copy predicted. The decoy rollback was shown to clear nothing before anyone approved it.</p>
+        <p class="vs mono">GRAPH.COPY · CAUSED_BY · the judge asked again</p>
       </article>
       <article>
-        <p class="eyebrow">At size</p>
-        <p class="big">69<small>ms</small></p>
+        <p class="eyebrow"><b>At size</b> · lower is better</p>
+        <p class="big"><span data-count="69" data-dec="0">69</span><small>ms</small></p>
         <p class="what">per verdict on a 3,000-service graph (211k nodes, 252k edges), naming 197 of 198 planted causes first.</p>
-        <p class="vs">python -m faultline.scale · docs/scale.md</p>
+        <p class="vs mono">python -m faultline.scale · docs/scale.md</p>
       </article>
-      <p class="source mono">Measured, not claimed: <code>make eval</code> reproduces every number · on held-out Train Ticket NSigma ranks better (0.76 vs 0.71), and we say so.</p>
+      <p class="source mono">Measured, not claimed · <code>make eval</code> reproduces every number · on held-out Train Ticket NSigma ranks better (0.76 vs 0.71), and we say so</p>
     </section>
 
-    <section class="strip" aria-label="FalkorDB features used during an investigation">
-      <div class="track mono">
-        <span>algo.WCC</span><span>algo.SPpaths</span><span>algo.betweenness</span><span>algo.labelPropagation</span><span>algo.pageRank</span>
-        <span>GRAPH.COPY</span><span>GRAPH.RO_QUERY</span><span>vecf32 vector index</span><span>full-text index</span><span>CALLS*1..5</span><span>CAUSED_BY*</span>
-        <span>algo.WCC</span><span>algo.SPpaths</span><span>algo.betweenness</span><span>algo.labelPropagation</span><span>algo.pageRank</span>
-        <span>GRAPH.COPY</span><span>GRAPH.RO_QUERY</span><span>vecf32 vector index</span><span>full-text index</span><span>CALLS*1..5</span><span>CAUSED_BY*</span>
+    <section class="strip" aria-label="FalkorDB features an investigation uses">
+      <div class="track mono" id="track"></div>
+    </section>
+
+    <section class="statement">
+      <p id="statement">An on-call agent that proves before it blames. Every suspect is a hypothesis in the graph, every piece of evidence cites a node, and every fix is tried on a copy of FalkorDB first.</p>
+    </section>
+
+    <section class="figs">
+      <article class="fig">
+        <p class="fig-n mono">Fig 0.1</p>
+        <svg viewBox="0 0 240 150" class="fig-art" id="fig1" aria-hidden="true"></svg>
+        <h3>Follow it down</h3>
+        <p>A change is a suspect only if every service between it and the symptom started failing after it, in order. Off the path, or too late: out, whatever the model thinks.</p>
+      </article>
+      <article class="fig">
+        <p class="fig-n mono">Fig 0.2</p>
+        <svg viewBox="0 0 240 150" class="fig-art" id="fig2" aria-hidden="true"></svg>
+        <h3>Argue every suspect</h3>
+        <p>Each suspect is a Hypothesis node with evidence for and against, every piece citing the alert, change or past incident it rests on. Confidence is the margin, not the score.</p>
+      </article>
+      <article class="fig">
+        <p class="fig-n mono">Fig 0.3</p>
+        <svg viewBox="0 0 240 150" class="fig-art" id="fig3" aria-hidden="true"></svg>
+        <h3>Prove it on a copy</h3>
+        <p>The fix is applied to a GRAPH.COPY: what clears, what stays, and what explains the rest. After a person approves, the real alerts are checked against that prediction.</p>
+      </article>
+    </section>
+
+    <section class="sits">
+      <h2 class="sec-h">Where it sits. <span class="dim">It reads what your stack already emits, and decides only through the graph.</span></h2>
+      <div class="sits-card">
+        <svg id="sits" viewBox="0 0 1000 520" role="img" aria-label="Inputs flow into the FalkorDB graph; verdicts and one approved action flow out"></svg>
+        <div class="sits-info" id="sits-info"><p class="mono faint">Tap a part</p></div>
       </div>
     </section>
 
-    <section class="loop" id="loop">
-      <div class="sec-head">
-        <p class="eyebrow">One loop, every step in the graph</p>
-        <h2>Trace it, argue it, prove the fix, check it worked.</h2>
+    <section class="decides" id="loop">
+      <div class="sec-top">
+        <a class="news small" href="/replay?tenant=kestrel&amp;incident=INC-302&amp;play=1">Watch it run live <span aria-hidden="true">›</span></a>
+        <h2 class="sec-h">How it decides. <span class="dim">INC-302, step by step: every verdict, and the query that made it.</span></h2>
       </div>
-      <div class="steps">
-        <article class="step" data-step="0">
-          <p class="num mono">01 · Trace</p>
-          <h3>Follow the failure down, not the most recent deploy.</h3>
-          <p>A change is a suspect only if every service between it and the symptom started alerting after it landed, in order. Alerts with nothing changed below them compete too: a failing cluster, a failing node.</p>
-          <pre class="cypher"><code>MATCH p = (s:Service {name: $symptom})-[:CALLS*1..5]->(d:Service)
-WITH d, min(length(p)) AS hops
-MATCH (c:Change)-[:CHANGED]->(d)
-WHERE c.at >= $from AND c.at <= $to
-RETURN c.id, d.name, hops</code></pre>
-        </article>
-        <article class="step" data-step="1">
-          <p class="num mono">02 · Argue</p>
-          <h3>Every suspect becomes a hypothesis you can query.</h3>
-          <p>Evidence for and against each one, every piece citing the alert, change, commit or past incident it rests on. The alerts are linked by cause, so "why did this fire?" is one query.</p>
-          <pre class="cypher"><code>MATCH p = (a:Alert {id: 'A-9102'})-[:CAUSED_BY*1..12]->(root)
-WHERE NOT (root)-[:CAUSED_BY]->()
-RETURN [n IN nodes(p) | coalesce(n.id, n.name)]
-// A-9102 → A-9101 → D-5201</code></pre>
-        </article>
-        <article class="step" data-step="2">
-          <p class="num mono">03 · Prove</p>
-          <h3>Try the fix on a copy of the graph first.</h3>
-          <p>Copy the graph, clear every alert whose causal chain ends at what the fix removes, ask the judge again. The card says what the fix clears, what it leaves, and what explains the rest.</p>
-          <pre class="cypher"><code>GRAPH.COPY faultline_kestrel proof_7c1e
-MATCH (a:Alert)-[:CAUSED_BY*1..12]->(:Change {id: 'D-5201'})
-RETURN a.id
-// clears auth, mobile-bff · leaves C-5101 (INC-301), catalog-es (INC-303)</code></pre>
-        </article>
-        <article class="step" data-step="3">
-          <p class="num mono">04 · Verify and remember</p>
-          <h3>A person approves; the alerts decide if it worked.</h3>
-          <p>The outcome is checked against the proof. Root cause, lesson, the fix's track record and a person's "not the cause" go back into the graph, and each company's weights are refitted on its own solved incidents.</p>
-          <pre class="cypher"><code>MATCH (i:Incident {id: 'INC-302'}), (c:Change {id: 'D-5201'})
-MERGE (i)-[:ROOT_CAUSE]->(c)
-CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson})
-// verification: "As predicted on the graph copy."</code></pre>
-        </article>
+      <div class="story">
+        <div class="steps" id="steps"></div>
+        <div class="stage">
+          <div class="stage-in">
+            <div class="stage-top mono"><span>INC-302 · Kestrel Pay</span><span class="faint">from the seed data</span></div>
+            <div class="prog" id="prog"></div>
+            <div class="fig-box">
+              <div class="fig-head mono"><span id="fig-n">Fig 2.1</span><span id="fig-algo" class="hotc"></span></div>
+              <svg id="story" viewBox="0 0 560 420" aria-label="The INC-302 graph at this step"></svg>
+              <p class="fig-cap" id="fig-cap"></p>
+            </div>
+          </div>
+        </div>
       </div>
+    </section>
+
+    <section class="tour">
+      <p class="kick">Product tour</p>
+      <h2 class="sec-h">See it work. <span class="dim">The same graph behind every screen.</span></h2>
+      <div class="tabs" role="tablist" id="tour-tabs"></div>
+      <div class="tour-body" id="tour-body"></div>
     </section>
 
     <section class="results" id="results">
-      <div class="sec-head">
-        <p class="eyebrow">Published evaluation</p>
-        <h2>All 360 RCAEval failures, against the published methods run on the same cases.</h2>
-        <p class="sub">RCAEval's own baseline code in its own image; our BARO run reproduces the paper's numbers exactly. Train Ticket was held out of development.</p>
-      </div>
+      <p class="kick">Published evaluation</p>
+      <h2 class="sec-h">All 360 RCAEval failures. <span class="dim">Against the published methods, run on the same cases.</span></h2>
+      <p class="sub">RCAEval's own baseline code in its own image; our BARO run reproduces the paper's numbers exactly. Train Ticket was held out of development.</p>
       <div class="charts">
         <figure class="chart">
           <figcaption>Right service first (AC@1), all 360 cases</figcaption>
@@ -137,39 +156,47 @@ CREATE (i)-[:TAUGHT]->(:Lesson {text: $lesson})
       </div>
     </section>
 
-    <section class="brain" id="brain">
-      <div class="sec-head">
-        <p class="eyebrow">A company brain, not a log search</p>
-        <h2>Who owns it, who was on call, what it breaks for customers.</h2>
-      </div>
-      <div class="cards">
-        <article><h3>Owners and experts</h3><p>CODEOWNERS and commit history, people ranked by the fixes they approved and the changes they made.</p></article>
-        <article><h3>On call, then and now</h3><p>A weekly rota in the graph answers who was on call when it started, not just who is now.</p></article>
-        <article><h3>Journeys and SLOs</h3><p>Each journey's 30-day error budget, charged only to the journeys that need the service that broke, not every service that noticed.</p></article>
-        <article><h3>Where it runs</h3><p>Real Kubernetes manifests: replicas, limits, images, config keys. Two services failing on one node point at the node.</p></article>
-        <article><h3>Deploy to commit</h3><p>Every deploy ships its commits; the investigator names the one to read first. Real releases for Online Boutique.</p></article>
-        <article><h3>Learns from you</h3><p>"Not the cause" takes a suspect out at once and becomes a training label for the next fit.</p></article>
+    <section class="run" id="run">
+      <p class="kick">Run it</p>
+      <h2 class="sec-h">Watch an investigation. <span class="dim">Pick an open incident; it runs live against the graph, step by step.</span></h2>
+      <div class="run-grid">
+        <div class="card">
+          <div class="card-h"><h3>Run a scenario</h3><span class="chip">offline investigator · no API key</span></div>
+          <div id="scenarios"><p class="empty">Loading incidents…</p></div>
+        </div>
+        <div class="card">
+          <div class="card-h"><h3>Solved incidents</h3><span class="chip" id="solved-n">memory</span></div>
+          <div id="solved"><p class="empty">Loading…</p></div>
+        </div>
       </div>
     </section>
 
-    <section class="run" id="run">
-      <div class="sec-head">
-        <p class="eyebrow">Run it, query it, check it</p>
-        <h2>One command for the app, one for every number.</h2>
+    <section class="faq">
+      <p class="kick">Getting started</p>
+      <h2 class="sec-h">Before you run it.</h2>
+      <div class="qa" id="faq">
+        <details><summary>Does it need an LLM or an API key?</summary><p>No. The offline investigator runs the same tools in the same order through the graph and writes the same case file. With <code>ANTHROPIC_API_KEY</code> set, Claude drives the tools instead; every claim it makes is still checked against the graph before it is shown.</p></details>
+        <details><summary>What does it need to run?</summary><p>Docker. <code>docker compose up -d --build</code> starts FalkorDB 4.14.10 and the app, seeds every tenant, and serves this site on :8090.</p></details>
+        <details><summary>What happens if FalkorDB is down?</summary><p>Every answer is a graph query, so nothing is shown rather than something guessed. The status pill turns red, the pages say so, and they reconnect by themselves.</p></details>
+        <details><summary>Can it change production on its own?</summary><p>No. It proposes one action with its proof attached; a person approves it, and then the alerts decide whether it worked.</p></details>
+        <details><summary>Is the data real?</summary><p>Kestrel Pay and Harbor are synthetic companies. Online Boutique, Sock Shop and Train Ticket are all 360 real failures from the public RCAEval benchmark, with real telemetry, real call graphs and real root causes.</p></details>
+        <details><summary>Where do the numbers on this page come from?</summary><p><code>make eval</code> downloads the public data, runs Faultline and RCAEval's own baselines, and prints the tables in <code>docs/rcaeval-results.md</code>. A test fails if this page and that file disagree.</p></details>
       </div>
+    </section>
+
+    <section class="cmds-sec">
+      <p class="kick">Don't trust this page</p>
+      <h2 class="sec-h">Run it yourself.</h2>
       <div class="cmds">
-        <div><p class="mono label">The app</p><pre><code>docker compose up -d --build
-open http://localhost:8090</code></pre></div>
-        <div><p class="mono label">Every RCAEval number</p><pre><code>make eval        # data, signals, Faultline, baselines
-make eval-quick  # re-score in under a minute</code></pre></div>
-        <div><p class="mono label">From any MCP client</p><pre><code>claude mcp add faultline -- docker compose \
-  exec -T app python -m faultline.mcp_server</code></pre></div>
+        <div class="card"><div class="card-h"><h3>The app</h3><button class="copy mono" data-copy="c1">Copy</button></div><pre class="code" id="c1">docker compose up -d --build
+open http://localhost:8090</pre></div>
+        <div class="card"><div class="card-h"><h3>Every RCAEval number</h3><button class="copy mono" data-copy="c2">Copy</button></div><pre class="code" id="c2">make eval        # data, signals, Faultline, baselines
+make eval-quick  # re-score in under a minute</pre></div>
+        <div class="card"><div class="card-h"><h3>From any MCP client</h3><button class="copy mono" data-copy="c3">Copy</button></div><pre class="code" id="c3">claude mcp add faultline -- docker compose \
+  exec -T app python -m faultline.mcp_server</pre></div>
       </div>
-      <a class="btn primary big" href="/app">Open the incident room <span aria-hidden="true">→</span></a>
     </section>
   </main>
-
-  <footer class="foot mono">Faultline · built on FalkorDB for Graph Hacks 2026 · real data from RCAEval (MIT) and the projects' own repositories · Kestrel Pay is synthetic</footer>
-  <script src="/static/js/landing.js"></script>
+  <script type="module" src="/static/js/landing.js"></script>
 </body>
 </html>

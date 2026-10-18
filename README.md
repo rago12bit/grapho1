@@ -79,6 +79,9 @@ docker compose up -d --build
 ```
 
 - Overview: http://localhost:8090 · incident room: http://localhost:8090/app
+- On-call `/oncall` (who to page for each open incident, from the rota in the graph) · Explore `/explore` (the whole
+  graph, every label) · Break it `/break` (seven one-line changes, each judged on a `GRAPH.COPY`) · Replay
+  `/replay` (an investigation streamed live, then played back step by step)
 - FalkorDB browser: http://localhost:3003 (graph `faultline_kestrel`)
 - Tests: `docker compose run --rm app pytest -q`
 

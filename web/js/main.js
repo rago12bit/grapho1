@@ -196,5 +196,6 @@ function wire() {
   setInterval(health, 5000);
   try { await switchTenant(state.tenant); } catch { await switchTenant("kestrel"); }
   if (q.get("incident")) await act.openIncident(q.get("incident")).catch(() => {});
+  if (["memory", "company"].includes(q.get("tab"))) setTab(q.get("tab"));
   if (q.get("demo") === "1") setTimeout(play, 1200);
 })();

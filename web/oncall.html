@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>On-call · Faultline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
+  <link rel="stylesheet" href="/static/pages.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+</head>
+<body>
+  <main class="page" id="main">
+    <p class="kick">On-call</p>
+    <h1 class="page-h">Page the people who own what broke. <span class="dim">Not the ones who noticed.</span></h1>
+    <p class="page-sub">For every open incident the judge names a suspect; the page goes to the on-call person of the team that owns it, read from the rota in the graph. Who was on call when it started is kept next to who is on call now.</p>
+    <div id="oc"><p class="empty">Loading the rota…</p></div>
+  </main>
+  <script type="module" src="/static/js/oncall.js"></script>
+</body>
+</html>

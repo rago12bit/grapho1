@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Explore · Faultline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
+  <link rel="stylesheet" href="/static/pages.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
+</head>
+<body>
+  <main class="page" id="main">
+    <p class="kick">Explore · the whole graph</p>
+    <h1 class="page-h" style="font-size:clamp(28px,3vw,40px)">Every node, every edge. <span class="dim">The graph the agents reason over, right now.</span></h1>
+    <div class="ex-bar">
+      <input id="q" type="search" placeholder="Find a node: auth, D-5201, INC-302…" aria-label="Find a node">
+      <div class="seg" role="group" aria-label="Layout" id="layout">
+        <button data-l="cose" aria-pressed="true">Force</button><button data-l="concentric" aria-pressed="false">Rings</button><button data-l="breadthfirst" aria-pressed="false">Tree</button>
+      </div>
+      <button class="btn sm" id="fit">Fit</button>
+      <button class="btn sm" id="show-q">View query</button>
+      <span class="sp"></span>
+      <span class="chip via" id="tenant-chip"></span>
+    </div>
+    <div class="labels" id="labels"></div>
+    <div class="ex-grid">
+      <div class="card ex-canvas grid-bg"><div class="ex-stats" id="ex-stats"></div><div id="cy" role="img" aria-label="The tenant's graph"></div></div>
+      <div class="ex-side">
+        <div class="card" id="detail"><div class="card-h"><h3>Node</h3><span class="chip">click one</span></div><p class="empty">Click a node on the canvas, or a row below, to read its properties and neighbours.</p></div>
+        <div class="card"><div class="card-h"><h3>Most connected</h3><span class="chip">by degree</span></div><div style="max-height:340px;overflow:auto"><table class="tbl" id="top"></table></div></div>
+      </div>
+    </div>
+  </main>
+  <div class="dialog" id="dlg" hidden><div class="card"><div class="card-h"><h3>The query behind this view</h3><button class="btn sm" id="dlg-x">Close</button></div><pre class="code" id="dlg-q" style="margin:16px;white-space:pre-wrap"></pre></div></div>
+  <script type="module" src="/static/js/explore.js"></script>
+</body>
+</html>

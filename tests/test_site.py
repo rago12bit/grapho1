@@ -35,14 +35,20 @@ def _tt(method: str) -> tuple[float, float]:
     return float(ac1_ours if ac1_ours != "–" else ac1_pub), float(avg_ours if avg_ours != "–" else avg_pub)
 
 
-def test_landing_is_at_root_and_the_app_at_app():
+PAGES = {"/": "landing.js", "/app": "main.js", "/oncall": "oncall.js", "/explore": "explore.js", "/break": "break.js", "/replay": "replay.js"}
+
+
+def test_every_page_is_served_with_its_own_script_and_nothing_missing():
     with _client() as c:
-        root, app = c.get("/"), c.get("/app")
-    assert root.status_code == app.status_code == 200
-    assert "/static/landing.css" in root.text and "/static/js/main.js" not in root.text
-    assert "/static/js/main.js" in app.text
-    for ref in re.findall(r'(?:href|src)="/static/([^"]+)"', root.text):
-        assert (ROOT / "web" / ref).is_file(), ref
+        for path, script in PAGES.items():
+            r = c.get(path)
+            assert r.status_code == 200, path
+            assert f"/static/js/{script}" in r.text, path
+            for ref in re.findall(r'(?:href|src)="/static/([^"]+)"', r.text):
+                assert (ROOT / "web" / ref).is_file(), (path, ref)
+    for js in (ROOT / "web" / "js").glob("*.js"):              # every module a page imports exists
+        for ref in re.findall(r'from "\./([^"]+)"|import\("\./([^"]+)"\)', js.read_text()):
+            assert (ROOT / "web" / "js" / (ref[0] or ref[1])).is_file(), (js.name, ref)
 
 
 def test_the_landing_bars_are_the_eval_numbers():
@@ -58,7 +64,7 @@ def test_the_landing_bars_are_the_eval_numbers():
 
 def test_the_headline_numbers_match_the_eval():
     ac1 = ALL["Faultline (metrics)"][0]
-    assert f'<p class="big">{ac1:.2f}</p>' in LANDING
+    assert f'data-count="{ac1:.2f}" data-dec="2">{ac1:.2f}</p>' in LANDING
     assert f"NSigma {ALL['NSigma'][0]:.2f}" in LANDING and f"BARO {ALL['BARO'][0]:.2f}" in LANDING
     from faultline.api import PROOF
     hit, n = (int(x) for x in PROOF["real"].split("/"))

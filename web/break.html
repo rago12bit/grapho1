@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Break it · Faultline</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
+  <link rel="stylesheet" href="/static/pages.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M4 26 L13 6 L17 17 L21 11 L28 26' fill='none' stroke='%23ff6b4a' stroke-width='3'/></svg>">
+</head>
+<body>
+  <main class="page" id="main">
+    <p class="kick">Break it</p>
+    <h1 class="page-h">Break the graph. <span class="dim">Watch the verdict move.</span></h1>
+    <p class="page-sub">Change one thing about Kestrel Pay and ask the judge again. Every run copies the tenant's graph with GRAPH.COPY, makes one write on the copy, judges the incident there and drops the copy. The real graph is never touched, so you can break it as often as you like.</p>
+    <div class="br-grid">
+      <div>
+        <div class="row" style="margin-bottom:12px"><b style="font:600 15px var(--sans)">Pick one change</b><span class="sp"></span><button class="btn sm" id="all">Run all seven</button></div>
+        <div id="list"><p class="empty">Loading experiments…</p></div>
+      </div>
+      <div class="card br-panel" id="panel"></div>
+    </div>
+    <div class="how">
+      <b style="color:var(--ink)">How a run works</b>
+      <ol>
+        <li><code class="mono">GRAPH.COPY faultline_kestrel break_…</code>: a full copy of the tenant, in a few milliseconds.</li>
+        <li>One write on the copy: the Cypher shown with each experiment.</li>
+        <li>The same judge the incident room uses ranks every suspect again on the copy.</li>
+        <li>The copy is deleted. Before and after are shown side by side.</li>
+      </ol>
+    </div>
+    <div class="card summary" id="summary" hidden></div>
+  </main>
+  <script type="module" src="/static/js/break.js"></script>
+</body>
+</html>

@@ -18,13 +18,15 @@
       <span class="name serif">Faultline</span>
       <span class="tagline label">outage root cause on a graph</span>
     </button>
+    <nav class="sitenav" aria-label="Pages">
+      <a href="/app" aria-current="page">Incidents</a><a href="/oncall">On-call</a><a href="/explore">Explore</a><a href="/break">Break it</a><a href="/replay">Replay</a>
+    </nav>
     <nav id="tenants" class="tenants" aria-label="Company"></nav>
     <div class="status">
       <span id="db" class="db mono"><i></i><span id="db-stats">connecting…</span></span>
       <span id="proof" class="proof mono" title="pytest; python -m faultline.eval (held-out seeds); every RCAEval RE2 + RE3 case, 360 in all (make eval). On the held-out RE2 Train Ticket set: 64/90."></span>
       <span class="mono faint agent">agent: <b id="mode"></b></span>
       <button id="theme" class="theme-btn" aria-label="Switch theme">◐</button>
-      <a href="/" class="btn quiet" title="What Faultline is and how it scores">Overview</a>
       <button id="reset" class="btn quiet" title="Rebuild the demo graphs">Reset</button>
       <button id="tour-btn" class="btn solid">Guided demo</button>
     </div>

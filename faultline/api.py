@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import agent, bench, ingest, learn, postmortem, public_postmortems, reasoning, seed, tools, upload, world
+from . import agent, bench, ingest, learn, postmortem, public_postmortems, reasoning, seed, site, tools, upload, world
 from .db import Graph, list_tenants
 
 WEB = Path(__file__).resolve().parent.parent / "web"
@@ -39,7 +39,7 @@ PUBLIC = os.environ.get("FAULTLINE_PUBLIC") == "1"
 INGEST_TOKEN = os.environ.get("FAULTLINE_INGEST_TOKEN", "")
 # route suffix -> (requests, per seconds), per client address
 LIMITS = [("/investigate", 20, 60), ("/investigate/stream", 20, 60), ("/upload", 4, 600), ("/bench", 2, 60), ("/reset", 2, 300), ("/ask", 30, 60),
-          ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300)]
+          ("/alerts/alertmanager", 60, 60), ("/changes", 60, 60), ("/feedback", 20, 60), ("/learning/train", 2, 300), ("/run", 30, 60)]
 _hits: dict[tuple[str, str], deque] = {}
 
 
@@ -87,7 +87,7 @@ async def cap_ingest(request, call_next):
 async def revalidate_static(request, call_next):
     # The UI is plain ES modules; make the browser revalidate them so an update never runs against stale code.
     res = await call_next(request)
-    if request.url.path.startswith("/static/") or request.url.path == "/":
+    if request.url.path.startswith("/static/") or request.url.path in PAGES:
         res.headers["Cache-Control"] = "no-cache"
     return res
 
@@ -153,7 +153,7 @@ class Resolution(BaseModel):
 
 # Shown in the header. From the test suite and the two evals in this repo (README, "Evaluation" and
 # "Public data"); update them when those numbers change.
-PROOF = {"tests": 148, "planted": "94.5–96.8%", "real": "292/360"}
+PROOF = {"tests": 162, "planted": "94.5–96.8%", "real": "292/360"}
 
 
 @app.get("/api/health")
@@ -492,11 +492,49 @@ def reset():
 app.mount("/static", StaticFiles(directory=WEB), name="static")
 
 
-@app.get("/")
-def landing():
-    return FileResponse(WEB / "landing.html")
+# --- the site around the incident room ---------------------------------------------------------------------
+
+@app.get("/api/engine")
+def engine():
+    return site.engine()
 
 
-@app.get("/app")
-def index():
-    return FileResponse(WEB / "index.html")
+@app.get("/api/{tenant}/oncall")
+def oncall(tenant: str):
+    return site.oncall(_g(tenant))
+
+
+@app.get("/api/{tenant}/explore")
+def explore(tenant: str, labels: str = "", limit: int = site.EXPLORE_LIMIT):
+    return site.explore(_g(tenant), [x for x in labels.split(",") if x][:30] or None, limit)
+
+
+@app.get("/api/{tenant}/nodes/{key}")
+def node(tenant: str, key: int):
+    return _guard(site.node, _g(tenant), key)
+
+
+@app.get("/api/experiments")
+def experiments():
+    return [{**{k: e[k] for k in ("id", "incident", "title", "what", "expect", "algo")}, "cypher": site.mutation(e)}
+            for e in site.EXPERIMENTS]
+
+
+@app.post("/api/{tenant}/experiments/{exp_id}/run")
+def run_experiment(tenant: str, exp_id: str):
+    if tenant != "kestrel":
+        raise HTTPException(400, "the experiments are written for Kestrel Pay's incidents")
+    return _guard(site.break_it, _g(tenant), exp_id)
+
+
+# path -> page; every page but the incident room is a static file around the same API
+PAGES = {"/": "landing.html", "/app": "index.html", "/oncall": "oncall.html", "/explore": "explore.html",
+         "/break": "break.html", "/replay": "replay.html"}
+
+
+def _page(path: str, file: str):
+    app.add_api_route(path, lambda: FileResponse(WEB / file), methods=["GET"], include_in_schema=False)
+
+
+for _path, _file in PAGES.items():
+    _page(_path, _file)
