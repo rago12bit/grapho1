@@ -6,6 +6,7 @@
 </p>
 
 <p align="center">
+  <a href="https://16-4-94-72.sslip.io"><img alt="live demo" src="https://img.shields.io/badge/live%20demo-16--4--94--72.sslip.io-ff6b4a"></a>
   <a href="docs/judge-check-clean-clone.txt"><img alt="make judge-check: passes on a fresh clone" src="https://img.shields.io/badge/make%20judge--check-passes%20on%20a%20fresh%20clone-2ea44f"></a>
   <a href="#reproduce-it"><img alt="tests: 210 passing" src="https://img.shields.io/badge/tests-212%20passing-2ea44f"></a>
   <a href="docs/mutants.txt"><img alt="mutants: 25 of 25 caught" src="https://img.shields.io/badge/mutants-25%20of%2025%20caught-2ea44f"></a>
@@ -30,7 +31,7 @@
 </p>
 
 <p align="center">
-  <a href="#demo-video"><b>Demo video</b></a> · <a href="#use-it"><b>Use it</b></a> · <a href="#proof-at-a-glance"><b>Proof</b></a> · <a href="#see-it"><b>Screens</b></a> · <a href="#graph-model"><b>Graph model</b></a> · <a href="#what-the-judges-asked-for"><b>For judges</b></a> · <a href="#contents"><b>Contents</b></a>
+  <a href="https://16-4-94-72.sslip.io"><b>Live demo</b></a> · <a href="#demo-video"><b>Demo video</b></a> · <a href="#use-it"><b>Use it</b></a> · <a href="#proof-at-a-glance"><b>Proof</b></a> · <a href="#see-it"><b>Screens</b></a> · <a href="#graph-model"><b>Graph model</b></a> · <a href="#what-the-judges-asked-for"><b>For judges</b></a> · <a href="#contents"><b>Contents</b></a>
 </p>
 
 ## At a glance
@@ -42,6 +43,7 @@
 | **The rule** | A suspect counts only if a path in the graph connects it to the symptom and the alerts climb that path in order. No path, no blame; a name the graph doesn't have is "not modelled", never "safe". |
 | **Proven on real outages** | All 360 failures of the public [RCAEval](https://huggingface.co/datasets/phamquiluan/RCAEval) benchmark, against RCAEval's own baseline code: **0.81** right first (NSigma 0.78). On 90 Train Ticket failures kept out of development: **0.71**, and NSigma's 0.76 is better. We say so. |
 | **FalkorDB depth** | The only store. All eight algorithms v4.14.10 ships do work in an investigation, each with a test that changes what it reads and watches the decision move. One graph per company, `GRAPH.COPY` for every proof and experiment, `GRAPH.RO_QUERY` for every read, vector and full-text indexes for memory. |
+| **Try it** | **Live: [16-4-94-72.sslip.io](https://16-4-94-72.sslip.io)** (no sign-in, no key; everyone shares one demo, reset every 6 hours). MCP for any agent: `https://16-4-94-72.sslip.io/mcp`, read-only. Or run it yourself in one command: [Use it](#use-it). |
 | **For a judge** | `make judge-check`: build, start, every test, then the product's own checks on scratch graphs, in about two minutes with Docker and no key. [It passes on a fresh clone.](docs/judge-check-clean-clone.txt) |
 | **Stack** | FalkorDB v4.14.10 · Python 3.12, FastAPI · vanilla JS, Cytoscape.js, Three.js, no build step · MCP over stdio and HTTP · Claude (`claude-opus-5-5`) optional: without a key the same agents run as a fixed playbook · Docker Compose. |
 | **Built for** | Graph Hacks: Context for AI Agents (WeMakeDevs × FalkorDB). Tracks **01** Agents That Act on Connected Data (main) · **02** Agent Memory and Coordination · **03** Company Brain. [Track fit](#track-fit). |
@@ -54,6 +56,7 @@ open http://localhost:8090          # the site; the incident room is /app
 make judge-check                    # everything a judge needs to check, ~2 minutes
 ```
 
+- **Live, nothing to install:** [16-4-94-72.sslip.io](https://16-4-94-72.sslip.io), the incident room at [/app](https://16-4-94-72.sslip.io/app). It runs in public mode: the same app, read-only MCP, webhooks behind a token, rate limits per visitor.
 - **In the incident room** (`/app`): pick an incident on the risk board and the verdict is on screen at once; **Run the four agents** re-derives it step by step. Ask questions in the bar: `what breaks if ledger-db goes down?`, then `who owns it?`, or `why was C-5101 made?`.
 - **From any MCP client:** `claude mcp add hypocenter -- docker compose -f /path/to/repo/docker-compose.yml exec -T app python -m faultline.mcp_server` ([MCP](#context-for-any-agent-mcp)).
 - **With Claude driving the agents:** set `ANTHROPIC_API_KEY`; `make live-run` records a transcript. Without a key everything still works.
@@ -94,7 +97,7 @@ Every number links to how it was measured. Where Hypocenter loses, the row says 
 | Ignores the decoys | **94.5–96.8%** top-1 on held-out seeds of planted faults, each with decoy changes | "blame the most recent change" 50.0% · "the nearest recent change" 10.7% | `python -m faultline.eval` ([Evaluation](#evaluation)) |
 | Its confidence means something | when it says **high**, right 99.2–100% of the time on held-out seeds | medium 98.0–99.1% · low 74.6–83.8% | the same eval |
 | The graph does the work | **8 of 8** algorithms change a decision when what they read changes; without FalkorDB there is no answer | the decision before the change, on the same graph copy | `tests/test_load_bearing.py` ([The graph does the work](#the-graph-does-the-work)) |
-| Depth matters | **5 of 5** open Kestrel incidents right from two hops down | depth 1: 3 of 5, one blamed with high confidence on a victim | `depth_sweep` ([Results page](http://localhost:8090/results#depth)) |
+| Depth matters | **5 of 5** open Kestrel incidents right from two hops down | depth 1: 3 of 5, one blamed with high confidence on a victim | `depth_sweep` ([Results page](https://16-4-94-72.sslip.io/results#depth)) |
 | The fix is proved first | **5 of 5** fix proofs predict only alerts the seed planted as caused by that fix; the decoy fix clears nothing | approving the decoy reopens the incident | `GRAPH.COPY` proofs, live on the Results page |
 | Claims are checked | **14 of 14** claims in INC-302's verdict backed by the graph | false claims ("C-5101 changed auth") are caught and dropped | `verify_claims`, tests |
 | Agents stay isolated under load | **24** investigations, 8 at a time: 0 cross-run reads, every verdict identical to a run on its own | a single run | `python -m faultline.bench` |
@@ -233,7 +236,7 @@ The rules page, the challenge text and the organisers' day-1 post ("How to Build
 |---|---|---|
 | "The graph has to shape what the agent does, not sit on the side." (challenge) | The verdict is a graph walk: every suspect comes from a 5-hop `algo.BFS` down `CALLS` from the symptom and is scored by whether the alerts climb that path in order. Switching the alert chain off drops planted-fault accuracy from 93.3% to 88.7% (deep faults: 100% → 83.3%); "blame the nearest recent change" gets 10.7%. | `python -m faultline.eval` ([Evaluation](#evaluation)) |
 | "If the product still works once FalkorDB is taken out, the graph is decoration rather than the thing the product runs on." (rule 3) | There is no other store: without FalkorDB an investigation fails on the connection rather than guessing. Every agent tool is a Cypher query or a FalkorDB algorithm, and for each algorithm a test changes what it reads on a graph copy and the decision changes with it. | [The graph does the work](#the-graph-does-the-work) |
-| "Run the same question twice. Once with a depth of one … Then with a depth of four" (organisers' post) | `depth_sweep` judges one incident with the search capped at 1 to 5 hops. INC-301 at depth 1 sees 6 services and blames `payments`, with high confidence; it only alerted. From depth 2 it finds C-5101, the pool change on `payments-db`. Over Kestrel's open incidents: 3 of 5 right at depth 1, 5 of 5 from depth 2. On the RCAEval systems the front end calls nearly everything directly, so depth doesn't change their accuracy; we say so. | `GET /api/kestrel/incidents/INC-301/depth`, the [Results page](http://localhost:8090/results#depth), the `depth_sweep` MCP tool |
+| "Run the same question twice. Once with a depth of one … Then with a depth of four" (organisers' post) | `depth_sweep` judges one incident with the search capped at 1 to 5 hops. INC-301 at depth 1 sees 6 services and blames `payments`, with high confidence; it only alerted. From depth 2 it finds C-5101, the pool change on `payments-db`. Over Kestrel's open incidents: 3 of 5 right at depth 1, 5 of 5 from depth 2. On the RCAEval systems the front end calls nearly everything directly, so depth doesn't change their accuracy; we say so. | `GET /api/kestrel/incidents/INC-301/depth`, the [Results page](https://16-4-94-72.sslip.io/results#depth), the `depth_sweep` MCP tool |
 | "ask the agent something that is not in the graph and let it say so" (organisers' post) | "What breaks if billing-svc goes down?" answers "Nothing in the graph is called billing-svc. That means it isn't modelled, not that it is safe", with the lookup's Cypher. A service nothing calls is reported as an entry point or as unknown, never as safe. | Ask bar in the app, `find_named` MCP tool |
 | "Show the path behind an answer" (challenge) | `MATCH p = (:Alert {id: 'A-9102'})-[:CAUSED_BY*]->(root) RETURN p` returns A-9102 on mobile-bff ← A-9101 on auth ← D-5201. Every step in the case file shows its Cypher. | [In detail, 9](#in-detail) |
 | "one instance can hold thousands of isolated graphs, so each user, agent, or tenant gets its own" (about the sponsor) | One graph per company (five, plus one per upload); fix proofs, Break-it experiments and the load test each run on a `GRAPH.COPY` that is dropped afterwards. 40 runs, 8 at a time: no run read another run's handoffs. | `python -m faultline.bench` |
@@ -262,7 +265,7 @@ Each track's key-focus bullets, as the hackathon page lists them, with where Hyp
 | **T3** Who owns what, and who knows what | Owners and on-call rota; experts ranked by the fixes they approved and the changes they made | `tools.who_owns`, `tools.experts`, `faultline/site.py` | INC-302 pages Identity's Sam Whitfield (a test) |
 | **T3** Tracing decisions back to their source | `decision_trail`: a change, who made it, the chat discussion that led to it (with its replies), the commits it shipped, what was said once it landed and any revert. Each fix links to who approved it, each verdict to the evidence it cites | `tools.decision_trail`, `faultline/reasoning.py` | "why was C-5101 made?": Lin's proposal, Ravi's OK and Marta's INC-212 warning, before it landed |
 | **T3** Keeping knowledge current as things change | Alertmanager and CI webhooks write alerts and changes as they happen; each company's judge is refitted on its solved incidents | `faultline/ingest.py`, `faultline/learn.py` | `demo/fire.sh` plays a live incident in |
-| **T3** Answers with clear sources | Each answer step shows its Cypher; a name the graph doesn't have is answered as not modelled | `faultline/agent.py` `ask_offline`, `tools.find_named` | [Results: depth and unknowns](http://localhost:8090/results#depth) |
+| **T3** Answers with clear sources | Each answer step shows its Cypher; a name the graph doesn't have is answered as not modelled | `faultline/agent.py` `ask_offline`, `tools.find_named` | [Results: depth and unknowns](https://16-4-94-72.sslip.io/results#depth) |
 
 The Python package is still called `faultline` (the project's working name); everything a user sees says Hypocenter.
 
@@ -579,7 +582,7 @@ Taken out, at the level of outcomes:
 | **FalkorDB** | No answer at all: an investigation fails on the connection. There is no other store to fall back to, and nothing is guessed. | `tests/test_load_bearing.py` |
 | **The alert chain** (the order alerts climb the call path) | Planted-fault top-1 drops from 93.3% to 88.7%; deep faults from 100% to 83.3% | [Evaluation](#evaluation) |
 | **Paths altogether** ("blame the nearest recent change") | 10.7% top-1, against the judge's 93.3% | [Evaluation](#evaluation) |
-| **Depth beyond one hop** | Kestrel's open incidents: 5 of 5 right become 3 of 5, and INC-301 blames a victim with high confidence | [Results, depth](http://localhost:8090/results#depth) |
+| **Depth beyond one hop** | Kestrel's open incidents: 5 of 5 right become 3 of 5, and INC-301 blames a victim with high confidence | [Results, depth](https://16-4-94-72.sslip.io/results#depth) |
 | **Where things run** (pods on nodes) | A failing node becomes two "independent" service faults: every host scenario is wrong | [Evaluation](#evaluation) |
 | **Memory of solved incidents** | The same 150 faults a second time: 97.3% with precedent, 95.3% without | [Evaluation](#evaluation) |
 | **One edge or node, seven ways** | Each Break-it experiment moves the verdict: 7 of 7 | `/break` |
@@ -631,7 +634,7 @@ flowchart LR
   G --> H["both versions reported,<br/>where it loses included"]
 ```
 
-The charts above summarise it; the [Results page](http://localhost:8090/results) has every table, read from the files that publish them, and runs the fix proofs live. Below: the planted-fault evaluation, then every RCAEval case against the published baselines.
+The charts above summarise it; the [Results page](https://16-4-94-72.sslip.io/results) has every table, read from the files that publish them, and runs the fix proofs live. Below: the planted-fault evaluation, then every RCAEval case against the published baselines.
 
 ## Evaluation
 

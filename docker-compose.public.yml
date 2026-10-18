@@ -5,6 +5,7 @@
 services:
   falkordb:
     ports: !reset []
+    restart: unless-stopped
 
   app:
     ports: !reset []
