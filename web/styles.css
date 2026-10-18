@@ -458,3 +458,9 @@ details.hyp > summary::-webkit-details-marker { display: none; }
 .scrub .btn { padding: 2px 9px; }
 .live-steps { list-style: none; margin: 8px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--accent-line); max-height: 220px; overflow: auto; font-size: 12px; }
 .live-steps li { padding: 2px 0; }
+.fixproof { margin: 8px 0; padding: 6px 9px; border-left: 2px solid var(--line); background: var(--sunk); display: grid; gap: 3px; }
+.fixproof.ok { border-left-color: var(--green); }
+.fixproof.warn { border-left-color: var(--amber); }
+.fixproof.bad { border-left-color: var(--accent); }
+.label.bad { color: var(--accent); }
+.start .loop { margin: 6px 0 12px; padding-left: 20px; display: grid; gap: 5px; font-size: 14px; }

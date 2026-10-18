@@ -165,6 +165,19 @@ function render(inc, out) {
   renderActions(inc);
 }
 
+/** What the fix was proved to do on a copy of the graph, before anyone approved it. */
+function proofHtml(a) {
+  const p = a.preview;
+  if (!p) return "";
+  const cls = p.verdict === "resolves" ? "ok" : p.verdict === "partial" ? "warn" : "bad";
+  const word = { resolves: "proved on a copy of the graph: clears it", partial: "proved on a copy: clears part of it", "clears nothing": "proved on a copy: clears nothing" }[p.verdict];
+  return `<div class="fixproof ${cls}"><div class="label ${cls}">${esc(word)}</div>
+    ${p.incidents.map((i) => `<div class="small"><b class="mono">${esc(i.incident)}</b>
+      ${i.clears.length ? `clears ${i.clears.map((c) => `<span class="mono">${esc(c.service)}</span>`).join(", ")}` : "clears nothing"}${i.leaves.length ? ` · leaves ${i.leaves.map((c) => `<span class="mono">${esc(c.service)}</span>`).join(", ")}${i.then_explained_by ? ` (then explained by ${esc(i.then_explained_by)})` : ""}` : ""}
+      ${i.elsewhere?.length ? `<div class="faint tiny">other faults below it stay with their own incidents: ${i.elsewhere.map((o) => `${esc(o.label)}${o.incidents.length ? ` (${o.incidents.map(esc).join(", ")})` : ""}`).join("; ")}</div>` : ""}</div>`).join("")}
+    <div class="faint tiny">GRAPH.COPY of this company's graph, the causal chain written in, every alert whose CAUSED_BY path ends at ${esc(p.change_id || p.target)} cleared, the judge asked again; then the copy is dropped.</div></div>`;
+}
+
 /** Each chain of CAUSED_BY links, from the top alert down to the change (or silent failure) it started at. The
  *  chain that reaches the symptom comes first; branches stop where they join an alert already shown. */
 function chains(r) {
@@ -381,7 +394,7 @@ export function renderActions(inc) {
   box.innerHTML = `
     ${acts.length ? section("Proposed fixes", acts.map((a) => `<div class="action ${esc(a.status)}">
         <div class="ak label">${esc(a.id)} · ${esc(a.kind)} · ${esc(a.target)}${(a.covers || []).length > 1 ? ` · covers ${a.covers.map(esc).join(", ")}` : ""}</div>
-        <div class="s">${esc(a.summary)}</div>${a.status === "proposed" ? recordFor(a) : ""}
+        <div class="s">${esc(a.summary)}</div>${a.status === "proposed" ? recordFor(a) : ""}${proofHtml(a)}
         ${a.status === "proposed" ? `<div class="btns"><button class="btn solid hot" data-a="${esc(a.id)}" data-ok="1">Approve fix</button><button class="btn quiet" data-a="${esc(a.id)}" data-ok="0">Reject</button></div>
             <p class="faint small">Approving applies it to the simulated system only. Then Faultline checks the alerts in the graph to see whether it worked.</p>`
           : `<div class="done">${esc(a.status)} by ${esc(a.decided_by || "?")}${a.status === "executed" ? " · applied to the simulated system" : ""}</div>

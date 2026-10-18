@@ -1,24 +1,45 @@
 # Faultline
 
-**An on-call agent that blames a change only when alerts trace an unbroken path from it up to the symptom, and says so when nothing changed at all.**
+**An on-call agent whose reasoning lives in the graph. It traces an outage through FalkorDB, keeps every hypothesis and the evidence for and against it as nodes, proves the fix on a copy of the graph before anyone approves it, and checks afterwards that the fix did what the proof said.**
 
-Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB), entering **Tracks 01, 02 and 03**. Run all of it with one command (`docker compose up -d --build`, then http://localhost:8090), or put it on a public URL with [deploy/DEPLOY.md](deploy/DEPLOY.md).
+Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB), Tracks 01, 02 and 03. `docker compose up -d --build`, then http://localhost:8090.
 
-![Faultline's case file for INC-301: the failure path drawn from checkout down to payments-db in red, the blast radius in dashed amber, the verdict and its evidence on the right](docs/img/case-file.png)
+![Faultline's case file for INC-302 after the agents ran: the failure path from mobile-bff down to auth in red, each causal hop labelled with its lag, the two independent faults below it in amber, and the verdict with 15 of 15 claims checked on the right](docs/img/case-file.png)
 
-<sub>INC-301 opened: the answer is on screen at once. Red is the failure path the alerts climbed (payments-db → payments → checkout), dashed amber the callers it reaches. The `cart` deploy one hop away is newer and closer, but nothing under it alerted, so it scores 0.27 against 0.94.</sub>
+<sub>INC-302 after the four agents ran. Red is the path the failure climbed (auth → mobile-bff, +120 s); amber are the two other faults below the symptom, which belong to other incidents. The scrubber under the graph replays it minute by minute.</sub>
+
+## One loop, every step in the graph
+
+| | What you see | What FalkorDB does |
+|---|---|---|
+| **1. Trace** | `auth` deploy D-5201, 6 min before mobile logins failed; a flag flip on `users` sits on the same path but is rejected: `users` never alerted | Alert-chain judge over `CALLS*1..5`, a fault simulator per suspect, WCC to split independent faults, the node a pod runs on, the commit inside the deploy |
+| **2. Argue** | Five hypotheses: one standing, four rejected, each with the evidence for and against it and what that evidence cites | `(Hypothesis)-[:SUPPORTED_BY \| CONTRADICTED_BY]->(Evidence)-[:CITES]->(Alert \| Change \| Commit \| …)`, and the alerts linked `(Alert)-[:CAUSED_BY]->…->(Change)`: "why did A-9102 fire?" is one query |
+| **3. Prove** | "Rolling back D-5201 clears auth and mobile-bff; the pool change and the search cluster below it stay with INC-301 and INC-303" | `GRAPH.COPY`, the causal chain written into the copy, every alert whose `CAUSED_BY` path ends at the fix cleared, the judge asked again on what is left; the copy dropped |
+| **4. Verify and remember** | Approve: "as predicted on the graph copy". A decoy fix was shown to clear nothing before, and reopens the incident after | The cleared alerts checked against the prediction; `ROOT_CAUSE`, a `Lesson`, the fix's track record and a person's "not the cause" written back and learned from |
+
+![The proposed fix for INC-302, proved on a copy of the graph before approval: it clears auth and mobile-bff, and the pool change and the search cluster below it stay with their own incidents](docs/img/proof.png)
+
+A person approves every fix; nothing outside the simulated world is changed.
+
+## Three things it is built on
+
+- **Reasoning you can query.** Not a chat transcript: hypotheses, evidence, citations, causal chains, agent handoffs (`Episode` nodes) and fix proofs are all in the graph, and every number in a verdict was looked up there (claims the graph can't back are dropped).
+- **A company brain.** Owners from CODEOWNERS and commit history, a weekly on-call rota, user journeys with SLO budgets, where every service runs (real Kubernetes manifests), the commits each deploy and release shipped, delivery metrics per team, past incidents and fixes, other companies' public post-mortems.
+- **A published evaluation.** All 360 RCAEval RE2/RE3 failures in three real systems, scored against RCAEval's own baseline code run on the same cases (our BARO run reproduces the paper's numbers exactly). On the 90 Train Ticket cases held out until the method was frozen: **0.70** first, against BARO 0.67 and NSigma 0.76; NSigma's top five are better, and this README says so. Planted faults: 94.5–96.8% on held-out seeds. 3,000 services (211k nodes): the judge answers in 69 ms.
+
+**What's real.** Online Boutique, Sock Shop and Train Ticket: call graphs, metrics, logs, traces, endpoints, manifests and root causes from RCAEval and the projects' own repositories. Kestrel Pay is a synthetic company built to show every kind of answer (a bad deploy, a config change behind two incidents, a failing cluster, a failing node).
+
+<details><summary>The three tracks</summary>
 
 | Track | What Faultline does |
 |---|---|
-| **01 · Agents that act on connected data** | An alert-chain judge over `CALLS*1..5`, a fault simulator per suspect, and **WCC, SPpaths, betweenness, label propagation and PageRank used during the investigation**. Every claim is checked against the graph. Fixes wait for a human, then are **verified from the alerts clearing**. **Monitoring and CI push in live** (Alertmanager webhook, change events): Faultline opens the incident and investigates it by itself. An MCP server exposes the same tools. |
-| **02 · Agent memory and coordination** | Four agents hand off **only through `Episode` nodes** (resumable by another process). Lessons and precedent change the score; past incidents are matched by shape on a vector index and by full text. A **fix track record** (what worked, what didn't, counted from verified outcomes) shapes what the responder says. A load test **in the app** shows isolation and consistency under 50 parallel investigations. |
-| **03 · Company brain** | Ownership and on-call, **experts ranked by the fixes they approved, the changes they made and their commits** (real CODEOWNERS and git history for Online Boutique), runbooks per service, lessons searchable by full text, a postmortem export for any incident, and a card per service with the queries behind it. |
+| **01 · Agents that act on connected data** | The loop above, plus WCC, SPpaths, betweenness, label propagation and PageRank used during the investigation; Alertmanager and CI webhooks, so monitoring opens incidents and Faultline investigates them by itself; an MCP server. |
+| **02 · Agent memory and coordination** | Four agents hand off only through `Episode` nodes; investigations stream live; precedent, a fix track record and weights learned from each company's solved incidents and people's verdicts change the next answer; past incidents matched by vector and full-text index; a load test in the app checks isolation under 50 parallel runs. |
+| **03 · Company brain** | Owners, experts by what they did, the on-call rota, journeys and SLOs, runtime and config, releases and commits, delivery metrics, runbooks, public post-mortems, and a card per service with the queries behind it. |
 
-**What's real.** Online Boutique, Sock Shop and Train Ticket are real: call graphs, metrics, logs, traces, endpoints and root causes from all 360 RCAEval RE2/RE3 failures, plus Online Boutique's owners and contributors from its CODEOWNERS and git history. Kestrel Pay is a synthetic company built to show every kind of answer. Nobody's on-call rota or fix approvals are public, so the Boutique tenant has none rather than invented ones.
+</details>
 
-Most "what broke?" tools blame the most recent deploy near the failing service. Faultline walks a FalkorDB graph of services, owners, deploys, config changes, feature flags, alerts and past incidents, and asks a stricter question: *is there a path in the call graph from this change to the symptom where every service along the way started alerting after the change landed?* Only those changes are real suspects. It shows the path hop by hop with every Cypher query it ran, proposes a fix that waits for a human, and writes what it learned back into the graph for the next incident.
-
-## What's different
+## In detail
 
 1. **The alert chain decides, not proximity.** In INC-301 a `cart` deploy is one hop from the failing `checkout` and more recent than the real cause. Nothing on its path alerted, so it scores 0.27. A connection-pool change two hops down, on `payments-db`, has `payments-db`, `payments` and `checkout` alerting in that order above it, so it scores 0.94.
 2. **"Nothing changed" is a first-class answer.** When no change on the path explains an incident, alerting dependencies with no change compete as suspects. In INC-303 the answer is "the search cluster failed first; this is infrastructure, page its owner", instead of blaming whatever deployed last.
@@ -141,6 +162,7 @@ Without a key, a fixed playbook calls the same graph tools in the same order, so
 (:Change {kind: 'deploy'})-[:SHIPS]->(:Commit {sha, message, code_lines})-[:TOUCHED]->(:Service)   (:Person)-[:AUTHORED]->(:Commit)
 (:Journey {slo, rps})-[:USES]->(:Service)   (:Journey)-[:STARTS_AT]->(:Operation)
 (:Person)-[:ON_SHIFT]->(:OnCallShift {from, to})-[:COVERS]->(:Team)
+(:Action {predicted_clear, preview})   # the fix as proved on a GRAPH.COPY before approval (faultline/proof.py)
 (:Feedback {verdict, by, note})-[:ABOUT]->(:Incident)   (:Model {kind, weights, enabled, evaluation})   # learned from outcomes
 (:Version {tag})-[:INCLUDES]->(:Commit)-[:MENTIONS]->(:Service)   (:Version)-[:CHANGED {files, additions}]->(:Service)   (:Image)-[:BUILT_FROM]->(:Version)
 ```
@@ -289,6 +311,7 @@ The same treatment for the other two systems, every RE2 and RE3 case each (`pyth
 - **Actions**: the agent can only propose (`rollback`, `revert_config`, `disable_flag`, `page_owner`). A person approves in the UI. Approval writes a remediation change to the graph and marks the incident mitigated. It is a simulation: no real system is touched. Re-running an investigation never stacks duplicate proposals.
 - **Memory you can search and match**: every resolved incident gets an 18-number *signature* of its story (kind of cause, kind of thing that broke, depth below the symptom, tiers, risk) stored in a FalkorDB **vector index**, so `shape_matches` finds past incidents that looked the same on other services (INC-212's pool change matches INC-230's Kafka retention change at 0.91). Shape matches are shown as evidence but not scored: crediting them helped look-alike decoys as much as real causes in the eval. **Full-text indexes** over lessons, changes, alerts and incident titles back `search_memory` ("pgbouncer pool connections" finds INC-212's lesson, its pool change, today's C-5101 and the payments-db alert). `experts(service)` ranks people by what they did: fixes they approved for incidents caused there, changes they made, owning team.
 - **Concurrency** (`python -m faultline.bench`): copies the demo graph with `GRAPH.COPY` and runs many investigations at once. 40 runs, 8 at a time: about 80 runs a second, no handoff ever read from another run, every run complete, every verdict identical to a single run. Queries retry with backoff when FalkorDB reports it is busy; errors in a query are never retried.
+- **Proof before approval**: every proposed fix is first applied to a `GRAPH.COPY` of the company's graph with the causal chain written in; the alerts whose `CAUSED_BY` path ends at what the fix removes are cleared there and the judge is asked again, so the card says what the fix will clear, what it will leave and what explains the rest (`faultline/proof.py`). The copy is dropped; the prediction stays on the `Action`.
 - **Verification**: approving a fix is not the end. The fix is applied to a simulated system (`faultline/world.py`, which stands in for production and is the only place the true cause of each alert is written down), and monitoring reports which alerts recover. Faultline then verifies from the graph alone: every alert in each covered incident's alert cone must have cleared after the fix. If any is still firing, the fix is marked as not working and the incident reopens. Approving the pool revert clears INC-301 and INC-304 and nothing else; approving a rollback of the unrelated `cart` deploy leaves checkout, payments and payments-db firing and reopens INC-301. A test checks that no agent tool or MCP tool imports the simulator's answer key.
 - **Tenants**: one FalkorDB graph per company (`faultline_kestrel`, `faultline_boutique`, `faultline_harbor`, and `faultline_up_…` per upload). Isolation comes from separate graphs, not a property filter, and a test proves it.
 
@@ -317,6 +340,7 @@ faultline/scale.py       scale benchmark: 1,000-3,000 synthetic services, query 
 faultline/learn.py       weights fitted on a company's solved incidents and people's verdicts; cross-validated, calibrated
 faultline/delivery.py    releases, commits and the deploy→commit links (fixtures/boutique_releases.json: real)
 faultline/manifests.py   the three systems' real Kubernetes manifests, boiled down (fixtures/manifests.json)
+faultline/proof.py       proves a fix on a GRAPH.COPY before approval: what it clears, what it leaves, and why
 faultline/reasoning.py   the argument as a subgraph: hypotheses, evidence, citations, the CAUSED_BY chain
 faultline/agent.py       the four agents (Claude or offline playbook), the case preview + question router
 faultline/eval.py        planted-fault accuracy eval with ablations, baselines and a learning run

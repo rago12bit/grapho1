@@ -66,7 +66,9 @@ TOOL_SPECS: list[dict] = [
         "BLAMES, SUPPORTED_BY, CONTRADICTED_BY, CITES, CAUSED_BY. Times are epoch seconds. Max 200 rows."),
      "input_schema": _obj({"query": S}, ["query"])},
     {"name": "propose_action", "description": (
-        "Propose a remediation. It is NOT executed: a human approves or rejects it in the UI. kind is one of "
+        "Propose a remediation. It is NOT executed: a human approves or rejects it in the UI. Before it returns, the "
+        "fix is proved on a copy of the graph (which alerts its CAUSED_BY chain clears, which it leaves, what then "
+        "explains the rest); the result is in `preview`. kind is one of "
         "rollback, revert_config, disable_flag, page_owner. Include change_id when it reverts a change. If the "
         "change also explains other open incidents (rank_suspects lists them in also_explains), pass their ids in "
         "also_for so one approval mitigates all of them."),
@@ -416,7 +418,8 @@ def investigate_offline(tenant: str, incident_id: str, propose: bool = True, run
                                  "Which failure domains and teams the alerts reach (label propagation).")
         run("responder", "runbooks", f"Find the runbook for {act['target']}.", service=act["target"])
         if propose:
-            run("responder", "propose_action", "Propose the fix. A human approves it before anything happens.",
+            run("responder", "propose_action", "Propose the fix and prove it on a copy of the graph: which alerts it clears, "
+                "which it leaves. A human approves it before anything happens.",
                 incident_id=incident_id, kind=act["kind"], target=act["target"], summary=act["summary"],
                 change_id=act.get("change_id"), reason=f"Top suspect, score {top['score']}",
                 also_for=act.get("also_for"))

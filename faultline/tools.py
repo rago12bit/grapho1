@@ -786,20 +786,25 @@ def propose_action(g: Graph, incident_id: str, kind: str, target: str, summary: 
         g.write("""
             MATCH (a:Action {id: $id}), (i:Incident) WHERE i.id IN $ids AND i.status = 'open'
             CREATE (a)-[:FOR]->(i)""", {"id": aid, "ids": linked})
+    from . import proof          # proof uses the judge, which lives here: imported when first needed
+    preview = proof.attach(g, aid)
     return {"id": aid, "kind": kind, "target": target, "summary": summary, "status": "proposed",
-            "covers": [incident_id] + linked}
+            "covers": [incident_id] + linked, "preview": preview}
 
 
 def list_actions(g: Graph, incident_id: str) -> list[dict]:
-    return g.read("""
+    rows = g.read("""
         MATCH (a:Action)-[:FOR]->(:Incident {id: $inc})
         OPTIONAL MATCH (a)-[:TARGETS]->(s)
         OPTIONAL MATCH (a)-[:FOR]->(all:Incident)
         WITH a, s, collect(DISTINCT all.id) AS covers
         RETURN a.id AS id, a.kind AS kind, a.summary AS summary, a.reason AS reason, a.status AS status,
                a.at AS at, a.decided_by AS decided_by, s.name AS target, a.change_id AS change_id, covers,
-               a.verified AS verified, a.verification AS verification
+               a.verified AS verified, a.verification AS verification, a.preview AS preview
         ORDER BY a.at""", {"inc": incident_id})
+    for r in rows:
+        r["preview"] = json.loads(r["preview"]) if r["preview"] else None
+    return rows
 
 
 def decide_action(g: Graph, action_id: str, approve: bool, who: str) -> dict:
@@ -1299,12 +1304,17 @@ def verify_fix(g: Graph, action_id: str) -> dict:
     not work, so the incident goes back to open and the action is marked as not verified."""
     act = g.read("""
         MATCH (a:Action {id: $id})
-        RETURN a.status AS status, a.decided_at AS decided_at, a.kind AS kind""", {"id": action_id})
+        RETURN a.status AS status, a.decided_at AS decided_at, a.kind AS kind, a.predicted_clear AS predicted,
+               a.preview AS preview""", {"id": action_id})
     if not act:
         raise KeyError(f"no action {action_id}")
     if act[0]["status"] != "executed":
         raise ValueError(f"{action_id} is {act[0]['status']}, not executed")
     fixed_at = act[0]["decided_at"]
+    # what the fix was proved to do on a copy of the graph before approval, if it was
+    prediction = json.loads(act[0]["preview"]) if act[0]["preview"] else None
+    predicted = set(act[0]["predicted"] or [])
+    leaves = {x["alert"] for p in (prediction or {}).get("incidents", []) for x in p["leaves"]}
     covers = [r["id"] for r in g.read("MATCH (:Action {id: $id})-[:FOR]->(i:Incident) RETURN i.id AS id ORDER BY id",
                                       {"id": action_id})]
     results = []
@@ -1317,10 +1327,22 @@ def verify_fix(g: Graph, action_id: str) -> dict:
         watched = [a for a in alerts if a["service"] in cone]
         cleared = sorted({a["service"] for a in watched if a["cleared_at"] is not None and a["cleared_at"] >= fixed_at})
         firing = sorted({a["service"] for a in watched if a["cleared_at"] is None})
-        verdict = "verified" if watched and not firing else "not verified" if firing else "nothing to check"
-        results.append({"incident": inc_id, "verdict": verdict, "cleared": cleared, "still_firing": firing})
+        all_clear = bool(watched) and not firing
+        held = False
+        if prediction is not None:
+            # the prediction holds when every alert it said would clear did, and nothing it didn't expect is left
+            mine = [a for a in watched if a["id"] in predicted]
+            held = bool(mine) and all(a["cleared_at"] is not None and a["cleared_at"] >= fixed_at for a in mine) \
+                and all(a["id"] in leaves for a in watched if a["cleared_at"] is None)
+        # a fix works if everything cleared (whatever was predicted), or if exactly what was predicted happened
+        verdict = "verified" if all_clear or held else "not verified" if firing else "nothing to check"
+        results.append({"incident": inc_id, "verdict": verdict, "cleared": cleared, "still_firing": firing,
+                        "as_predicted": held})
     ok = bool(results) and all(r["verdict"] == "verified" for r in results)
-    summary = "; ".join(
+    matched = bool(results) and all(r["as_predicted"] for r in results)
+    lead = ("As predicted on the graph copy. " if prediction and matched else
+            "Not what the graph copy predicted. " if prediction else "")
+    summary = lead + "; ".join(
         f"{r['incident']}: " + ("all alerts cleared (" + ", ".join(r["cleared"]) + ")" if r["verdict"] == "verified"
                                 else "still firing: " + ", ".join(r["still_firing"]) if r["still_firing"]
                                 else "no alerts to check")
@@ -1333,7 +1355,8 @@ def verify_fix(g: Graph, action_id: str) -> dict:
                     {"id": r["incident"]})
         elif r["verdict"] == "not verified":
             g.write("MATCH (i:Incident {id: $id}) WHERE i.status = 'mitigated' SET i.status = 'open'", {"id": r["incident"]})
-    return {"action": action_id, "verified": ok, "summary": summary, "incidents": results}
+    return {"action": action_id, "verified": ok, "summary": summary, "incidents": results,
+            "predicted": sorted(predicted) if prediction else None}
 
 
 # --- who knows a service ---------------------------------------------------------------------------

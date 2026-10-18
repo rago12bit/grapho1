@@ -82,7 +82,7 @@ def test_postmortem_is_built_from_the_graph(fresh):
         md = c.get("/api/kestrel/incidents/INC-301/postmortem.md").text
     assert md.startswith("# INC-301") and "Draft" not in md.split("\n")[2]
     assert "**C-5101** (config) on `payments-db`" in md and "made by Lin Zhao" in md
-    assert "Verified: INC-301: all alerts cleared" in md and "Covered INC-301, INC-304" in md
+    assert "Verified: As predicted on the graph copy. INC-301: all alerts cleared" in md and "Covered INC-301, INC-304" in md
     assert "> Load-test pool limits." in md and "## Appendix" in md
     assert re.search(r"\| 13:16 \| alert on `payments-db`", md)
 

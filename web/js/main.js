@@ -93,8 +93,13 @@ function start() {
   }[state.tenant] || "";
   box.innerHTML = `<div class="start fade-in">
     <span class="label">Start here</span>
-    <h1 class="serif">Which change broke production, and how did the failure get there?</h1>
-    <p>Faultline walks a FalkorDB graph of services, owners, deploys, config changes, alerts and solved incidents. It follows the failure from the symptom down the call graph to its cause, shows every hop and query, and proposes a fix that waits for your approval.</p>
+    <h1 class="serif">What broke, why we think so, and will the fix work?</h1>
+    <ol class="loop">
+      <li><b>Trace.</b> Follow the failure from the symptom down the call graph to the change, service or node it started at.</li>
+      <li><b>Argue.</b> Every suspect becomes a hypothesis with evidence for and against it, stored in the graph; the alerts are linked by <span class="mono">CAUSED_BY</span>.</li>
+      <li><b>Prove.</b> Before you approve, the fix is tried on a copy of the graph: which alerts it clears, which it leaves, and why.</li>
+      <li><b>Verify and remember.</b> After you approve, the alerts are checked against the proof, and what happened is learned from.</li>
+    </ol>
     <p class="faint small"><span class="label data-kind">${esc(cur?.data || "")}</span> ${esc(blurb)}</p>
     <button class="btn solid" id="start-tour">Play the guided demo</button>
     <section class="sec"><div class="label-row"><h3 class="label">Try one</h3></div>

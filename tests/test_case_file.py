@@ -155,5 +155,10 @@ def test_header_numbers_match_the_repo():
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
                 params = [d for d in node.decorator_list if isinstance(d, ast.Call) and getattr(d.func, "attr", "") == "parametrize"]
-                n += len(params[0].args[1].elts) if params else 1
+                if params and isinstance(params[0].args[1], ast.Name):   # the cases are a module-level list
+                    named = next(a.value for a in tree.body if isinstance(a, ast.Assign)
+                                 and any(getattr(t, "id", None) == params[0].args[1].id for t in a.targets))
+                    n += len(named.elts)
+                else:
+                    n += len(params[0].args[1].elts) if params else 1
     assert PROOF["tests"] == n
