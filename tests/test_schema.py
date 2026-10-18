@@ -40,3 +40,23 @@ def test_the_feature_map_points_at_real_code():
     for feature, _, where in _table("FalkorDB feature map"):
         for ref in re.findall(r"`((?:tools|reasoning|db)\.(?!py`)\w+)`", where):
             assert callable(_func(ref)), (feature, ref)
+
+
+def test_the_charts_are_drawn_from_the_current_results():
+    from faultline import charts
+    for name, svg in charts.build().items():
+        assert (charts.OUT / name).read_text() == svg, f"docs/media/charts/{name} is stale: run python -m faultline.charts"
+
+
+def test_every_readme_link_and_image_resolves():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "README.md").read_text()
+    slug = lambda h: re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")  # noqa: E731
+    heads = {slug(h) for h in re.findall(r"^#{1,4} (.+)$", text, re.M)}
+    links = {a or b for a, b in re.findall(r"\]\(#([^)]+)\)|href=\"#([^\"]+)\"", text)}
+    assert links and not links - heads, sorted(links - heads)
+    files = set(re.findall(r"\]\(((?:docs|demo|scripts|faultline|web|deploy)/[^)#\s]+)\)", text))
+    files |= set(re.findall(r"(?:src|srcset)=\"((?:docs|web)/[^\"]+)\"", text))
+    missing = sorted(f for f in files if not (root / f).exists())
+    assert files and not missing, missing
