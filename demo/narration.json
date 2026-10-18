@@ -1,46 +1,70 @@
 [
   {
-    "id": "s1_title",
-    "text": "This is Hypocenter, an on-call agent whose reasoning lives in a FalkorDB graph. When production breaks, it answers three questions: what broke, why, and will the fix work?"
+    "id": "v01_hook",
+    "text": "13:40. Thirty percent of mobile logins are failing. Seven services are red. Three deploys, a config change and a feature flag landed in the last hour. So... which one broke production?"
   },
   {
-    "id": "s2_real",
-    "text": "Start with a real failure. This is Online Boutique, from the public RCAEval benchmark, with a CPU fault injected into one service. Six services are alerting. Hypocenter walks the call graph down from the storefront, finds that currencyservice alerted first, that the alerts climb back up the path in order, and that nothing was deployed. Its answer: an infrastructure failure on currencyservice. That is the benchmark's answer too."
+    "id": "v02_intro",
+    "text": "Meet Hypocenter. Built for Graph Hacks by Raghav Gupta, a student, on FalkorDB. It's an on-call agent that follows the alerts down to where an outage started, and proves the fix before anyone approves it."
   },
   {
-    "id": "s3_numbers",
-    "text": "It runs on all three hundred and sixty RCAEval failures, in three systems, against the benchmark's own baseline code. It names the right service first in eighty one percent. On the ninety Train Ticket cases we kept out of development it scores seventy one percent, and NSigma does better. The results page says so."
+    "id": "v03_rule",
+    "text": "It lives by one rule: no path, no blame. A change is a suspect only if the graph connects it to the symptom, and the alerts climb that path in order. The epicenter is where you feel it. The hypocenter is where it started."
   },
   {
-    "id": "s4_agents",
-    "text": "Kestrel is a demo company built to show every kind of answer. Mobile logins are failing, and seven services are alerting. Four agents take the incident: triage, an investigator, a skeptic and a responder. They never pass anything to each other in code. Each one writes its handoff to the graph, and the next one reads it back."
+    "id": "v04_graph",
+    "text": "Everything lives in one graph per company: services and who calls whom, owners and the on-call rota, deploys, pods, the team's chat, and every incident it has already solved. Click the cube, and it comes apart into its node types."
   },
   {
-    "id": "s5_replay",
-    "text": "Replay shows the run, step by step, lighting each service as it is reached. The investigator splits the alerts into three separate problems with WCC, and a minimum spanning forest shows how each one spread. The auth deploy explains the logins. The other two problems belong to other incidents."
+    "id": "v05_real",
+    "text": "Let's start with a real failure, from the public RCAEval benchmark: a CPU fault inside Online Boutique. Six services alert. Nothing was deployed. Hypocenter finds currencyservice failed first, and the alerts climbed back up in order. Infrastructure. Page its owners. That's exactly the benchmark's answer."
   },
   {
-    "id": "s6_argue",
-    "text": "Every suspect becomes a hypothesis, with evidence for and against it, stored as nodes. The alerts are linked into a causal chain, so why did this alert fire is a single query. And every claim in the verdict is checked against the graph."
+    "id": "v06_agents",
+    "text": "Now, back to 13:40. Four agents take the incident: triage, investigator, skeptic, responder. They never talk to each other in code. Each one writes its handoff into the graph, and the next one reads it back. Live, every step with its Cypher."
   },
   {
-    "id": "s7_prove",
-    "text": "Before anyone approves a fix, Hypocenter tries it on a copy of the graph, and says which alerts it will clear and which it leaves. A person approves. Then it checks that the alerts really cleared."
+    "id": "v07_verdict",
+    "text": "The verdict: the auth deploy, at 13:34. Auth alerted at 13:38, mobile at 13:40. In order. A flag on users sits on the same path, but users never alerted, so it's out. And the other alerts? Three separate problems, two of them belonging to other incidents."
   },
   {
-    "id": "s8_depth",
-    "text": "The organisers asked for two tests. Ask the same question at depth one: the judge confidently blames payments, which is only a victim. From two hops down, it finds the pool change underneath. And ask about something that is not in the graph: it says it is not modelled, not that it is safe."
+    "id": "v08_gate",
+    "text": "Then comes the evidence gate. Eight named checks, each with the exact query that decided it. All eight pass: confirmed. Cut the path, and it doesn't guess. It says: the graph can't prove this."
   },
   {
-    "id": "s9_brain",
-    "text": "The graph is also the company's memory. Ask why the pool change was made, and the answer comes from the team's chat: the proposal, the approval, and a warning about a past incident. Follow up with, who owns it, and the conversation, kept in the graph, knows what it means."
+    "id": "v09_proof",
+    "text": "The agent can only propose. Before you approve, the fix runs on a copy of the graph. It clears auth and mobile, and leaves everything else alone. Approve it, and Hypocenter checks the alerts really cleared."
   },
   {
-    "id": "s10_break",
-    "text": "Break it changes the graph on purpose and shows how the verdict moves, each experiment on a copy that is thrown away."
+    "id": "v10_replay",
+    "text": "Replay plays the whole investigation back, lighting up each service the moment it's reached."
   },
   {
-    "id": "s11_close",
-    "text": "All eight of FalkorDB's graph algorithms do work in an investigation, and one command, make judge-check, rebuilds and checks everything from a fresh clone. Hypocenter."
+    "id": "v11_break",
+    "text": "Break it lets you change the graph and watch the verdict move. Cut auth out of the call path, and the deploy gives way. Every experiment runs on a copy that's thrown away."
+  },
+  {
+    "id": "v12_depth",
+    "text": "The organisers asked for one test: the same question, at depth one and at depth four. At one hop, it blames a victim, with high confidence. From two hops down, it finds the real pool change. And ask about a service that doesn't exist? Not modelled. Not safe."
+  },
+  {
+    "id": "v13_brain",
+    "text": "It knows the company, too. Ask why that pool change was made, and the answer comes straight from the team's chat. Then ask who owns it, and it remembers what it means."
+  },
+  {
+    "id": "v14_ship",
+    "text": "And before the next deploy, Ship it says ship, review, or hold, with every reason from the graph."
+  },
+  {
+    "id": "v15_results",
+    "text": "So, does it actually work? All 360 real RCAEval failures, against the benchmark's own baselines: the right service first, 81 percent of the time. On ninety held-out failures, NSigma beats it, 76 to 71. And the README says so. Zero wrong high-confidence calls."
+  },
+  {
+    "id": "v16_load",
+    "text": "Each of the eight FalkorDB algorithms has a test that changes what it reads, and watches the decision flip. Pull FalkorDB out, and there's no answer at all."
+  },
+  {
+    "id": "v17_close",
+    "text": "242 tests. 28 deliberate breakages, all caught. Live on the web, and one command to run it yourself. This is Hypocenter, built by Raghav Gupta. No path, no blame."
   }
 ]
